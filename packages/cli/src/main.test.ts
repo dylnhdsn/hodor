@@ -15,7 +15,7 @@ function memDeps(fs = new MemFs()): { deps: CliDeps; output: string[]; fs: MemFs
   return { deps, output, fs }
 }
 
-const line = (uuid: string, ts: string, cwd: string) =>
+const line = (uuid: string, ts: string, cwd: string, prompt?: string) =>
   JSON.stringify({
     type: 'user',
     uuid,
@@ -23,15 +23,23 @@ const line = (uuid: string, ts: string, cwd: string) =>
     isSidechain: false,
     timestamp: ts,
     cwd,
+    ...(prompt !== undefined ? { message: { role: 'user', content: prompt } } : {}),
   }) + '\n'
 
 function seedStore(fs: MemFs): void {
   fs.writeFile(
     '/home/u/.claude/projects/-repo-a/aaaa.jsonl',
-    line('u1', '2026-06-01T11:59:00Z', '/repo/a') + line('u2', '2026-06-01T11:59:30Z', '/repo/a'),
+    line('u1', '2026-06-01T11:59:00Z', '/repo/a', 'Fix the login bug please') +
+      line('u2', '2026-06-01T11:59:30Z', '/repo/a'),
   )
   fs.writeFile('/home/u/.claude/projects/-elsewhere/bbbb.jsonl', line('u3', '2026-06-01T08:00:00Z', '/elsewhere'))
   fs.writeFile('/repo/a/.git/config', '[remote "origin"]\n\turl = git@github.com:o/a.git\n')
+  // Ephemeral noise: an agent-harness run in a dot directory and a /tmp scratchpad.
+  fs.writeFile(
+    '/home/u/.claude/projects/-noise/cccc.jsonl',
+    line('u4', '2026-06-01T09:00:00Z', '/home/u/.peri/runs/2026/cache/blind'),
+  )
+  fs.writeFile('/home/u/.claude/projects/-scratch/dddd.jsonl', line('u5', '2026-06-01T09:30:00Z', '/tmp/scratch'))
 }
 
 describe('basic commands', () => {
@@ -72,31 +80,53 @@ describe('basic commands', () => {
 })
 
 describe('scan', () => {
-  it('emits a full structured snapshot as JSON', async () => {
+  it('emits a full structured snapshot as JSON, hidden sessions tagged but kept', async () => {
     const { deps, output, fs } = memDeps()
     seedStore(fs)
     expect(await run(['scan', '--json'], deps)).toBe(0)
 
     const snapshot = JSON.parse(output.join('')) as Snapshot
-    expect(snapshot.sessions.map((s) => s.id)).toEqual(['aaaa', 'bbbb'])
-    expect(snapshot.projects.map((p) => p.id)).toEqual([
-      'git-remote:github.com/o/a',
-      'cwd:local:/elsewhere',
-    ])
+    expect(snapshot.sessions.map((s) => s.id)).toEqual(['aaaa', 'dddd', 'cccc', 'bbbb'])
+    expect(snapshot.projects.map((p) => p.id)).toContain('git-remote:github.com/o/a')
     const assignment = snapshot.assignments.find((a) => a.sessionId === 'aaaa')!
     expect(assignment.projectId).toBe('git-remote:github.com/o/a')
     expect(assignment.reasons.map((r) => r.source)).toEqual(['cwd', 'git-root', 'git-remote'])
     expect(snapshot.sessions[0]!.runtime.kind).toBe('inferred-active')
+    expect(snapshot.sessions[0]!.promptPreview).toBe('Fix the login bug please')
+    expect(snapshot.sessions.find((s) => s.id === 'cccc')!.hiddenBy).toBe('dot-segment:.peri')
+    expect(snapshot.sessions.find((s) => s.id === 'dddd')!.hiddenBy).toBe('prefix:/tmp')
   })
 
-  it('formats a human-readable summary by default', async () => {
+  it('formats a human-readable summary hiding noise, with prompt-preview titles', async () => {
     const { deps, output, fs } = memDeps()
     seedStore(fs)
     expect(await run(['scan'], deps)).toBe(0)
     const text = output.join('')
-    expect(text).toContain('2 session(s) in 2 project(s), 1 active')
+    expect(text).toContain('2 session(s) in 2 project(s), 1 active; 2 hidden (--all to show)')
     expect(text).toContain('a  [git-remote:github.com/o/a]')
     expect(text).toContain('* aaaa')
+    expect(text).toContain('Fix the login bug please')
+    expect(text).not.toContain('.peri')
+    expect(text).not.toContain('/tmp/scratch')
+  })
+
+  it('shows everything with --all', async () => {
+    const { deps, output, fs } = memDeps()
+    seedStore(fs)
+    expect(await run(['scan', '--all'], deps)).toBe(0)
+    const text = output.join('')
+    expect(text).toContain('4 session(s) in 4 project(s)')
+    expect(text).not.toContain('hidden')
+    expect(text).toContain('.peri')
+  })
+
+  it('accepts extra hide rules via --hide', async () => {
+    const { deps, output, fs } = memDeps()
+    seedStore(fs)
+    expect(await run(['scan', '--hide', 'elsewhere'], deps)).toBe(0)
+    const text = output.join('')
+    expect(text).toContain('1 session(s) in 1 project(s), 1 active; 3 hidden (--all to show)')
+    expect(text).not.toContain('elsewhere')
   })
 
   it('accepts explicit store roots', async () => {

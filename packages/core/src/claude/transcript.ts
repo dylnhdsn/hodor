@@ -20,9 +20,14 @@ const messageLineSchema = z
     gitBranch: z.string().optional(),
     version: z.string().optional(),
     isSidechain: z.boolean().optional(),
+    isMeta: z.boolean().optional(),
+    entrypoint: z.string().optional(),
     toolUseID: z.string().optional(),
     sourceToolAssistantUUID: z.string().optional(),
-    message: z.object({ role: z.string().optional() }).passthrough().optional(),
+    message: z
+      .object({ role: z.string().optional(), content: z.unknown().optional() })
+      .passthrough()
+      .optional(),
   })
   .passthrough()
 
@@ -47,6 +52,12 @@ export interface MessageLine {
   gitBranch?: string
   version?: string
   isSidechain: boolean
+  /** Synthetic context lines (command output etc.), not typed by a person. */
+  isMeta: boolean
+  /** How the session was started, as stamped on this line (cli, sdk, remote…). */
+  entrypoint?: string
+  /** For user messages: the prompt text, whitespace-collapsed and truncated. */
+  promptText?: string
   spawnedBy?: { toolUseId: string; assistantUuid: string }
 }
 
@@ -67,6 +78,28 @@ export interface InvalidLine {
 }
 
 export type TranscriptLine = MessageLine | SummaryLine | OtherLine | InvalidLine
+
+export const PROMPT_TEXT_MAX_LENGTH = 120
+
+/** Message content is a string or an array of blocks; take the first text. */
+function extractPromptText(content: unknown): string | undefined {
+  let text: string | undefined
+  if (typeof content === 'string') {
+    text = content
+  } else if (Array.isArray(content)) {
+    for (const block of content) {
+      const candidate = (block as { type?: unknown; text?: unknown } | null) ?? {}
+      if (candidate.type === 'text' && typeof candidate.text === 'string') {
+        text = candidate.text
+        break
+      }
+    }
+  }
+  if (text === undefined) return undefined
+  const collapsed = text.replace(/\s+/g, ' ').trim()
+  if (collapsed.length === 0) return undefined
+  return collapsed.slice(0, PROMPT_TEXT_MAX_LENGTH)
+}
 
 export function parseTranscriptLine(raw: string): TranscriptLine {
   let json: unknown
@@ -107,12 +140,18 @@ export function parseTranscriptLine(raw: string): TranscriptLine {
       uuid: d.uuid,
       parentUuid: d.parentUuid ?? null,
       isSidechain: d.isSidechain ?? false,
+      isMeta: d.isMeta ?? false,
     }
     if (d.sessionId !== undefined) line.sessionId = d.sessionId
     if (d.timestamp !== undefined) line.timestamp = d.timestamp
     if (d.cwd !== undefined) line.cwd = d.cwd
     if (d.gitBranch !== undefined) line.gitBranch = d.gitBranch
     if (d.version !== undefined) line.version = d.version
+    if (d.entrypoint !== undefined) line.entrypoint = d.entrypoint
+    if (type === 'user' && !line.isMeta) {
+      const promptText = extractPromptText(d.message?.content)
+      if (promptText !== undefined) line.promptText = promptText
+    }
     if (d.toolUseID !== undefined && d.sourceToolAssistantUUID !== undefined) {
       line.spawnedBy = { toolUseId: d.toolUseID, assistantUuid: d.sourceToolAssistantUUID }
     }

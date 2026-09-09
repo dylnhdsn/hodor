@@ -8,6 +8,7 @@ const msg = (over: Partial<MessageLine> & { uuid: string }): MessageLine => ({
   type: 'user',
   parentUuid: null,
   isSidechain: false,
+  isMeta: false,
   ...over,
 })
 
@@ -82,6 +83,22 @@ describe('fold', () => {
       { type: 'transcript-removed', storeId: 's1', transcriptPath: '/store/projects/-x/a.jsonl' },
     ])
     expect(Object.keys(state.sessions)).toEqual(['b'])
+  })
+
+  it('keeps the first real prompt as preview, skipping meta lines', () => {
+    const state = foldAll(emptyState, [
+      lines('a', [
+        msg({ uuid: 'u0', isMeta: true, promptText: 'should not happen', entrypoint: 'cli' }),
+        msg({ uuid: 'u1', promptText: 'first real ask', entrypoint: 'cli' }),
+        msg({ uuid: 'u2', promptText: 'second ask', entrypoint: 'sdk' }),
+      ]),
+    ])
+    const accum = state.sessions['a']!
+    expect(accum.promptPreview).toBe('first real ask')
+    expect(accum.entrypoints).toEqual(['cli', 'sdk'])
+    // meta user lines do not count as user messages
+    expect(accum.userCount).toBe(2)
+    expect(accum.main.messageCount).toBe(3)
   })
 
   it('counts system messages in the main thread but not in user/assistant', () => {

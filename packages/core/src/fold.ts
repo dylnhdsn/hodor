@@ -26,6 +26,10 @@ export interface SessionAccum {
   createdAt?: string
   lastActivityAt?: string
   cliVersion?: string
+  /** First real (non-meta) user prompt — the fallback title. */
+  promptPreview?: string
+  /** Unique entrypoint values observed (cli, sdk, remote, …). */
+  entrypoints: string[]
   userCount: number
   assistantCount: number
   main: ThreadAccum
@@ -63,6 +67,7 @@ function newAccum(id: SessionId, storeId: StoreId, transcriptPath: string): Sess
     storeId,
     transcriptPath,
     cwds: [],
+    entrypoints: [],
     userCount: 0,
     assistantCount: 0,
     main: { messageCount: 0 },
@@ -85,6 +90,10 @@ function applyMessage(accum: SessionAccum, line: MessageLine): void {
     if (accum.lastActivityAt === undefined || ts > accum.lastActivityAt) accum.lastActivityAt = ts
   }
 
+  if (line.entrypoint !== undefined && !accum.entrypoints.includes(line.entrypoint)) {
+    accum.entrypoints.push(line.entrypoint)
+  }
+
   if (line.isSidechain) {
     let index = line.parentUuid !== null ? accum.uuidToSidechain[line.parentUuid] : undefined
     if (index === undefined) {
@@ -99,7 +108,12 @@ function applyMessage(accum: SessionAccum, line: MessageLine): void {
   }
 
   touchThread(accum.main, ts)
-  if (line.type === 'user') accum.userCount += 1
+  if (line.type === 'user' && !line.isMeta) {
+    accum.userCount += 1
+    if (accum.promptPreview === undefined && line.promptText !== undefined) {
+      accum.promptPreview = line.promptText
+    }
+  }
   if (line.type === 'assistant') accum.assistantCount += 1
   if (line.cwd !== undefined && !accum.cwds.includes(line.cwd)) accum.cwds.push(line.cwd)
   if (line.gitBranch !== undefined) accum.gitBranch = line.gitBranch
@@ -110,6 +124,7 @@ function cloneAccum(accum: SessionAccum): SessionAccum {
   return {
     ...accum,
     cwds: [...accum.cwds],
+    entrypoints: [...accum.entrypoints],
     main: { ...accum.main },
     sidechains: accum.sidechains.map((t) => ({ ...t })),
     uuidToSidechain: { ...accum.uuidToSidechain },

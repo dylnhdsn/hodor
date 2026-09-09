@@ -1,6 +1,7 @@
 import type { CoreState, SessionAccum, ThreadAccum } from './fold.js'
 import { resolveProjects } from './resolver.js'
 import type { Assignment, Project, Runtime, Session, SessionStore, Thread } from './types.js'
+import { hiddenBy, type HideRules } from './visibility.js'
 
 /**
  * Selectors: derive the presentation-ready structured output from folded
@@ -20,6 +21,8 @@ export interface SnapshotOptions {
   now: Date
   /** A foreign session counts as active if it appended within this window. */
   activeWindowMs?: number
+  /** Visibility rules; when given, matching sessions get `hiddenBy` set. */
+  hide?: HideRules
 }
 
 const DEFAULT_ACTIVE_WINDOW_MS = 120_000
@@ -56,6 +59,7 @@ function toSession(accum: SessionAccum, runtime: Runtime): Session {
     storeId: accum.storeId,
     transcriptPath: accum.transcriptPath,
     cwds: [...accum.cwds],
+    entrypoints: [...accum.entrypoints],
     counts: {
       user: accum.userCount,
       assistant: accum.assistantCount,
@@ -68,6 +72,7 @@ function toSession(accum: SessionAccum, runtime: Runtime): Session {
   if (cwd !== undefined) session.cwd = cwd
   if (accum.gitBranch !== undefined) session.gitBranch = accum.gitBranch
   if (accum.summary !== undefined) session.summary = accum.summary
+  if (accum.promptPreview !== undefined) session.promptPreview = accum.promptPreview
   if (accum.createdAt !== undefined) session.createdAt = accum.createdAt
   if (accum.lastActivityAt !== undefined) session.lastActivityAt = accum.lastActivityAt
   if (accum.cliVersion !== undefined) session.cliVersion = accum.cliVersion
@@ -79,9 +84,17 @@ export function buildSnapshot(state: CoreState, options: SnapshotOptions): Snaps
 
   const sessions = Object.values(state.sessions)
     .filter((accum) => accum.main.messageCount > 0 || accum.sidechains.length > 0)
-    .map((accum) =>
-      toSession(accum, state.runtimes[accum.id] ?? inferRuntime(accum, options.now, windowMs)),
-    )
+    .map((accum) => {
+      const session = toSession(
+        accum,
+        state.runtimes[accum.id] ?? inferRuntime(accum, options.now, windowMs),
+      )
+      if (options.hide !== undefined && session.cwd !== undefined) {
+        const rule = hiddenBy(session.cwd, options.hide)
+        if (rule !== undefined) session.hiddenBy = rule
+      }
+      return session
+    })
     .sort(
       (a, b) =>
         (b.lastActivityAt ?? '').localeCompare(a.lastActivityAt ?? '') || a.id.localeCompare(b.id),

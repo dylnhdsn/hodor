@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { REAL_LINES } from './fixtures.js'
-import { parseTranscript, parseTranscriptLine } from './transcript.js'
+import { PROMPT_TEXT_MAX_LENGTH, parseTranscript, parseTranscriptLine } from './transcript.js'
 
 describe('parseTranscriptLine on real captured lines', () => {
   it('never throws and never yields invalid for real lines', () => {
@@ -10,7 +10,7 @@ describe('parseTranscriptLine on real captured lines', () => {
     }
   })
 
-  it('parses a real user message line', () => {
+  it('parses a real user message line, prompt text and entrypoint included', () => {
     const raw = REAL_LINES.find((l) => JSON.parse(l).type === 'user')!
     const line = parseTranscriptLine(raw)
     expect(line).toMatchObject({
@@ -19,8 +19,11 @@ describe('parseTranscriptLine on real captured lines', () => {
       uuid: 'cb22b020-1446-4d7b-aa6d-7ac01a513582',
       parentUuid: null,
       isSidechain: false,
+      isMeta: false,
       timestamp: '2026-09-09T16:19:58.338Z',
+      entrypoint: 'remote',
     })
+    expect((line as { promptText?: string }).promptText).toMatch(/^Lets discuss the tool/)
   })
 
   it('parses a real assistant message line with cwd', () => {
@@ -91,6 +94,44 @@ describe('parseTranscriptLine edge cases', () => {
       kind: 'summary',
       summary: 't',
     })
+  })
+
+  it('extracts prompt text from block-array content and collapses whitespace', () => {
+    const line = parseTranscriptLine(
+      JSON.stringify({
+        type: 'user',
+        uuid: 'u1',
+        message: { role: 'user', content: [{ type: 'text', text: '  fix\n\nthe   bug  ' }] },
+      }),
+    )
+    expect(line).toMatchObject({ promptText: 'fix the bug' })
+  })
+
+  it('truncates long prompts', () => {
+    const line = parseTranscriptLine(
+      JSON.stringify({ type: 'user', uuid: 'u1', message: { content: 'x'.repeat(500) } }),
+    )
+    expect((line as { promptText?: string }).promptText).toHaveLength(PROMPT_TEXT_MAX_LENGTH)
+  })
+
+  it('takes no prompt text from meta lines, empty content, or non-text blocks', () => {
+    const meta = parseTranscriptLine(
+      JSON.stringify({ type: 'user', uuid: 'u1', isMeta: true, message: { content: 'noise' } }),
+    )
+    expect(meta).toMatchObject({ isMeta: true })
+    expect(meta).not.toHaveProperty('promptText')
+    const empty = parseTranscriptLine(
+      JSON.stringify({ type: 'user', uuid: 'u1', message: { content: '   ' } }),
+    )
+    expect(empty).not.toHaveProperty('promptText')
+    const blocks = parseTranscriptLine(
+      JSON.stringify({
+        type: 'user',
+        uuid: 'u1',
+        message: { content: [{ type: 'tool_result', text: 'nope' }, null] },
+      }),
+    )
+    expect(blocks).not.toHaveProperty('promptText')
   })
 
   it('reports why a line is invalid', () => {

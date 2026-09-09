@@ -11,6 +11,7 @@ const msg = (uuid: string, cwd: string): MessageLine => ({
   uuid,
   parentUuid: null,
   isSidechain: false,
+  isMeta: false,
   cwd,
 })
 

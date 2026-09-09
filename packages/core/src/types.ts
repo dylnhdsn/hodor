@@ -35,6 +35,12 @@ export interface Session {
   gitBranch?: string
   /** Claude-derived summary/title, if any. A hodor rename lives in SessionMeta. */
   summary?: string
+  /** First real user prompt, truncated — the display-title fallback. */
+  promptPreview?: string
+  /** Unique entrypoint values observed on this session's lines (cli, sdk, …). */
+  entrypoints: string[]
+  /** Set when a visibility rule classified this session as noise (provenance). */
+  hiddenBy?: string
   createdAt?: Timestamp
   lastActivityAt?: Timestamp
   cliVersion?: string

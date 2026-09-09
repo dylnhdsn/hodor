@@ -2,6 +2,7 @@ import { createRequire } from 'node:module'
 import {
   StoreTailer,
   buildSnapshot,
+  defaultHideRules,
   emptyState,
   enrichGitContexts,
   foldAll,
@@ -10,9 +11,11 @@ import {
   scanStore,
   type CoreState,
   type FileSystem,
+  type HideRules,
   type PathFlavor,
   type SessionStore,
   type Snapshot,
+  type SnapshotOptions,
 } from '@hodor/core'
 
 /**
@@ -39,6 +42,14 @@ Usage:
   hodor --version                           Print the CLI version
 
 Stores default to <home>/.claude; pass --root to add or replace store roots.
+
+Visibility (scan/watch):
+  --all            Show everything, including ephemeral/agent-run sessions
+  --hide <rule>    Extra hide rule; with a path separator it's a path prefix
+                   (e.g. /srv/tmp), otherwise a directory name (e.g. dist).
+                   Defaults hide /tmp-like paths, node_modules, and
+                   dot-directories except .claude. Hidden sessions stay in
+                   --json output, tagged with the rule that hid them.
 `.trim()
 
 function version(): string {
@@ -49,7 +60,9 @@ function version(): string {
 
 interface Flags {
   json: boolean
+  all: boolean
   roots: string[]
+  hide: string[]
   intervalMs: number
   ticks?: number
   rest: string[]
@@ -57,22 +70,45 @@ interface Flags {
 }
 
 function parseFlags(args: string[]): Flags {
-  const flags: Flags = { json: false, roots: [], intervalMs: 2000, rest: [] }
+  const flags: Flags = { json: false, all: false, roots: [], hide: [], intervalMs: 2000, rest: [] }
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!
     if (arg === '--json') flags.json = true
-    else if (arg === '--root' || arg === '--interval' || arg === '--ticks') {
+    else if (arg === '--all') flags.all = true
+    else if (arg === '--root' || arg === '--interval' || arg === '--ticks' || arg === '--hide') {
       const value = args[++i]
       if (value === undefined) {
         flags.error = `${arg}: missing value`
         break
       }
       if (arg === '--root') flags.roots.push(value)
+      if (arg === '--hide') flags.hide.push(value)
       if (arg === '--interval') flags.intervalMs = Number(value)
       if (arg === '--ticks') flags.ticks = Number(value)
     } else flags.rest.push(arg)
   }
   return flags
+}
+
+function hideRules(flags: Flags): HideRules | undefined {
+  if (flags.all) return undefined
+  const rules: HideRules = {
+    ...defaultHideRules,
+    pathPrefixes: [...defaultHideRules.pathPrefixes],
+    pathSegments: [...defaultHideRules.pathSegments],
+  }
+  for (const value of flags.hide) {
+    if (/[\\/]/.test(value)) rules.pathPrefixes.push(value)
+    else rules.pathSegments.push(value)
+  }
+  return rules
+}
+
+function snapshotOptions(deps: CliDeps, flags: Flags): SnapshotOptions {
+  const options: SnapshotOptions = { now: deps.now() }
+  const hide = hideRules(flags)
+  if (hide !== undefined) options.hide = hide
+  return options
 }
 
 function makeStores(deps: CliDeps, roots: string[]): SessionStore[] {
@@ -97,34 +133,42 @@ async function enrich(state: CoreState, fs: FileSystem): Promise<CoreState> {
 
 export function formatSnapshot(snapshot: Snapshot): string {
   const lines: string[] = []
-  const active = snapshot.sessions.filter((s) => s.runtime.kind !== 'idle').length
-  lines.push(
-    `${snapshot.sessions.length} session(s) in ${snapshot.projects.length} project(s), ${active} active`,
-  )
+  const visible = snapshot.sessions.filter((s) => s.hiddenBy === undefined)
+  const hiddenCount = snapshot.sessions.length - visible.length
+  const active = visible.filter((s) => s.runtime.kind !== 'idle').length
+  const visibleIds = new Set(visible.map((s) => s.id))
 
   const byProject = new Map<string, string[]>()
   for (const a of snapshot.assignments) {
+    if (!visibleIds.has(a.sessionId)) continue
     const list = byProject.get(a.projectId) ?? []
     list.push(a.sessionId)
     byProject.set(a.projectId, list)
   }
+  const shownProjects = snapshot.projects.filter((p) => (byProject.get(p.id) ?? []).length > 0)
+
+  let header = `${visible.length} session(s) in ${shownProjects.length} project(s), ${active} active`
+  if (hiddenCount > 0) header += `; ${hiddenCount} hidden (--all to show)`
+  lines.push(header)
+
   const assigned = new Set(snapshot.assignments.map((a) => a.sessionId))
   const sessionById = new Map(snapshot.sessions.map((s) => [s.id, s]))
 
-  for (const project of snapshot.projects) {
+  for (const project of shownProjects) {
     lines.push('')
     lines.push(`${project.name}  [${project.id}]`)
     for (const sessionId of byProject.get(project.id) ?? []) {
       const s = sessionById.get(sessionId)
       if (s === undefined) continue
-      const title = s.summary ?? '(untitled)'
+      const rawTitle = s.summary ?? s.promptPreview ?? '(untitled)'
+      const title = rawTitle.length > 60 ? rawTitle.slice(0, 59) + '…' : rawTitle
       const when = s.lastActivityAt ?? '-'
       const mark = s.runtime.kind === 'idle' ? ' ' : '*'
       lines.push(`  ${mark} ${s.id.slice(0, 8)}  ${when}  ${s.cwd ?? '-'}  ${title}`)
     }
   }
 
-  const unassigned = snapshot.sessions.filter((s) => !assigned.has(s.id))
+  const unassigned = visible.filter((s) => !assigned.has(s.id))
   if (unassigned.length > 0) {
     lines.push('')
     lines.push('(unassigned)')
@@ -143,7 +187,7 @@ async function scan(deps: CliDeps, flags: Flags): Promise<number> {
     state = foldAll(state, await scanStore(deps.fs, store))
   }
   state = await enrich(state, deps.fs)
-  printSnapshot(deps, buildSnapshot(state, { now: deps.now() }), flags.json)
+  printSnapshot(deps, buildSnapshot(state, snapshotOptions(deps, flags)), flags.json)
   return 0
 }
 
@@ -152,7 +196,7 @@ async function watch(deps: CliDeps, flags: Flags): Promise<number> {
   let state = emptyState
   for (const tailer of tailers) state = foldAll(state, await tailer.poll())
   state = await enrich(state, deps.fs)
-  printSnapshot(deps, buildSnapshot(state, { now: deps.now() }), flags.json)
+  printSnapshot(deps, buildSnapshot(state, snapshotOptions(deps, flags)), flags.json)
 
   for (let tick = 0; flags.ticks === undefined || tick < flags.ticks; tick++) {
     await deps.sleep(flags.intervalMs)
@@ -167,7 +211,7 @@ async function watch(deps: CliDeps, flags: Flags): Promise<number> {
     if (!changed) continue
     state = await enrich(state, deps.fs)
     deps.write('---\n')
-    printSnapshot(deps, buildSnapshot(state, { now: deps.now() }), flags.json)
+    printSnapshot(deps, buildSnapshot(state, snapshotOptions(deps, flags)), flags.json)
   }
   return 0
 }

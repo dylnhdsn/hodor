@@ -20,6 +20,7 @@ const msg = (uuid: string, ts: string, cwd: string): MessageLine => ({
   uuid,
   parentUuid: null,
   isSidechain: false,
+  isMeta: false,
   timestamp: ts,
   cwd,
 })
@@ -151,6 +152,7 @@ describe('buildSnapshot', () => {
             uuid: 'm1',
             parentUuid: null,
             isSidechain: false,
+            isMeta: false,
             timestamp: '2026-06-01T10:00:00Z',
             cwd: '/a',
             gitBranch: 'main',
@@ -162,6 +164,7 @@ describe('buildSnapshot', () => {
             uuid: 'm2',
             parentUuid: 'm1',
             isSidechain: false,
+            isMeta: false,
             timestamp: '2026-06-01T10:00:05Z',
             cwd: '/b',
           },
@@ -171,6 +174,7 @@ describe('buildSnapshot', () => {
             uuid: 'sc1',
             parentUuid: null,
             isSidechain: true,
+            isMeta: false,
             timestamp: '2026-06-01T10:00:02Z',
             spawnedBy: { toolUseId: 't1', assistantUuid: 'm1' },
           },
@@ -187,6 +191,7 @@ describe('buildSnapshot', () => {
         transcriptPath: '/home/.claude/projects/-x/full.jsonl',
         cwd: '/b',
         cwds: ['/a', '/b'],
+        entrypoints: [],
         gitBranch: 'main',
         summary: 'the title',
         createdAt: '2026-06-01T10:00:00Z',
@@ -213,6 +218,49 @@ describe('buildSnapshot', () => {
         runtime: { kind: 'idle' },
       },
     ])
+  })
+
+  it('carries prompt previews and entrypoints, and applies hide rules', () => {
+    const events: SourceEvent[] = [
+      { type: 'store-discovered', store },
+      {
+        type: 'transcript-lines',
+        storeId: 's1',
+        transcriptPath: '/home/.claude/projects/-x/noisy.jsonl',
+        sessionId: 'noisy',
+        lines: [
+          {
+            kind: 'message',
+            type: 'user',
+            uuid: 'u1',
+            parentUuid: null,
+            isSidechain: false,
+            isMeta: false,
+            timestamp: '2026-06-01T10:00:00Z',
+            cwd: '/home/d/.peri/runs/x/cache/blind',
+            entrypoint: 'sdk',
+            promptText: 'Evaluate the blind variant',
+          },
+        ],
+      },
+      ...sessionEvents('real', '2026-06-01T10:00:01Z', '/home/d/proj'),
+    ]
+    const snapshot = buildSnapshot(foldAll(emptyState, events), {
+      now: NOW,
+      hide: {
+        pathPrefixes: ['/tmp'],
+        pathSegments: [],
+        hideDotSegments: true,
+        dotSegmentAllowlist: ['.claude'],
+      },
+    })
+    const noisy = snapshot.sessions.find((s) => s.id === 'noisy')!
+    expect(noisy.hiddenBy).toBe('dot-segment:.peri')
+    expect(noisy.promptPreview).toBe('Evaluate the blind variant')
+    expect(noisy.entrypoints).toEqual(['sdk'])
+    expect(snapshot.sessions.find((s) => s.id === 'real')!.hiddenBy).toBeUndefined()
+    // Hidden sessions still get grouped — visibility is presentation's call.
+    expect(snapshot.assignments.map((a) => a.sessionId)).toContain('noisy')
   })
 
   it('respects a custom activeWindowMs', () => {
