@@ -1,0 +1,16 @@
+{
+  "name": "hodor",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "mutation": "pnpm --filter @hodor/core mutation",
+    "verify": "pnpm build && pnpm typecheck && pnpm test"
+  }
+}
