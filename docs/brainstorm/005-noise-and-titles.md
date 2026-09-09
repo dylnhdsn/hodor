@@ -28,12 +28,17 @@ noise from the peri eval harness.
 2. **Prompt-preview titles**: the first real (non-meta) user prompt is
    captured (collapsed, 120 chars) as `promptPreview`; display title is
    `summary ?? promptPreview ?? '(untitled)'`.
-3. **Entrypoint capture**: unique `entrypoint` values per session
-   (`cli`, `sdk`, `remote`, …) now ride along in the snapshot. This is the
-   raw material for a future *interactive vs programmatic* split — path
-   rules are a stopgap; entrypoint is likely the principled signal.
-   TODO: check what entrypoint peri's sessions carry vs interactive ones
-   (`hodor scan --all --json | jq '[.sessions[].entrypoints] | flatten | group_by(.) | map({(.[0]): length}) | add'`).
+3. **Entrypoint capture and classification**: unique `entrypoint` values per
+   session ride along in the snapshot. **Confirmed against Dylan's store
+   (2026-09-09)**: interactive CLI sessions carry `cli` (99), claude.ai/code
+   sessions `remote`, and headless/agent runs `sdk-cli` — peri's sessions
+   were 100% `sdk-cli` (362/362), plus 20 non-peri `sdk-cli` sessions the
+   path rules had missed. So the entrypoint is the principled
+   interactive-vs-programmatic signal, and default rules now hide sessions
+   whose every observed entrypoint is outside the interactive allowlist
+   (`cli`, `remote`); sessions with no recorded entrypoint are never hidden
+   by this rule, and path rules remain as fallback. `hodor stats` shows the
+   entrypoint histograms split by visibility, plus hidden-by-rule counts.
 4. `isMeta` user lines (synthetic context) no longer count as user messages
    and never provide titles.
 

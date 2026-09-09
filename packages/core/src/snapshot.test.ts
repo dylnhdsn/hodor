@@ -252,6 +252,8 @@ describe('buildSnapshot', () => {
         pathSegments: [],
         hideDotSegments: true,
         dotSegmentAllowlist: ['.claude'],
+        hideNonInteractive: true,
+        interactiveEntrypoints: ['cli', 'remote'],
       },
     })
     const noisy = snapshot.sessions.find((s) => s.id === 'noisy')!

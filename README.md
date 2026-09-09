@@ -25,6 +25,7 @@ design notes.
 hodor scan            # discover + organize sessions, human-readable
 hodor scan --json     # the full structured snapshot
 hodor watch           # scan, then live-update as transcripts change
+hodor stats           # entrypoint + visibility histograms
 hodor bucket <cwd>    # the ~/.claude/projects bucket name for a cwd
 ```
 

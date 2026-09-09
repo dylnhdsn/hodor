@@ -38,6 +38,7 @@ Usage:
   hodor scan [--json] [--root <path>]...    Discover and organize sessions
   hodor watch [--json] [--interval <ms>] [--root <path>]...
                                             Scan, then live-update on changes
+  hodor stats [--json] [--root <path>]...   Entrypoint and visibility histograms
   hodor bucket <cwd>                        Print the ~/.claude/projects bucket for a cwd
   hodor --version                           Print the CLI version
 
@@ -177,6 +178,58 @@ export function formatSnapshot(snapshot: Snapshot): string {
   return lines.join('\n')
 }
 
+export interface Stats {
+  total: number
+  visible: number
+  hidden: number
+  entrypointsVisible: Record<string, number>
+  entrypointsHidden: Record<string, number>
+  hiddenByRule: Record<string, number>
+}
+
+export function computeStats(snapshot: Snapshot): Stats {
+  const stats: Stats = {
+    total: snapshot.sessions.length,
+    visible: 0,
+    hidden: 0,
+    entrypointsVisible: {},
+    entrypointsHidden: {},
+    hiddenByRule: {},
+  }
+  const bump = (record: Record<string, number>, key: string): void => {
+    record[key] = (record[key] ?? 0) + 1
+  }
+  for (const session of snapshot.sessions) {
+    const isHidden = session.hiddenBy !== undefined
+    if (isHidden) {
+      stats.hidden += 1
+      bump(stats.hiddenByRule, session.hiddenBy!)
+    } else {
+      stats.visible += 1
+    }
+    const target = isHidden ? stats.entrypointsHidden : stats.entrypointsVisible
+    const keys = session.entrypoints.length > 0 ? session.entrypoints : ['(none)']
+    for (const key of keys) bump(target, key)
+  }
+  return stats
+}
+
+function formatHistogram(title: string, record: Record<string, number>): string[] {
+  const entries = Object.entries(record).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+  if (entries.length === 0) return []
+  const width = Math.max(...entries.map(([key]) => key.length))
+  return [``, `${title}:`, ...entries.map(([key, n]) => `  ${key.padEnd(width)}  ${n}`)]
+}
+
+export function formatStats(stats: Stats): string {
+  return [
+    `sessions: ${stats.total} (${stats.visible} visible, ${stats.hidden} hidden)`,
+    ...formatHistogram('entrypoints (visible sessions)', stats.entrypointsVisible),
+    ...formatHistogram('entrypoints (hidden sessions)', stats.entrypointsHidden),
+    ...formatHistogram('hidden by rule', stats.hiddenByRule),
+  ].join('\n')
+}
+
 function printSnapshot(deps: CliDeps, snapshot: Snapshot, json: boolean): void {
   deps.write((json ? JSON.stringify(snapshot, null, 2) : formatSnapshot(snapshot)) + '\n')
 }
@@ -188,6 +241,18 @@ async function scan(deps: CliDeps, flags: Flags): Promise<number> {
   }
   state = await enrich(state, deps.fs)
   printSnapshot(deps, buildSnapshot(state, snapshotOptions(deps, flags)), flags.json)
+  return 0
+}
+
+async function statsCommand(deps: CliDeps, flags: Flags): Promise<number> {
+  let state = emptyState
+  for (const store of makeStores(deps, flags.roots)) {
+    state = foldAll(state, await scanStore(deps.fs, store))
+  }
+  // Stats never need the git enricher — visibility and entrypoints are
+  // transcript-derived, so skip the expensive part.
+  const stats = computeStats(buildSnapshot(state, snapshotOptions(deps, flags)))
+  deps.write((flags.json ? JSON.stringify(stats, null, 2) : formatStats(stats)) + '\n')
   return 0
 }
 
@@ -254,6 +319,9 @@ export async function run(argv: string[], deps: CliDeps): Promise<number> {
 
     case 'scan':
       return scan(deps, flags)
+
+    case 'stats':
+      return statsCommand(deps, flags)
 
     case 'watch':
       return watch(deps, flags)

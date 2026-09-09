@@ -89,8 +89,11 @@ export function buildSnapshot(state: CoreState, options: SnapshotOptions): Snaps
         accum,
         state.runtimes[accum.id] ?? inferRuntime(accum, options.now, windowMs),
       )
-      if (options.hide !== undefined && session.cwd !== undefined) {
-        const rule = hiddenBy(session.cwd, options.hide)
+      if (options.hide !== undefined) {
+        const rule = hiddenBy(
+          { ...(session.cwd !== undefined ? { cwd: session.cwd } : {}), entrypoints: session.entrypoints },
+          options.hide,
+        )
         if (rule !== undefined) session.hiddenBy = rule
       }
       return session

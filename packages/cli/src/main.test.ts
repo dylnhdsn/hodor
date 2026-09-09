@@ -15,7 +15,7 @@ function memDeps(fs = new MemFs()): { deps: CliDeps; output: string[]; fs: MemFs
   return { deps, output, fs }
 }
 
-const line = (uuid: string, ts: string, cwd: string, prompt?: string) =>
+const line = (uuid: string, ts: string, cwd: string, prompt?: string, entrypoint?: string) =>
   JSON.stringify({
     type: 'user',
     uuid,
@@ -23,13 +23,14 @@ const line = (uuid: string, ts: string, cwd: string, prompt?: string) =>
     isSidechain: false,
     timestamp: ts,
     cwd,
+    ...(entrypoint !== undefined ? { entrypoint } : {}),
     ...(prompt !== undefined ? { message: { role: 'user', content: prompt } } : {}),
   }) + '\n'
 
 function seedStore(fs: MemFs): void {
   fs.writeFile(
     '/home/u/.claude/projects/-repo-a/aaaa.jsonl',
-    line('u1', '2026-06-01T11:59:00Z', '/repo/a', 'Fix the login bug please') +
+    line('u1', '2026-06-01T11:59:00Z', '/repo/a', 'Fix the login bug please', 'cli') +
       line('u2', '2026-06-01T11:59:30Z', '/repo/a'),
   )
   fs.writeFile('/home/u/.claude/projects/-elsewhere/bbbb.jsonl', line('u3', '2026-06-01T08:00:00Z', '/elsewhere'))
@@ -37,7 +38,7 @@ function seedStore(fs: MemFs): void {
   // Ephemeral noise: an agent-harness run in a dot directory and a /tmp scratchpad.
   fs.writeFile(
     '/home/u/.claude/projects/-noise/cccc.jsonl',
-    line('u4', '2026-06-01T09:00:00Z', '/home/u/.peri/runs/2026/cache/blind'),
+    line('u4', '2026-06-01T09:00:00Z', '/home/u/.peri/runs/2026/cache/blind', undefined, 'sdk'),
   )
   fs.writeFile('/home/u/.claude/projects/-scratch/dddd.jsonl', line('u5', '2026-06-01T09:30:00Z', '/tmp/scratch'))
 }
@@ -136,6 +137,35 @@ describe('scan', () => {
     const snapshot = JSON.parse(output.join('')) as Snapshot
     expect(snapshot.sessions.map((s) => s.id)).toEqual(['cccc'])
     expect(snapshot.stores[0]!.rootPath).toBe('/srv/claude')
+  })
+})
+
+describe('stats', () => {
+  it('summarizes entrypoints split by visibility, plus hide-rule counts', async () => {
+    const { deps, output, fs } = memDeps()
+    seedStore(fs)
+    expect(await run(['stats'], deps)).toBe(0)
+    const text = output.join('')
+    expect(text).toContain('sessions: 4 (2 visible, 2 hidden)')
+    expect(text).toMatch(/entrypoints \(visible sessions\):\n(.*\n)*.*cli\s+1/)
+    expect(text).toMatch(/entrypoints \(hidden sessions\):\n(.*\n)*.*sdk\s+1/)
+    expect(text).toMatch(/dot-segment:\.peri\s+1/)
+    expect(text).toMatch(/prefix:\/tmp\s+1/)
+  })
+
+  it('emits stats as JSON', async () => {
+    const { deps, output, fs } = memDeps()
+    seedStore(fs)
+    expect(await run(['stats', '--json'], deps)).toBe(0)
+    const stats = JSON.parse(output.join(''))
+    expect(stats).toEqual({
+      total: 4,
+      visible: 2,
+      hidden: 2,
+      entrypointsVisible: { cli: 1, '(none)': 1 },
+      entrypointsHidden: { sdk: 1, '(none)': 1 },
+      hiddenByRule: { 'dot-segment:.peri': 1, 'prefix:/tmp': 1 },
+    })
   })
 })
 
