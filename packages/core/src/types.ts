@@ -28,15 +28,15 @@ export interface Session {
   id: SessionId
   storeId: StoreId
   transcriptPath: string
-  /** Last observed working directory (from inside the transcript). */
-  cwd: string
+  /** Last observed working directory (from inside the transcript), if any. */
+  cwd?: string
   /** Every working directory observed — sessions can move. */
   cwds: string[]
   gitBranch?: string
   /** Claude-derived summary/title, if any. A hodor rename lives in SessionMeta. */
   summary?: string
-  createdAt: Timestamp
-  lastActivityAt: Timestamp
+  createdAt?: Timestamp
+  lastActivityAt?: Timestamp
   cliVersion?: string
   counts: { user: number; assistant: number; sidechains: number }
   threads: Thread[]
@@ -94,4 +94,6 @@ export interface SessionMeta {
   archived?: boolean
   pinned?: boolean
   tags?: string[]
+  /** User override: force this session into a project. Beats all heuristics. */
+  pinnedProject?: ProjectId
 }

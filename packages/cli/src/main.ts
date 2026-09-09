@@ -1,17 +1,44 @@
 import { createRequire } from 'node:module'
-import { mungeCwd } from '@hodor/core'
+import {
+  StoreTailer,
+  buildSnapshot,
+  emptyState,
+  enrichGitContexts,
+  foldAll,
+  mungeCwd,
+  pathOps,
+  scanStore,
+  type CoreState,
+  type FileSystem,
+  type PathFlavor,
+  type SessionStore,
+  type Snapshot,
+} from '@hodor/core'
 
-export interface RunResult {
-  exitCode: number
-  output: string
+/**
+ * The CLI is the first presentation layer over the data core — the
+ * inspection loop until real UI exists. All effects come in through
+ * CliDeps so tests can drive everything against MemFs.
+ */
+export interface CliDeps {
+  fs: FileSystem
+  homedir(): string
+  platformFlavor: PathFlavor
+  now(): Date
+  write(text: string): void
+  sleep(ms: number): Promise<void>
 }
 
 const USAGE = `hodor — session manager (data core, early days)
 
 Usage:
-  hodor --version          Print the CLI version
-  hodor bucket <cwd>       Print the ~/.claude/projects bucket name for a cwd
-  hodor scan               (not implemented yet)
+  hodor scan [--json] [--root <path>]...    Discover and organize sessions
+  hodor watch [--json] [--interval <ms>] [--root <path>]...
+                                            Scan, then live-update on changes
+  hodor bucket <cwd>                        Print the ~/.claude/projects bucket for a cwd
+  hodor --version                           Print the CLI version
+
+Stores default to <home>/.claude; pass --root to add or replace store roots.
 `.trim()
 
 function version(): string {
@@ -20,35 +47,175 @@ function version(): string {
   return pkg.version
 }
 
-export function run(argv: string[]): RunResult {
-  const [command, ...rest] = argv
+interface Flags {
+  json: boolean
+  roots: string[]
+  intervalMs: number
+  ticks?: number
+  rest: string[]
+  error?: string
+}
+
+function parseFlags(args: string[]): Flags {
+  const flags: Flags = { json: false, roots: [], intervalMs: 2000, rest: [] }
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!
+    if (arg === '--json') flags.json = true
+    else if (arg === '--root' || arg === '--interval' || arg === '--ticks') {
+      const value = args[++i]
+      if (value === undefined) {
+        flags.error = `${arg}: missing value`
+        break
+      }
+      if (arg === '--root') flags.roots.push(value)
+      if (arg === '--interval') flags.intervalMs = Number(value)
+      if (arg === '--ticks') flags.ticks = Number(value)
+    } else flags.rest.push(arg)
+  }
+  return flags
+}
+
+function makeStores(deps: CliDeps, roots: string[]): SessionStore[] {
+  const rootPaths =
+    roots.length > 0 ? roots : [pathOps(deps.platformFlavor).join(deps.homedir(), '.claude')]
+  return rootPaths.map((rootPath, index) => {
+    const wsl = rootPath.match(/^\\\\wsl\$\\([^\\]+)/)
+    return {
+      id: rootPaths.length === 1 ? 'local' : `store${index}`,
+      rootPath,
+      // A WSL store read from Windows holds posix cwds in its transcripts.
+      pathFlavor: wsl ? 'posix' : deps.platformFlavor,
+      origin: wsl?.[1] !== undefined ? { kind: 'wsl', distro: wsl[1] } : { kind: 'native' },
+      watchStrategy: 'poll',
+    }
+  })
+}
+
+async function enrich(state: CoreState, fs: FileSystem): Promise<CoreState> {
+  return foldAll(state, await enrichGitContexts(state, fs))
+}
+
+export function formatSnapshot(snapshot: Snapshot): string {
+  const lines: string[] = []
+  const active = snapshot.sessions.filter((s) => s.runtime.kind !== 'idle').length
+  lines.push(
+    `${snapshot.sessions.length} session(s) in ${snapshot.projects.length} project(s), ${active} active`,
+  )
+
+  const byProject = new Map<string, string[]>()
+  for (const a of snapshot.assignments) {
+    const list = byProject.get(a.projectId) ?? []
+    list.push(a.sessionId)
+    byProject.set(a.projectId, list)
+  }
+  const assigned = new Set(snapshot.assignments.map((a) => a.sessionId))
+  const sessionById = new Map(snapshot.sessions.map((s) => [s.id, s]))
+
+  for (const project of snapshot.projects) {
+    lines.push('')
+    lines.push(`${project.name}  [${project.id}]`)
+    for (const sessionId of byProject.get(project.id) ?? []) {
+      const s = sessionById.get(sessionId)
+      if (s === undefined) continue
+      const title = s.summary ?? '(untitled)'
+      const when = s.lastActivityAt ?? '-'
+      const mark = s.runtime.kind === 'idle' ? ' ' : '*'
+      lines.push(`  ${mark} ${s.id.slice(0, 8)}  ${when}  ${s.cwd ?? '-'}  ${title}`)
+    }
+  }
+
+  const unassigned = snapshot.sessions.filter((s) => !assigned.has(s.id))
+  if (unassigned.length > 0) {
+    lines.push('')
+    lines.push('(unassigned)')
+    for (const s of unassigned) lines.push(`    ${s.id.slice(0, 8)}  ${s.lastActivityAt ?? '-'}`)
+  }
+  return lines.join('\n')
+}
+
+function printSnapshot(deps: CliDeps, snapshot: Snapshot, json: boolean): void {
+  deps.write((json ? JSON.stringify(snapshot, null, 2) : formatSnapshot(snapshot)) + '\n')
+}
+
+async function scan(deps: CliDeps, flags: Flags): Promise<number> {
+  let state = emptyState
+  for (const store of makeStores(deps, flags.roots)) {
+    state = foldAll(state, await scanStore(deps.fs, store))
+  }
+  state = await enrich(state, deps.fs)
+  printSnapshot(deps, buildSnapshot(state, { now: deps.now() }), flags.json)
+  return 0
+}
+
+async function watch(deps: CliDeps, flags: Flags): Promise<number> {
+  const tailers = makeStores(deps, flags.roots).map((store) => new StoreTailer(deps.fs, store))
+  let state = emptyState
+  for (const tailer of tailers) state = foldAll(state, await tailer.poll())
+  state = await enrich(state, deps.fs)
+  printSnapshot(deps, buildSnapshot(state, { now: deps.now() }), flags.json)
+
+  for (let tick = 0; flags.ticks === undefined || tick < flags.ticks; tick++) {
+    await deps.sleep(flags.intervalMs)
+    let changed = false
+    for (const tailer of tailers) {
+      const events = await tailer.poll()
+      if (events.length > 0) {
+        state = foldAll(state, events)
+        changed = true
+      }
+    }
+    if (!changed) continue
+    state = await enrich(state, deps.fs)
+    deps.write('---\n')
+    printSnapshot(deps, buildSnapshot(state, { now: deps.now() }), flags.json)
+  }
+  return 0
+}
+
+export async function run(argv: string[], deps: CliDeps): Promise<number> {
+  const [command, ...args] = argv
+  const flags = parseFlags(args)
+  if (flags.error !== undefined) {
+    deps.write(flags.error + '\n')
+    return 1
+  }
 
   switch (command) {
     case undefined:
     case 'help':
     case '--help':
     case '-h':
-      return { exitCode: 0, output: USAGE }
+      deps.write(USAGE + '\n')
+      return 0
 
     case '--version':
     case '-v':
-      return { exitCode: 0, output: version() }
+      deps.write(version() + '\n')
+      return 0
 
     case 'bucket': {
-      const cwd = rest[0]
+      const cwd = flags.rest[0]
       if (cwd === undefined) {
-        return { exitCode: 1, output: 'bucket: missing <cwd> argument' }
+        deps.write('bucket: missing <cwd> argument\n')
+        return 1
       }
       const munged = mungeCwd(cwd)
-      return munged.kind === 'exact'
-        ? { exitCode: 0, output: munged.dirName }
-        : { exitCode: 0, output: `${munged.dirNamePrefix}-* (truncated; suffix is a CLI-internal hash)` }
+      deps.write(
+        (munged.kind === 'exact'
+          ? munged.dirName
+          : `${munged.dirNamePrefix}-* (truncated; suffix is a CLI-internal hash)`) + '\n',
+      )
+      return 0
     }
 
     case 'scan':
-      return { exitCode: 1, output: 'scan: not implemented yet' }
+      return scan(deps, flags)
+
+    case 'watch':
+      return watch(deps, flags)
 
     default:
-      return { exitCode: 1, output: `unknown command: ${command}\n\n${USAGE}` }
+      deps.write(`unknown command: ${command}\n\n${USAGE}\n`)
+      return 1
   }
 }

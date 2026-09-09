@@ -6,7 +6,10 @@
     "src/**/*.ts",
     "!src/**/*.test.ts",
     "!src/index.ts",
-    "!src/types.ts"
+    "!src/types.ts",
+    "!src/events.ts",
+    "!src/claude/fixtures.ts",
+    "!src/node/**"
   ],
   "reporters": ["clear-text", "progress"],
   "thresholds": { "high": 90, "low": 80, "break": 70 },
