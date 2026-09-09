@@ -140,6 +140,38 @@ describe('scan', () => {
   })
 })
 
+describe('scan formatting details', () => {
+  it('titles command-started sessions, sorts by recency, relativizes cwds', async () => {
+    const { deps, output, fs } = memDeps()
+    fs.writeFile('/repo/a/.git/config', '[remote "origin"]\n\turl = git@github.com:o/a.git\n')
+    fs.writeFile(
+      '/home/u/.claude/projects/-repo-a/old1.jsonl',
+      JSON.stringify({
+        type: 'user',
+        uuid: 'u1',
+        parentUuid: null,
+        isSidechain: false,
+        timestamp: '2026-06-01T09:00:00Z',
+        cwd: '/repo/a/packages/web',
+        message: { content: '<command-name>/deploy</command-name>' },
+      }) + '\n',
+    )
+    fs.writeFile(
+      '/home/u/.claude/projects/-repo-a/new1.jsonl',
+      line('u2', '2026-06-01T10:00:00Z', '/repo/a', 'newer session'),
+    )
+    expect(await run(['scan'], deps)).toBe(0)
+    const text = output.join('')
+    expect(text).toContain('/deploy')
+    expect(text).not.toContain('<command-name>')
+    // newer session listed before older within the project
+    expect(text.indexOf('new1')).toBeLessThan(text.indexOf('old1'))
+    // cwd shown relative to the project root
+    expect(text).toMatch(/old1.*packages\/web/)
+    expect(text).toMatch(/new1.*\d\dZ {2}\. {2}newer session/)
+  })
+})
+
 describe('stats', () => {
   it('summarizes entrypoints split by visibility, plus hide-rule counts', async () => {
     const { deps, output, fs } = memDeps()

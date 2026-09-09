@@ -37,6 +37,8 @@ export interface Session {
   summary?: string
   /** First real user prompt, truncated — the display-title fallback. */
   promptPreview?: string
+  /** First slash command that started the session, e.g. "/gsd-resume-work". */
+  firstCommand?: string
   /** Unique entrypoint values observed on this session's lines (cli, sdk, …). */
   entrypoints: string[]
   /** Set when a visibility rule classified this session as noise (provenance). */

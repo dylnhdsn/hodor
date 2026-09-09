@@ -73,6 +73,7 @@ function toSession(accum: SessionAccum, runtime: Runtime): Session {
   if (accum.gitBranch !== undefined) session.gitBranch = accum.gitBranch
   if (accum.summary !== undefined) session.summary = accum.summary
   if (accum.promptPreview !== undefined) session.promptPreview = accum.promptPreview
+  if (accum.firstCommand !== undefined) session.firstCommand = accum.firstCommand
   if (accum.createdAt !== undefined) session.createdAt = accum.createdAt
   if (accum.lastActivityAt !== undefined) session.lastActivityAt = accum.lastActivityAt
   if (accum.cliVersion !== undefined) session.cliVersion = accum.cliVersion

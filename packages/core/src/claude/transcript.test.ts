@@ -134,6 +134,36 @@ describe('parseTranscriptLine edge cases', () => {
     expect(blocks).not.toHaveProperty('promptText')
   })
 
+  it('extracts slash-command names instead of command markup', () => {
+    const viaName = parseTranscriptLine(
+      JSON.stringify({
+        type: 'user',
+        uuid: 'u1',
+        message: {
+          content:
+            '<command-message>gsd-resume-work</command-message>\n<command-name>/gsd-resume-work</command-name>',
+        },
+      }),
+    )
+    expect(viaName).toMatchObject({ commandName: '/gsd-resume-work' })
+    expect(viaName).not.toHaveProperty('promptText')
+
+    const viaMessage = parseTranscriptLine(
+      JSON.stringify({
+        type: 'user',
+        uuid: 'u2',
+        message: { content: '<command-message>peri:peri</command-message>' },
+      }),
+    )
+    expect(viaMessage).toMatchObject({ commandName: '/peri:peri' })
+
+    const unextractable = parseTranscriptLine(
+      JSON.stringify({ type: 'user', uuid: 'u3', message: { content: '<command-mystery/>' } }),
+    )
+    expect(unextractable).not.toHaveProperty('commandName')
+    expect(unextractable).not.toHaveProperty('promptText')
+  })
+
   it('reports why a line is invalid', () => {
     expect(parseTranscriptLine('{oops')).toMatchObject({ kind: 'invalid', error: expect.stringContaining('not JSON') })
     expect(parseTranscriptLine('42')).toMatchObject({ kind: 'invalid', error: 'not a JSON object' })

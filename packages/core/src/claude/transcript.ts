@@ -58,6 +58,8 @@ export interface MessageLine {
   entrypoint?: string
   /** For user messages: the prompt text, whitespace-collapsed and truncated. */
   promptText?: string
+  /** For user messages that invoke a slash command: its name, e.g. "/model". */
+  commandName?: string
   spawnedBy?: { toolUseId: string; assistantUuid: string }
 }
 
@@ -82,23 +84,36 @@ export type TranscriptLine = MessageLine | SummaryLine | OtherLine | InvalidLine
 export const PROMPT_TEXT_MAX_LENGTH = 120
 
 /** Message content is a string or an array of blocks; take the first text. */
-function extractPromptText(content: unknown): string | undefined {
-  let text: string | undefined
-  if (typeof content === 'string') {
-    text = content
-  } else if (Array.isArray(content)) {
-    for (const block of content) {
-      const candidate = (block as { type?: unknown; text?: unknown } | null) ?? {}
-      if (candidate.type === 'text' && typeof candidate.text === 'string') {
-        text = candidate.text
-        break
-      }
-    }
+function firstTextOf(content: unknown): string | undefined {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return undefined
+  for (const block of content) {
+    const candidate = (block as { type?: unknown; text?: unknown } | null) ?? {}
+    if (candidate.type === 'text' && typeof candidate.text === 'string') return candidate.text
   }
+  return undefined
+}
+
+type PromptContent = { kind: 'prompt'; text: string } | { kind: 'command'; name: string }
+
+/**
+ * A session started with a slash command records it as XML-ish markup
+ * (`<command-message>…</command-message> <command-name>/foo</command-name>`),
+ * which makes a terrible title — extract the command name instead.
+ */
+function classifyPromptContent(content: unknown): PromptContent | undefined {
+  const text = firstTextOf(content)
   if (text === undefined) return undefined
   const collapsed = text.replace(/\s+/g, ' ').trim()
   if (collapsed.length === 0) return undefined
-  return collapsed.slice(0, PROMPT_TEXT_MAX_LENGTH)
+  if (collapsed.startsWith('<command-')) {
+    const name =
+      collapsed.match(/<command-name>\s*([^<]+?)\s*<\/command-name>/)?.[1] ??
+      collapsed.match(/<command-message>\s*([^<]+?)\s*<\/command-message>/)?.[1]
+    if (name === undefined) return undefined
+    return { kind: 'command', name: name.startsWith('/') ? name : `/${name}` }
+  }
+  return { kind: 'prompt', text: collapsed.slice(0, PROMPT_TEXT_MAX_LENGTH) }
 }
 
 export function parseTranscriptLine(raw: string): TranscriptLine {
@@ -149,8 +164,9 @@ export function parseTranscriptLine(raw: string): TranscriptLine {
     if (d.version !== undefined) line.version = d.version
     if (d.entrypoint !== undefined) line.entrypoint = d.entrypoint
     if (type === 'user' && !line.isMeta) {
-      const promptText = extractPromptText(d.message?.content)
-      if (promptText !== undefined) line.promptText = promptText
+      const content = classifyPromptContent(d.message?.content)
+      if (content?.kind === 'prompt') line.promptText = content.text
+      if (content?.kind === 'command') line.commandName = content.name
     }
     if (d.toolUseID !== undefined && d.sourceToolAssistantUUID !== undefined) {
       line.spawnedBy = { toolUseId: d.toolUseID, assistantUuid: d.sourceToolAssistantUUID }

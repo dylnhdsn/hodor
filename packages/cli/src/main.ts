@@ -155,17 +155,33 @@ export function formatSnapshot(snapshot: Snapshot): string {
   const assigned = new Set(snapshot.assignments.map((a) => a.sessionId))
   const sessionById = new Map(snapshot.sessions.map((s) => [s.id, s]))
 
+  // Display cwds relative to the project's shortest root that contains them.
+  const relativeCwd = (cwd: string | undefined, roots: Array<{ path: string }>): string => {
+    if (cwd === undefined) return '-'
+    const containing = roots
+      .map((r) => r.path)
+      .filter((root) => cwd === root || cwd.startsWith(root + '/') || cwd.startsWith(root + '\\'))
+      .sort((a, b) => a.length - b.length)[0]
+    if (containing === undefined) return cwd
+    return cwd === containing ? '.' : cwd.slice(containing.length + 1)
+  }
+
   for (const project of shownProjects) {
     lines.push('')
     lines.push(`${project.name}  [${project.id}]`)
-    for (const sessionId of byProject.get(project.id) ?? []) {
-      const s = sessionById.get(sessionId)
-      if (s === undefined) continue
-      const rawTitle = s.summary ?? s.promptPreview ?? '(untitled)'
+    const sessions = (byProject.get(project.id) ?? [])
+      .map((id) => sessionById.get(id))
+      .filter((s) => s !== undefined)
+      .sort(
+        (a, b) =>
+          (b.lastActivityAt ?? '').localeCompare(a.lastActivityAt ?? '') || a.id.localeCompare(b.id),
+      )
+    for (const s of sessions) {
+      const rawTitle = s.summary ?? s.promptPreview ?? s.firstCommand ?? '(untitled)'
       const title = rawTitle.length > 60 ? rawTitle.slice(0, 59) + '…' : rawTitle
       const when = s.lastActivityAt ?? '-'
       const mark = s.runtime.kind === 'idle' ? ' ' : '*'
-      lines.push(`  ${mark} ${s.id.slice(0, 8)}  ${when}  ${s.cwd ?? '-'}  ${title}`)
+      lines.push(`  ${mark} ${s.id.slice(0, 8)}  ${when}  ${relativeCwd(s.cwd, project.roots)}  ${title}`)
     }
   }
 

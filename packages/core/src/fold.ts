@@ -26,8 +26,10 @@ export interface SessionAccum {
   createdAt?: string
   lastActivityAt?: string
   cliVersion?: string
-  /** First real (non-meta) user prompt — the fallback title. */
+  /** First real (non-meta, non-command) user prompt — the fallback title. */
   promptPreview?: string
+  /** First slash command that started the session, e.g. "/gsd-resume-work". */
+  firstCommand?: string
   /** Unique entrypoint values observed (cli, sdk, remote, …). */
   entrypoints: string[]
   userCount: number
@@ -112,6 +114,9 @@ function applyMessage(accum: SessionAccum, line: MessageLine): void {
     accum.userCount += 1
     if (accum.promptPreview === undefined && line.promptText !== undefined) {
       accum.promptPreview = line.promptText
+    }
+    if (accum.firstCommand === undefined && line.commandName !== undefined) {
+      accum.firstCommand = line.commandName
     }
   }
   if (line.type === 'assistant') accum.assistantCount += 1

@@ -101,6 +101,18 @@ describe('fold', () => {
     expect(accum.main.messageCount).toBe(3)
   })
 
+  it('keeps the first command separate from the prompt preview', () => {
+    const state = foldAll(emptyState, [
+      lines('a', [
+        msg({ uuid: 'u1', commandName: '/gsd-resume-work' }),
+        msg({ uuid: 'u2', promptText: 'now fix the tests' }),
+      ]),
+    ])
+    const accum = state.sessions['a']!
+    expect(accum.firstCommand).toBe('/gsd-resume-work')
+    expect(accum.promptPreview).toBe('now fix the tests')
+  })
+
   it('counts system messages in the main thread but not in user/assistant', () => {
     const state = foldAll(emptyState, [
       lines('a', [
