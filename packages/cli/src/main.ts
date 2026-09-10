@@ -1,4 +1,3 @@
-import { createRequire } from 'node:module'
 import {
   StoreTailer,
   buildSnapshot,
@@ -17,6 +16,7 @@ import {
   type Snapshot,
   type SnapshotOptions,
 } from '@hodor/core'
+import { cliVersion } from './version.js'
 
 /**
  * The CLI is the first presentation layer over the data core — the
@@ -30,6 +30,8 @@ export interface CliDeps {
   now(): Date
   write(text: string): void
   sleep(ms: number): Promise<void>
+  /** Replace the installed bundle with the latest release (hodor update). */
+  selfUpdate(): Promise<number>
 }
 
 const USAGE = `hodor — session manager (data core, early days)
@@ -40,6 +42,7 @@ Usage:
                                             Scan, then live-update on changes
   hodor stats [--json] [--root <path>]...   Entrypoint and visibility histograms
   hodor bucket <cwd>                        Print the ~/.claude/projects bucket for a cwd
+  hodor update                              Update to the latest build (alias: upgrade)
   hodor --version                           Print the CLI version
 
 Stores default to <home>/.claude; pass --root to add or replace store roots.
@@ -52,12 +55,6 @@ Visibility (scan/watch):
                    dot-directories except .claude. Hidden sessions stay in
                    --json output, tagged with the rule that hid them.
 `.trim()
-
-function version(): string {
-  const require = createRequire(import.meta.url)
-  const pkg = require('../package.json') as { version: string }
-  return pkg.version
-}
 
 interface Flags {
   json: boolean
@@ -315,8 +312,12 @@ export async function run(argv: string[], deps: CliDeps): Promise<number> {
 
     case '--version':
     case '-v':
-      deps.write(version() + '\n')
+      deps.write(cliVersion() + '\n')
       return 0
+
+    case 'update':
+    case 'upgrade':
+      return deps.selfUpdate()
 
     case 'bucket': {
       const cwd = flags.rest[0]

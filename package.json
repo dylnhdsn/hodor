@@ -11,6 +11,10 @@
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
     "mutation": "pnpm --filter @hodor/core mutation",
-    "verify": "pnpm build && pnpm typecheck && pnpm test"
+    "verify": "pnpm build && pnpm typecheck && pnpm test",
+    "bundle": "node scripts/bundle.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
   }
 }

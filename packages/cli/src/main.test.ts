@@ -11,6 +11,10 @@ function memDeps(fs = new MemFs()): { deps: CliDeps; output: string[]; fs: MemFs
     now: () => new Date('2026-06-01T12:00:00Z'),
     write: (text) => output.push(text),
     sleep: async () => {},
+    selfUpdate: async () => {
+      output.push('selfUpdate-stub\n')
+      return 0
+    },
   }
   return { deps, output, fs }
 }
@@ -65,6 +69,13 @@ describe('basic commands', () => {
   it('fails on bucket without an argument', async () => {
     const { deps } = memDeps()
     expect(await run(['bucket'], deps)).toBe(1)
+  })
+
+  it('dispatches update and upgrade to selfUpdate', async () => {
+    const { deps, output } = memDeps()
+    expect(await run(['update'], deps)).toBe(0)
+    expect(await run(['upgrade'], deps)).toBe(0)
+    expect(output.filter((o) => o === 'selfUpdate-stub\n')).toHaveLength(2)
   })
 
   it('fails on unknown commands', async () => {

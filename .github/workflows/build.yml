@@ -1,0 +1,63 @@
+name: build
+
+on:
+  push:
+    branches: ['**']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm verify
+
+      - name: Bundle
+        run: |
+          VERSION="$(node -p "require('./packages/cli/package.json').version")-build.${{ github.run_number }}.$(git rev-parse --short HEAD)"
+          echo "Building hodor $VERSION"
+          HODOR_BUILD_VERSION="$VERSION" node scripts/bundle.mjs
+          node dist-release/hodor.mjs --version
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hodor
+          path: dist-release/
+
+      - name: Publish rolling release
+        if: github.ref_name == github.event.repository.default_branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view "latest" >/dev/null 2>&1; then
+            gh release create "latest" --prerelease --title "Rolling build" \
+              --notes "Automated rolling build" --target "$GITHUB_SHA"
+          fi
+          gh release upload "latest" \
+            dist-release/hodor.mjs \
+            dist-release/version.json \
+            scripts/install.sh \
+            scripts/install.ps1 \
+            --clobber
+          gh release edit "latest" \
+            --notes "Rolling build from ${GITHUB_SHA} (run ${{ github.run_number }}, $(date -u +'%Y-%m-%dT%H:%M:%SZ'))"
+
+  mutation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm mutation

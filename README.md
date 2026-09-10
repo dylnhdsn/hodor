@@ -32,6 +32,31 @@ hodor bucket <cwd>    # the ~/.claude/projects bucket name for a cwd
 Stores default to `<home>/.claude`; pass `--root <path>` to add or replace
 store roots (a `\\wsl$\...` root is recognized as a WSL store).
 
+## Install
+
+Every push to the default branch publishes a rolling build to the
+[`latest` release](https://github.com/dylnhdsn/hodor/releases/tag/latest).
+Requires Node >= 22 on your PATH.
+
+Linux / WSL / macOS:
+
+```sh
+curl -fsSL https://github.com/dylnhdsn/hodor/releases/download/latest/install.sh | sh
+```
+
+Windows PowerShell:
+
+```powershell
+irm https://github.com/dylnhdsn/hodor/releases/download/latest/install.ps1 | iex
+```
+
+Both install to `~/.hodor/bin` (override with `HODOR_HOME`) and add it to
+your PATH. After that, get the newest build any time with:
+
+```sh
+hodor update    # alias: hodor upgrade
+```
+
 ## Development
 
 Requires Node >= 22 and pnpm.
