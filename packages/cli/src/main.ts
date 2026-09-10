@@ -6,12 +6,8 @@ import {
   driveMountTranslator,
   enrichGitContexts,
   foldAll,
-  emptyUserPlane,
-  flavorOfPath,
   mergeHideRules,
   mungeCwd,
-  parseHodorConfig,
-  parseUserPlane,
   pathOps,
   scanStore,
   translatePathFs,
@@ -23,13 +19,14 @@ import {
   type SourceEvent,
   type StoreId,
   type HideRules,
-  type UserPlane,
   type PathFlavor,
   type SessionStore,
   type Snapshot,
   type SnapshotOptions,
 } from '@hodor/core'
+import { projectCommand, sessionCommand } from './curate.js'
 import { formatSnapshot } from './format.js'
+import { loadUserFiles, type UserFiles } from './userdata.js'
 import { cliVersion } from './version.js'
 
 /**
@@ -65,6 +62,9 @@ Usage:
   hodor watch [--json] [--interval <ms>] [--root <path>]...
                                             Scan, then live-update on changes
   hodor stats [--json] [--root <path>]...   Entrypoint and visibility histograms
+  hodor project <list|create|rename|delete|match|unmatch|include|exclude>
+                                            Curate custom projects (projects.json)
+  hodor session <rename|archive|unarchive>  Per-session overrides (config.json)
   hodor bucket <cwd>                        Print the ~/.claude/projects bucket for a cwd
   hodor update                              Update to the latest build (alias: upgrade)
   hodor --version                           Print the CLI version
@@ -150,60 +150,6 @@ function snapshotOptions(deps: CliDeps, flags: Flags, config: HodorConfig): Snap
   const hide = hideRules(flags, config)
   if (hide !== undefined) options.hide = hide
   return options
-}
-
-/**
- * Where the user plane lives (docs/brainstorm/008): HODOR_HOME wins; from
- * inside WSL a unique Windows-side install (/mnt/c/Users/<u>/.hodor) is the
- * home, so Windows and WSL share one set of user data; otherwise ~/.hodor.
- */
-async function resolveDataHome(deps: CliDeps): Promise<string> {
-  const override = deps.env('HODOR_HOME')
-  if (override !== undefined && override.length > 0) return override
-  if (deps.platformFlavor === 'posix' && deps.wslDistro() !== undefined) {
-    const candidates: string[] = []
-    for (const user of await deps.fs.listDir('/mnt/c/Users')) {
-      const dir = `/mnt/c/Users/${user}/.hodor`
-      if ((await deps.fs.stat(dir))?.kind === 'dir') candidates.push(dir)
-    }
-    if (candidates.length === 1) return candidates[0]!
-    if (candidates.length > 1) {
-      deps.writeErr(
-        'hodor: multiple Windows .hodor homes found; using the local one (set HODOR_HOME to choose)\n',
-      )
-    }
-  }
-  return pathOps(deps.platformFlavor).join(deps.homedir(), '.hodor')
-}
-
-interface UserFiles {
-  config: HodorConfig
-  plane: UserPlane
-}
-
-async function loadUserFiles(deps: CliDeps): Promise<UserFiles> {
-  const home = await resolveDataHome(deps)
-  const p = pathOps(flavorOfPath(home))
-
-  let config: HodorConfig = {}
-  const configPath = p.join(home, 'config.json')
-  const configRaw = await deps.fs.readFile(configPath)
-  if (configRaw !== undefined) {
-    const parsed = parseHodorConfig(configRaw)
-    if (parsed.error !== undefined) deps.writeErr(`hodor: ignoring ${configPath}: ${parsed.error}\n`)
-    config = parsed.config
-  }
-
-  let plane: UserPlane = emptyUserPlane
-  const planePath = p.join(home, 'projects.json')
-  const planeRaw = await deps.fs.readFile(planePath)
-  if (planeRaw !== undefined) {
-    const parsed = parseUserPlane(planeRaw)
-    if (parsed.error !== undefined) deps.writeErr(`hodor: ignoring ${planePath}: ${parsed.error}\n`)
-    plane = parsed.plane
-  }
-
-  return { config, plane }
 }
 
 /** Config and user plane enter the pure fold as events, like every input. */
@@ -481,6 +427,12 @@ export async function run(argv: string[], deps: CliDeps): Promise<number> {
       )
       return 0
     }
+
+    case 'project':
+      return projectCommand(deps, args)
+
+    case 'session':
+      return sessionCommand(deps, args)
 
     case 'scan':
       return scan(deps, flags)

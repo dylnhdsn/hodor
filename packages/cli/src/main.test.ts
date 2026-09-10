@@ -58,6 +58,21 @@ function seedStore(fs: MemFs): void {
   fs.writeFile('/home/u/.claude/projects/-scratch/dddd.jsonl', line('u5', '2026-06-01T09:30:00Z', '/tmp/scratch'))
 }
 
+function seedCloneScenario(fs: MemFs): void {
+  fs.writeFile(
+    '/home/u/.claude/projects/-repo-peri/mmmm.jsonl',
+    line('u1', '2026-06-01T10:00:00Z', '/repo/peri', 'main peri work', 'cli'),
+  )
+  fs.writeFile(
+    '/home/u/.claude/projects/-repo-peri-stable/ssss.jsonl',
+    line('u2', '2026-06-01T10:00:01Z', '/repo/peri-stable', 'stable peri work', 'cli'),
+  )
+  fs.writeFile('/repo/peri/.git/config', '[remote "origin"]\n\turl = git@github.com:d/peri.git\n')
+  // peri-stable is a local clone: origin points at the peri directory
+  fs.writeFile('/repo/peri-stable/.git/config', '[remote "origin"]\n\turl = /repo/peri\n')
+}
+
+
 describe('basic commands', () => {
   it('prints usage with no arguments', async () => {
     const { deps, output } = memDeps()
@@ -169,20 +184,6 @@ describe('scan', () => {
 })
 
 describe('user config', () => {
-  function seedCloneScenario(fs: MemFs): void {
-    fs.writeFile(
-      '/home/u/.claude/projects/-repo-peri/mmmm.jsonl',
-      line('u1', '2026-06-01T10:00:00Z', '/repo/peri', 'main peri work', 'cli'),
-    )
-    fs.writeFile(
-      '/home/u/.claude/projects/-repo-peri-stable/ssss.jsonl',
-      line('u2', '2026-06-01T10:00:01Z', '/repo/peri-stable', 'stable peri work', 'cli'),
-    )
-    fs.writeFile('/repo/peri/.git/config', '[remote "origin"]\n\turl = git@github.com:d/peri.git\n')
-    // peri-stable is a local clone: origin points at the peri directory
-    fs.writeFile('/repo/peri-stable/.git/config', '[remote "origin"]\n\turl = /repo/peri\n')
-  }
-
   it('merges local clones into their source project via remote chasing', async () => {
     const { deps, output, fs } = memDeps()
     seedCloneScenario(fs)
@@ -315,6 +316,65 @@ describe('user config', () => {
     expect(await run(['scan', '--json'], deps)).toBe(0)
     expect(errors.join('')).toContain('ignoring /home/u/.hodor/config.json')
     expect(() => JSON.parse(output.join(''))).not.toThrow()
+  })
+})
+
+describe('project and session commands', () => {
+  it('creates a project that the next scan reflects', async () => {
+    const { deps, output, fs } = memDeps()
+    seedCloneScenario(fs)
+    expect(await run(['project', 'create', 'Peri', 'work', '--match', 'remote=github.com/d/peri'], deps)).toBe(0)
+    expect(output.join('')).toContain('created project "Peri work" (peri-work)')
+    expect(JSON.parse((await fs.readFile('/home/u/.hodor/projects.json'))!)).toEqual({
+      projects: {
+        'peri-work': { name: 'Peri work', matchers: [{ kind: 'remote', url: 'github.com/d/peri' }] },
+      },
+    })
+
+    output.length = 0
+    expect(await run(['scan'], deps)).toBe(0)
+    expect(output.join('')).toContain('Peri work — 2 sessions — custom')
+  })
+
+  it('round-trips match/unmatch/include/exclude/rename/delete', async () => {
+    const { deps, output, fs } = memDeps()
+    expect(await run(['project', 'create', 'Lane'], deps)).toBe(0)
+    expect(await run(['project', 'match', 'lane', 'root=/repo/x'], deps)).toBe(0)
+    expect(await run(['project', 'include', 'lane', 'sess1', 'sess2'], deps)).toBe(0)
+    expect(await run(['project', 'exclude', 'lane', 'sess2'], deps)).toBe(0)
+    expect(await run(['project', 'rename', 'lane', 'Fast', 'Lane'], deps)).toBe(0)
+
+    output.length = 0
+    expect(await run(['project', 'list'], deps)).toBe(0)
+    const listing = output.join('')
+    expect(listing).toContain('lane  Fast Lane  (1 matcher, 1 included, 1 excluded)')
+    expect(listing).toContain('root=/repo/x')
+
+    expect(await run(['project', 'unmatch', 'lane', 'root=/repo/x'], deps)).toBe(0)
+    expect(await run(['project', 'delete', 'lane'], deps)).toBe(0)
+    expect(JSON.parse((await fs.readFile('/home/u/.hodor/projects.json'))!)).toEqual({ projects: {} })
+  })
+
+  it('fails with a clear error for unknown projects', async () => {
+    const { deps, errors } = memDeps()
+    expect(await run(['project', 'rename', 'ghost', 'X'], deps)).toBe(1)
+    expect(errors.join('')).toContain('no project "ghost"')
+  })
+
+  it('session rename/archive write config.json preserving existing settings', async () => {
+    const { deps, fs } = memDeps()
+    fs.writeFile('/home/u/.hodor/config.json', JSON.stringify({ hide: { pathSegments: ['keepme'] } }))
+    expect(await run(['session', 'rename', 'abc123', 'The', 'good', 'one'], deps)).toBe(0)
+    expect(await run(['session', 'archive', 'abc123', 'def456'], deps)).toBe(0)
+    const config = JSON.parse((await fs.readFile('/home/u/.hodor/config.json'))!)
+    expect(config.hide).toEqual({ pathSegments: ['keepme'] })
+    expect(config.sessions).toEqual({
+      abc123: { rename: 'The good one', archived: true },
+      def456: { archived: true },
+    })
+    expect(await run(['session', 'unarchive', 'def456'], deps)).toBe(0)
+    const after = JSON.parse((await fs.readFile('/home/u/.hodor/config.json'))!)
+    expect(after.sessions.def456).toEqual({ archived: false })
   })
 })
 

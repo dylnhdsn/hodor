@@ -1,4 +1,5 @@
-import { open, readdir, readFile, stat } from 'node:fs/promises'
+import { mkdir, open, readdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
+import { dirname } from 'node:path'
 import type { FileSystem, FsStat } from '../fs.js'
 
 /** Real-filesystem adapter. Kept at the edge; tests use MemFs instead. */
@@ -28,6 +29,13 @@ export class NodeFs implements FileSystem {
     } catch {
       return undefined
     }
+  }
+
+  async writeFile(path: string, content: string): Promise<void> {
+    await mkdir(dirname(path), { recursive: true })
+    const staging = `${path}.tmp-${process.pid}`
+    await writeFile(staging, content, 'utf8')
+    await rename(staging, path)
   }
 
   async readBytesFrom(path: string, offset: number): Promise<Uint8Array | undefined> {

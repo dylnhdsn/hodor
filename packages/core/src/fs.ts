@@ -18,6 +18,11 @@ export interface FileSystem {
   readFile(path: string): Promise<string | undefined>
   /** Bytes from `offset` to EOF, or undefined when missing. */
   readBytesFrom(path: string, offset: number): Promise<Uint8Array | undefined>
+  /**
+   * Write a whole file as UTF-8, creating parent directories; real
+   * implementations write atomically (temp + rename).
+   */
+  writeFile(path: string, content: string): Promise<void>
 }
 
 /**
@@ -34,6 +39,7 @@ export function translatePathFs(
     listDir: (path) => inner.listDir(translate(path)),
     readFile: (path) => inner.readFile(translate(path)),
     readBytesFrom: (path, offset) => inner.readBytesFrom(translate(path), offset),
+    writeFile: (path, content) => inner.writeFile(translate(path), content),
   }
 }
 
@@ -49,9 +55,10 @@ export class MemFs implements FileSystem {
 
   constructor(private readonly sep: string = '/') {}
 
-  writeFile(path: string, text: string): void {
+  writeFile(path: string, text: string): Promise<void> {
     this.files.set(path, new TextEncoder().encode(text))
     this.mtimes.set(path, ++this.clock)
+    return Promise.resolve()
   }
 
   appendFile(path: string, text: string): void {
