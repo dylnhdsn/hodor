@@ -41,6 +41,7 @@ process.exitCode = await run(process.argv.slice(2), {
   now: () => new Date(),
   write,
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  columns: () => process.stdout.columns ?? 120,
   selfUpdate: () => {
     const token = resolveToken()
     return runUpdate({

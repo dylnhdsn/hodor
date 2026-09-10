@@ -19,6 +19,7 @@ import {
   type Snapshot,
   type SnapshotOptions,
 } from '@hodor/core'
+import { formatSnapshot } from './format.js'
 import { cliVersion } from './version.js'
 
 /**
@@ -33,6 +34,8 @@ export interface CliDeps {
   now(): Date
   write(text: string): void
   sleep(ms: number): Promise<void>
+  /** Terminal width for human-readable output. */
+  columns(): number
   /** Replace the installed bundle with the latest release (hodor update). */
   selfUpdate(): Promise<number>
 }
@@ -156,68 +159,6 @@ async function enrich(
   return foldAll(state, await enrichGitContexts(state, fsFor))
 }
 
-export function formatSnapshot(snapshot: Snapshot): string {
-  const lines: string[] = []
-  const visible = snapshot.sessions.filter((s) => s.hiddenBy === undefined)
-  const hiddenCount = snapshot.sessions.length - visible.length
-  const active = visible.filter((s) => s.runtime.kind !== 'idle').length
-  const visibleIds = new Set(visible.map((s) => s.id))
-
-  const byProject = new Map<string, string[]>()
-  for (const a of snapshot.assignments) {
-    if (!visibleIds.has(a.sessionId)) continue
-    const list = byProject.get(a.projectId) ?? []
-    list.push(a.sessionId)
-    byProject.set(a.projectId, list)
-  }
-  const shownProjects = snapshot.projects.filter((p) => (byProject.get(p.id) ?? []).length > 0)
-
-  let header = `${visible.length} session(s) in ${shownProjects.length} project(s), ${active} active`
-  if (hiddenCount > 0) header += `; ${hiddenCount} hidden (--all to show)`
-  lines.push(header)
-
-  const assigned = new Set(snapshot.assignments.map((a) => a.sessionId))
-  const sessionById = new Map(snapshot.sessions.map((s) => [s.id, s]))
-
-  // Display cwds relative to the project's shortest root that contains them.
-  const relativeCwd = (cwd: string | undefined, roots: Array<{ path: string }>): string => {
-    if (cwd === undefined) return '-'
-    const containing = roots
-      .map((r) => r.path)
-      .filter((root) => cwd === root || cwd.startsWith(root + '/') || cwd.startsWith(root + '\\'))
-      .sort((a, b) => a.length - b.length)[0]
-    if (containing === undefined) return cwd
-    return cwd === containing ? '.' : cwd.slice(containing.length + 1)
-  }
-
-  for (const project of shownProjects) {
-    lines.push('')
-    lines.push(`${project.name}  [${project.id}]`)
-    const sessions = (byProject.get(project.id) ?? [])
-      .map((id) => sessionById.get(id))
-      .filter((s) => s !== undefined)
-      .sort(
-        (a, b) =>
-          (b.lastActivityAt ?? '').localeCompare(a.lastActivityAt ?? '') || a.id.localeCompare(b.id),
-      )
-    for (const s of sessions) {
-      const rawTitle = s.summary ?? s.promptPreview ?? s.firstCommand ?? '(untitled)'
-      const title = rawTitle.length > 60 ? rawTitle.slice(0, 59) + '…' : rawTitle
-      const when = s.lastActivityAt ?? '-'
-      const mark = s.runtime.kind === 'idle' ? ' ' : '*'
-      lines.push(`  ${mark} ${s.id.slice(0, 8)}  ${when}  ${relativeCwd(s.cwd, project.roots)}  ${title}`)
-    }
-  }
-
-  const unassigned = visible.filter((s) => !assigned.has(s.id))
-  if (unassigned.length > 0) {
-    lines.push('')
-    lines.push('(unassigned)')
-    for (const s of unassigned) lines.push(`    ${s.id.slice(0, 8)}  ${s.lastActivityAt ?? '-'}`)
-  }
-  return lines.join('\n')
-}
-
 export interface Stats {
   total: number
   visible: number
@@ -271,7 +212,9 @@ export function formatStats(stats: Stats): string {
 }
 
 function printSnapshot(deps: CliDeps, snapshot: Snapshot, json: boolean): void {
-  deps.write((json ? JSON.stringify(snapshot, null, 2) : formatSnapshot(snapshot)) + '\n')
+  deps.write(
+    (json ? JSON.stringify(snapshot, null, 2) : formatSnapshot(snapshot, deps.columns())) + '\n',
+  )
 }
 
 async function scan(deps: CliDeps, flags: Flags): Promise<number> {

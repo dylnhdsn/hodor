@@ -11,6 +11,7 @@ function memDeps(fs = new MemFs()): { deps: CliDeps; output: string[]; fs: MemFs
     now: () => new Date('2026-06-01T12:00:00Z'),
     write: (text) => output.push(text),
     sleep: async () => {},
+    columns: () => 100,
     selfUpdate: async () => {
       output.push('selfUpdate-stub\n')
       return 0
@@ -114,12 +115,17 @@ describe('scan', () => {
     seedStore(fs)
     expect(await run(['scan'], deps)).toBe(0)
     const text = output.join('')
-    expect(text).toContain('2 session(s) in 2 project(s), 1 active; 2 hidden (--all to show)')
-    expect(text).toContain('a  [git-remote:github.com/o/a]')
+    expect(text).toContain('a — 1 session, 1 active — github.com/o/a')
     expect(text).toContain('* aaaa')
     expect(text).toContain('Fix the login bug please')
-    expect(text).not.toContain('.peri')
+    expect(text).toContain('hidden: 2 sessions, 2 projects —')
+    expect(text).toContain('(--all to show)')
+    expect(text).toContain('2 sessions in 2 projects, 1 active')
+    // hidden sessions never render rows; their rules may appear in the footer
+    expect(text).not.toContain('/home/u/.peri')
     expect(text).not.toContain('/tmp/scratch')
+    expect(text).not.toContain('cccc')
+    expect(text).not.toContain('dddd')
   })
 
   it('shows everything with --all', async () => {
@@ -127,7 +133,7 @@ describe('scan', () => {
     seedStore(fs)
     expect(await run(['scan', '--all'], deps)).toBe(0)
     const text = output.join('')
-    expect(text).toContain('4 session(s) in 4 project(s)')
+    expect(text).toContain('4 sessions in 4 projects, 1 active')
     expect(text).not.toContain('hidden')
     expect(text).toContain('.peri')
   })
@@ -137,8 +143,9 @@ describe('scan', () => {
     seedStore(fs)
     expect(await run(['scan', '--hide', 'elsewhere'], deps)).toBe(0)
     const text = output.join('')
-    expect(text).toContain('1 session(s) in 1 project(s), 1 active; 3 hidden (--all to show)')
-    expect(text).not.toContain('elsewhere')
+    expect(text).toContain('1 session in 1 project, 1 active')
+    expect(text).toContain('hidden: 3 sessions')
+    expect(text).not.toContain('bbbb')
   })
 
   it('accepts explicit store roots', async () => {
@@ -218,11 +225,40 @@ describe('scan formatting details', () => {
     const text = output.join('')
     expect(text).toContain('/deploy')
     expect(text).not.toContain('<command-name>')
-    // newer session listed before older within the project
-    expect(text.indexOf('new1')).toBeLessThan(text.indexOf('old1'))
-    // cwd shown relative to the project root
-    expect(text).toMatch(/old1.*packages\/web/)
-    expect(text).toMatch(/new1.*\d\dZ {2}\. {2}newer session/)
+    // oldest first: the newest session ends the block, right above the prompt
+    expect(text.indexOf('old1')).toBeLessThan(text.indexOf('new1'))
+    // cwd shown relative to the project root, timestamps as relative ages
+    expect(text).toMatch(/old1 {2}\s*3h {2}packages\/web/)
+    expect(text).toMatch(/new1 {2}\s*2h {2}\.\s+newer session/)
+  })
+
+  it('never emits a line wider than the terminal', async () => {
+    const { deps, output, fs } = memDeps()
+    seedStore(fs)
+    fs.writeFile(
+      '/home/u/.claude/projects/-repo-a/wide.jsonl',
+      line(
+        'u9',
+        '2026-06-01T11:00:00Z',
+        '/repo/a/deeply/nested/path/that/keeps/going/further/than/reason',
+        'a very long prompt that would certainly wrap in a narrow terminal window '.repeat(3),
+        'cli',
+      ),
+    )
+    deps.columns = () => 72
+    expect(await run(['scan'], deps)).toBe(0)
+    for (const outputLine of output.join('').split('\n')) {
+      expect(outputLine.length, outputLine).toBeLessThanOrEqual(72)
+    }
+  })
+
+  it('prints the most recently active project last', async () => {
+    const { deps, output, fs } = memDeps()
+    seedStore(fs)
+    expect(await run(['scan'], deps)).toBe(0)
+    const text = output.join('')
+    // 'elsewhere' (08:00) is older than project a (11:59)
+    expect(text.indexOf('elsewhere')).toBeLessThan(text.indexOf('github.com/o/a'))
   })
 })
 
@@ -270,7 +306,7 @@ describe('watch', () => {
       }
       // tick 2: no changes
     }
-    expect(await run(['watch', '--ticks', '2'], deps)).toBe(0)
+    expect(await run(['watch', '--ticks', '2', '--json'], deps)).toBe(0)
 
     const text = output.join('')
     const snapshots = text.split('---\n')
