@@ -51,7 +51,9 @@ const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' 
 const ruleLabel = (rule: string): string => rule.slice(rule.indexOf(':') + 1) || rule
 
 function titleOf(session: Session): string {
-  return session.summary ?? session.promptPreview ?? session.firstCommand ?? '(untitled)'
+  return (
+    session.rename ?? session.summary ?? session.promptPreview ?? session.firstCommand ?? '(untitled)'
+  )
 }
 
 function identityOf(project: Project): string {

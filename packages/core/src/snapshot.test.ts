@@ -359,6 +359,73 @@ describe('buildSnapshot', () => {
     expect(snapshot.assignments.map((a) => a.sessionId)).toEqual(['one', 'two'])
   })
 
+  it('splits configured roots away from their remote project, with renames', () => {
+    const events: SourceEvent[] = [
+      { type: 'store-discovered', store },
+      {
+        type: 'config-changed',
+        config: {
+          splitRoots: ['/home/d/peri-stable'],
+          projectNames: { 'split:s1:/home/d/peri-stable': 'stable lane' },
+        },
+      },
+      ...sessionEvents('main', '2026-06-01T10:00:00Z', '/home/d/peri'),
+      ...sessionEvents('stable', '2026-06-01T10:00:01Z', '/home/d/peri-stable/docs'),
+      {
+        type: 'git-context-resolved',
+        storeId: 's1',
+        cwd: '/home/d/peri',
+        context: { repoRoot: '/home/d/peri', isWorktree: false, remoteUrl: 'git@github.com:d/peri.git' },
+      },
+      {
+        type: 'git-context-resolved',
+        storeId: 's1',
+        cwd: '/home/d/peri-stable/docs',
+        // chasing already unified the remote — the split still wins
+        context: { repoRoot: '/home/d/peri-stable', isWorktree: false, remoteUrl: 'git@github.com:d/peri.git' },
+      },
+    ]
+    const snapshot = buildSnapshot(foldAll(emptyState, events), { now: NOW })
+    expect(snapshot.projects.map((p) => p.id).sort()).toEqual([
+      'git-remote:github.com/d/peri',
+      'split:s1:/home/d/peri-stable',
+    ])
+    const split = snapshot.projects.find((p) => p.id.startsWith('split:'))!
+    expect(split.name).toBe('stable lane')
+    expect(split.roots).toEqual([{ storeId: 's1', path: '/home/d/peri-stable' }])
+    const assignment = snapshot.assignments.find((a) => a.sessionId === 'stable')!
+    expect(assignment.projectId).toBe('split:s1:/home/d/peri-stable')
+    expect(assignment.confidence).toBe(1)
+    expect(assignment.reasons.map((r) => r.source)).toContain('config-split')
+  })
+
+  it('applies renames and archived from session meta', () => {
+    const events: SourceEvent[] = [
+      ...baseEvents,
+      { type: 'meta-changed', meta: { sessionId: 'aaa', rename: 'The good one' } },
+      { type: 'meta-changed', meta: { sessionId: 'bbb', archived: true } },
+    ]
+    const state = foldAll(emptyState, events)
+    const withRules = buildSnapshot(state, {
+      now: NOW,
+      hide: {
+        pathPrefixes: [],
+        pathSegments: [],
+        pathInfixes: [],
+        hideDotSegments: false,
+        dotSegmentAllowlist: [],
+        hideNonInteractive: false,
+        interactiveEntrypoints: [],
+      },
+    })
+    expect(withRules.sessions.find((s) => s.id === 'aaa')!.rename).toBe('The good one')
+    expect(withRules.sessions.find((s) => s.id === 'bbb')!.hiddenBy).toBe('archived')
+
+    // with hiding disabled entirely (--all), archived sessions surface
+    const all = buildSnapshot(state, { now: NOW })
+    expect(all.sessions.find((s) => s.id === 'bbb')!.hiddenBy).toBeUndefined()
+  })
+
   it('is order-independent across files: shuffled events give the same snapshot', () => {
     const eventPool: SourceEvent[][] = [
       [baseEvents[0]!],

@@ -90,11 +90,21 @@ export function buildSnapshot(state: CoreState, options: SnapshotOptions): Snaps
         accum,
         state.runtimes[accum.id] ?? inferRuntime(accum, options.now, windowMs),
       )
+      const meta = state.metas[accum.id]
+      if (meta?.rename !== undefined) session.rename = meta.rename
       if (options.hide !== undefined) {
-        const rule = hiddenBy(
-          { ...(session.cwd !== undefined ? { cwd: session.cwd } : {}), entrypoints: session.entrypoints },
-          options.hide,
-        )
+        // Archived is an explicit user classification; rules come after.
+        // With hiding off (--all), archived sessions surface like the rest.
+        const rule =
+          meta?.archived === true
+            ? 'archived'
+            : hiddenBy(
+                {
+                  ...(session.cwd !== undefined ? { cwd: session.cwd } : {}),
+                  entrypoints: session.entrypoints,
+                },
+                options.hide,
+              )
         if (rule !== undefined) session.hiddenBy = rule
       }
       return session

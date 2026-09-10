@@ -1,4 +1,5 @@
 import type { MessageLine } from './claude/transcript.js'
+import type { HodorConfig } from './config.js'
 import type { SourceEvent } from './events.js'
 import type { GitContext } from './git.js'
 import type { Runtime, SessionId, SessionMeta, SessionStore, StoreId } from './types.js'
@@ -48,6 +49,8 @@ export interface CoreState {
   metas: Record<SessionId, SessionMeta>
   /** Authoritative runtimes (e.g. hosted PTYs); absent = infer from activity. */
   runtimes: Record<SessionId, Runtime>
+  /** Persisted user configuration (splits, names) — the durable layer. */
+  config: HodorConfig
 }
 
 export const emptyState: CoreState = {
@@ -56,6 +59,7 @@ export const emptyState: CoreState = {
   gitContexts: {},
   metas: {},
   runtimes: {},
+  config: {},
 }
 
 export function gitKey(storeId: StoreId, cwd: string): string {
@@ -172,6 +176,9 @@ export function fold(state: CoreState, event: SourceEvent): CoreState {
 
     case 'meta-changed':
       return { ...state, metas: { ...state.metas, [event.meta.sessionId]: event.meta } }
+
+    case 'config-changed':
+      return { ...state, config: event.config }
   }
 }
 

@@ -49,6 +49,53 @@ async function remoteFromConfig(fs: FileSystem, configPath: string): Promise<str
   return pickRemoteUrl(parseGitRemotes(config))
 }
 
+/** Guards local-remote chasing against clone cycles and long chains. */
+const MAX_REMOTE_CHASE = 3
+
+/**
+ * If a remote URL is really a filesystem path (git clone /some/dir writes
+ * exactly that as origin), return that path; undefined for real URLs.
+ */
+export function localRemotePath(remoteUrl: string): string | undefined {
+  let url = remoteUrl.trim()
+  if (url.startsWith('file://')) url = url.slice('file://'.length)
+  if (
+    url.startsWith('/') ||
+    url.startsWith('\\\\') ||
+    /^[A-Za-z]:[\\/]/.test(url) ||
+    url.startsWith('./') ||
+    url.startsWith('../')
+  ) {
+    return url
+  }
+  return undefined
+}
+
+/**
+ * A local-path remote means "my origin is that other checkout on disk" —
+ * the project identity should be the *source* repo's real remote, so a
+ * local clone groups with its origin. Chase one hop at a time up to
+ * MAX_REMOTE_CHASE; cycles and dead ends keep the local path as-is.
+ */
+async function chaseLocalRemote(
+  fs: FileSystem,
+  flavor: PathFlavor,
+  context: GitContext,
+  baseDir: string,
+  depth: number,
+): Promise<GitContext> {
+  if (context.remoteUrl === undefined || depth >= MAX_REMOTE_CHASE) return context
+  const local = localRemotePath(context.remoteUrl)
+  if (local === undefined) return context
+  const p = pathOps(flavor)
+  const target = p.isAbsolute(local) ? p.normalize(local) : p.normalize(p.join(baseDir, local))
+  const chased = await resolveGitContext(fs, flavor, target, depth + 1)
+  if (chased?.remoteUrl !== undefined && localRemotePath(chased.remoteUrl) === undefined) {
+    return { ...context, remoteUrl: chased.remoteUrl }
+  }
+  return context
+}
+
 /**
  * Resolve the git context for a cwd by walking up to the nearest `.git`.
  *
@@ -65,6 +112,7 @@ export async function resolveGitContext(
   fs: FileSystem,
   flavor: PathFlavor,
   cwd: string,
+  depth = 0,
 ): Promise<GitContext | null> {
   const p = pathOps(flavor)
   let dir = p.normalize(cwd)
@@ -74,7 +122,12 @@ export async function resolveGitContext(
 
     if (st?.kind === 'dir') {
       const remoteUrl = await remoteFromConfig(fs, p.join(gitPath, 'config'))
-      return { repoRoot: dir, isWorktree: false, ...(remoteUrl !== undefined ? { remoteUrl } : {}) }
+      const context: GitContext = {
+        repoRoot: dir,
+        isWorktree: false,
+        ...(remoteUrl !== undefined ? { remoteUrl } : {}),
+      }
+      return chaseLocalRemote(fs, flavor, context, dir, depth)
     }
 
     if (st?.kind === 'file') {
@@ -90,16 +143,22 @@ export async function resolveGitContext(
           if (!p.isAbsolute(common)) common = p.normalize(p.join(gitdir, common))
           const mainRepoRoot = p.dirname(common)
           const remoteUrl = await remoteFromConfig(fs, p.join(common, 'config'))
-          return {
+          const context: GitContext = {
             repoRoot: dir,
             isWorktree: true,
             mainRepoRoot,
             ...(remoteUrl !== undefined ? { remoteUrl } : {}),
           }
+          return chaseLocalRemote(fs, flavor, context, mainRepoRoot, depth)
         }
 
         const remoteUrl = await remoteFromConfig(fs, p.join(gitdir, 'config'))
-        return { repoRoot: dir, isWorktree: false, ...(remoteUrl !== undefined ? { remoteUrl } : {}) }
+        const context: GitContext = {
+          repoRoot: dir,
+          isWorktree: false,
+          ...(remoteUrl !== undefined ? { remoteUrl } : {}),
+        }
+        return chaseLocalRemote(fs, flavor, context, dir, depth)
       }
     }
 

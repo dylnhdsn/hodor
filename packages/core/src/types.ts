@@ -33,8 +33,10 @@ export interface Session {
   /** Every working directory observed — sessions can move. */
   cwds: string[]
   gitBranch?: string
-  /** Claude-derived summary/title, if any. A hodor rename lives in SessionMeta. */
+  /** Claude-derived summary/title, if any. */
   summary?: string
+  /** Hodor rename from user config — the highest-priority display title. */
+  rename?: string
   /** First real user prompt, truncated — the display-title fallback. */
   promptPreview?: string
   /** First slash command that started the session, e.g. "/gsd-resume-work". */
@@ -69,7 +71,7 @@ export type Runtime =
 /** A raw fact usable for grouping, with provenance. */
 export interface Signal {
   sessionId: SessionId
-  source: 'cwd' | 'git-root' | 'git-remote' | 'worktree-of' | 'package-name'
+  source: 'cwd' | 'git-root' | 'git-remote' | 'worktree-of' | 'package-name' | 'config-split'
   value: string
   observedAt: Timestamp
 }

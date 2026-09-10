@@ -5,13 +5,18 @@ import {
   emptyState,
   enrichGitContexts,
   foldAll,
+  mergeHideRules,
   mungeCwd,
+  parseHodorConfig,
   pathOps,
   scanStore,
   translatePathFs,
   wslUncTranslator,
   type CoreState,
   type FileSystem,
+  type HodorConfig,
+  type SessionMeta,
+  type SourceEvent,
   type StoreId,
   type HideRules,
   type PathFlavor,
@@ -33,6 +38,8 @@ export interface CliDeps {
   platformFlavor: PathFlavor
   now(): Date
   write(text: string): void
+  /** Warnings and diagnostics — kept off stdout so --json stays parseable. */
+  writeErr(text: string): void
   sleep(ms: number): Promise<void>
   /** Terminal width for human-readable output. */
   columns(): number
@@ -52,6 +59,9 @@ Usage:
   hodor --version                           Print the CLI version
 
 Stores default to <home>/.claude; pass --root to add or replace store roots.
+User config lives at <home>/.hodor/config.json: hide-rule overrides,
+splitRoots (detach a checkout from its remote's project), projectNames
+(rename by project id from --json), and sessions (rename/archive/pin).
 
 Visibility (scan/watch):
   --all            Show everything, including ephemeral/agent-run sessions
@@ -95,14 +105,9 @@ function parseFlags(args: string[]): Flags {
   return flags
 }
 
-function hideRules(flags: Flags): HideRules | undefined {
+function hideRules(flags: Flags, config: HodorConfig): HideRules | undefined {
   if (flags.all) return undefined
-  const rules: HideRules = {
-    ...defaultHideRules,
-    pathPrefixes: [...defaultHideRules.pathPrefixes],
-    pathSegments: [...defaultHideRules.pathSegments],
-    pathInfixes: [...defaultHideRules.pathInfixes],
-  }
+  const rules = mergeHideRules(defaultHideRules, config.hide)
   for (const value of flags.hide) {
     const absolute = value.startsWith('/') || value.startsWith('\\\\') || /^[A-Za-z]:[\\/]/.test(value)
     if (absolute) rules.pathPrefixes.push(value)
@@ -112,11 +117,35 @@ function hideRules(flags: Flags): HideRules | undefined {
   return rules
 }
 
-function snapshotOptions(deps: CliDeps, flags: Flags): SnapshotOptions {
+function snapshotOptions(deps: CliDeps, flags: Flags, config: HodorConfig): SnapshotOptions {
   const options: SnapshotOptions = { now: deps.now() }
-  const hide = hideRules(flags)
+  const hide = hideRules(flags, config)
   if (hide !== undefined) options.hide = hide
   return options
+}
+
+async function loadConfig(deps: CliDeps): Promise<HodorConfig> {
+  const p = pathOps(deps.platformFlavor)
+  const path = p.join(deps.homedir(), '.hodor', 'config.json')
+  const content = await deps.fs.readFile(path)
+  if (content === undefined) return {}
+  const { config, error } = parseHodorConfig(content)
+  if (error !== undefined) deps.writeErr(`hodor: ignoring ${path}: ${error}\n`)
+  return config
+}
+
+/** Config enters the pure fold as events, like every other input. */
+function configEvents(config: HodorConfig): SourceEvent[] {
+  const events: SourceEvent[] = [{ type: 'config-changed', config }]
+  for (const [sessionId, override] of Object.entries(config.sessions ?? {})) {
+    const meta: SessionMeta = { sessionId }
+    if (override.rename !== undefined) meta.rename = override.rename
+    if (override.archived !== undefined) meta.archived = override.archived
+    if (override.pinnedProject !== undefined) meta.pinnedProject = override.pinnedProject
+    if (override.tags !== undefined) meta.tags = override.tags
+    events.push({ type: 'meta-changed', meta })
+  }
+  return events
 }
 
 function makeStores(deps: CliDeps, roots: string[]): SessionStore[] {
@@ -218,36 +247,39 @@ function printSnapshot(deps: CliDeps, snapshot: Snapshot, json: boolean): void {
 }
 
 async function scan(deps: CliDeps, flags: Flags): Promise<number> {
+  const config = await loadConfig(deps)
   const stores = makeStores(deps, flags.roots)
-  let state = emptyState
+  let state = foldAll(emptyState, configEvents(config))
   for (const store of stores) {
     state = foldAll(state, await scanStore(deps.fs, store))
   }
   state = await enrich(state, storeFs(deps, stores))
-  printSnapshot(deps, buildSnapshot(state, snapshotOptions(deps, flags)), flags.json)
+  printSnapshot(deps, buildSnapshot(state, snapshotOptions(deps, flags, config)), flags.json)
   return 0
 }
 
 async function statsCommand(deps: CliDeps, flags: Flags): Promise<number> {
-  let state = emptyState
+  const config = await loadConfig(deps)
+  let state = foldAll(emptyState, configEvents(config))
   for (const store of makeStores(deps, flags.roots)) {
     state = foldAll(state, await scanStore(deps.fs, store))
   }
   // Stats never need the git enricher — visibility and entrypoints are
   // transcript-derived, so skip the expensive part.
-  const stats = computeStats(buildSnapshot(state, snapshotOptions(deps, flags)))
+  const stats = computeStats(buildSnapshot(state, snapshotOptions(deps, flags, config)))
   deps.write((flags.json ? JSON.stringify(stats, null, 2) : formatStats(stats)) + '\n')
   return 0
 }
 
 async function watch(deps: CliDeps, flags: Flags): Promise<number> {
+  const config = await loadConfig(deps)
   const stores = makeStores(deps, flags.roots)
   const fsFor = storeFs(deps, stores)
   const tailers = stores.map((store) => new StoreTailer(deps.fs, store))
-  let state = emptyState
+  let state = foldAll(emptyState, configEvents(config))
   for (const tailer of tailers) state = foldAll(state, await tailer.poll())
   state = await enrich(state, fsFor)
-  printSnapshot(deps, buildSnapshot(state, snapshotOptions(deps, flags)), flags.json)
+  printSnapshot(deps, buildSnapshot(state, snapshotOptions(deps, flags, config)), flags.json)
 
   for (let tick = 0; flags.ticks === undefined || tick < flags.ticks; tick++) {
     await deps.sleep(flags.intervalMs)
@@ -262,7 +294,7 @@ async function watch(deps: CliDeps, flags: Flags): Promise<number> {
     if (!changed) continue
     state = await enrich(state, fsFor)
     deps.write('---\n')
-    printSnapshot(deps, buildSnapshot(state, snapshotOptions(deps, flags)), flags.json)
+    printSnapshot(deps, buildSnapshot(state, snapshotOptions(deps, flags, config)), flags.json)
   }
   return 0
 }

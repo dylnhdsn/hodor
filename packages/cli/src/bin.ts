@@ -40,6 +40,9 @@ process.exitCode = await run(process.argv.slice(2), {
   platformFlavor: process.platform === 'win32' ? 'win32' : 'posix',
   now: () => new Date(),
   write,
+  writeErr: (text) => {
+    process.stderr.write(text)
+  },
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   columns: () => process.stdout.columns ?? 120,
   selfUpdate: () => {

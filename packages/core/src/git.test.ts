@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { MemFs } from './fs.js'
-import { parseGitRemotes, pickRemoteUrl, resolveGitContext } from './git.js'
+import { localRemotePath, parseGitRemotes, pickRemoteUrl, resolveGitContext } from './git.js'
 
 const CONFIG = `[core]
 \trepositoryformatversion = 0
@@ -122,6 +122,68 @@ describe('resolveGitContext', () => {
 \turl = nope
 `
     expect(parseGitRemotes(config)).toEqual({ origin: 'first' })
+  })
+
+  it('chases a local-path remote to the source repo real remote', async () => {
+    const fs = new MemFs()
+    fs.writeFile('/home/d/peri/.git/config', CONFIG)
+    fs.writeFile('/home/d/peri-stable/.git/config', '[remote "origin"]\n\turl = /home/d/peri\n')
+    expect(await resolveGitContext(fs, 'posix', '/home/d/peri-stable/docs')).toEqual({
+      repoRoot: '/home/d/peri-stable',
+      isWorktree: false,
+      remoteUrl: 'git@github.com:dylnhdsn/hodor.git',
+    })
+  })
+
+  it('chases through chains of local clones', async () => {
+    const fs = new MemFs()
+    fs.writeFile('/a/.git/config', CONFIG)
+    fs.writeFile('/b/.git/config', '[remote "origin"]\n\turl = /a\n')
+    fs.writeFile('/c/.git/config', '[remote "origin"]\n\turl = /b\n')
+    expect(await resolveGitContext(fs, 'posix', '/c')).toMatchObject({
+      remoteUrl: 'git@github.com:dylnhdsn/hodor.git',
+    })
+  })
+
+  it('resolves relative and file:// local remotes', async () => {
+    const fs = new MemFs()
+    fs.writeFile('/home/d/peri/.git/config', CONFIG)
+    fs.writeFile('/home/d/rel/.git/config', '[remote "origin"]\n\turl = ../peri\n')
+    fs.writeFile('/home/d/filed/.git/config', '[remote "origin"]\n\turl = file:///home/d/peri\n')
+    expect(await resolveGitContext(fs, 'posix', '/home/d/rel')).toMatchObject({
+      remoteUrl: 'git@github.com:dylnhdsn/hodor.git',
+    })
+    expect(await resolveGitContext(fs, 'posix', '/home/d/filed')).toMatchObject({
+      remoteUrl: 'git@github.com:dylnhdsn/hodor.git',
+    })
+  })
+
+  it('survives clone cycles, keeping the local-path remote', async () => {
+    const fs = new MemFs()
+    fs.writeFile('/x/.git/config', '[remote "origin"]\n\turl = /y\n')
+    fs.writeFile('/y/.git/config', '[remote "origin"]\n\turl = /x\n')
+    expect(await resolveGitContext(fs, 'posix', '/x')).toEqual({
+      repoRoot: '/x',
+      isWorktree: false,
+      remoteUrl: '/y',
+    })
+  })
+
+  it('keeps the local-path remote when the source repo has no remote', async () => {
+    const fs = new MemFs()
+    fs.writeFile('/src/.git/config', '[core]\n\tbare = false\n')
+    fs.writeFile('/copy/.git/config', '[remote "origin"]\n\turl = /src\n')
+    expect(await resolveGitContext(fs, 'posix', '/copy')).toMatchObject({ remoteUrl: '/src' })
+  })
+
+  it('classifies local vs real remote urls', () => {
+    expect(localRemotePath('/home/d/peri')).toBe('/home/d/peri')
+    expect(localRemotePath('../peri')).toBe('../peri')
+    expect(localRemotePath('file:///srv/git/x')).toBe('/srv/git/x')
+    expect(localRemotePath('C:\\repos\\x')).toBe('C:\\repos\\x')
+    expect(localRemotePath('git@github.com:o/r.git')).toBeUndefined()
+    expect(localRemotePath('https://github.com/o/r')).toBeUndefined()
+    expect(localRemotePath('ssh://git@host/o/r')).toBeUndefined()
   })
 
   it('works with win32 paths', async () => {

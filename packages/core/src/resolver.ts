@@ -24,13 +24,23 @@ function lastSegment(path: string): string {
   return p.basename(path) || path
 }
 
+/** Segment-aligned "is path at or under root", separator-agnostic. */
+function isUnder(path: string, root: string): boolean {
+  const ps = path.split(/[\\/]+/).filter((s) => s.length > 0)
+  const rs = root.split(/[\\/]+/).filter((s) => s.length > 0)
+  return rs.length > 0 && rs.length <= ps.length && rs.every((seg, i) => seg === ps[i])
+}
+
 export function resolveProjects(state: CoreState, sessions: Session[]): Resolution {
   const projects = new Map<string, Project>()
   const assignments: Assignment[] = []
+  const splitRoots = state.config.splitRoots ?? []
+  const projectNames = state.config.projectNames ?? {}
 
   const ensureProject = (project: Project): Project => {
     const existing = projects.get(project.id)
     if (existing === undefined) {
+      project.name = projectNames[project.id] ?? project.name
       projects.set(project.id, project)
       return project
     }
@@ -83,6 +93,24 @@ export function resolveProjects(state: CoreState, sessions: Session[]): Resoluti
           observedAt,
         })
       }
+    }
+
+    // A configured split root beats remote identity: this checkout is a
+    // deliberately separate workstream.
+    const splitRoot = splitRoots.find(
+      (root) => isUnder(cwd, root) || (context != null && isUnder(context.repoRoot, root)),
+    )
+    if (splitRoot !== undefined) {
+      reasons.push({ sessionId: session.id, source: 'config-split', value: splitRoot, observedAt })
+      const project = ensureProject({
+        id: `split:${session.storeId}:${splitRoot}`,
+        name: lastSegment(splitRoot),
+        identity: { kind: 'path', storeId: session.storeId, root: splitRoot },
+        roots: [],
+      })
+      addRoot(project, session.storeId, context?.repoRoot ?? cwd)
+      assignments.push({ sessionId: session.id, projectId: project.id, confidence: 1, reasons, pinned: false })
+      continue
     }
 
     let confidence: number

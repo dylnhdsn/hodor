@@ -2,14 +2,21 @@ import { MemFs, type Snapshot } from '@hodor/core'
 import { describe, expect, it } from 'vitest'
 import { run, type CliDeps } from './main.js'
 
-function memDeps(fs = new MemFs()): { deps: CliDeps; output: string[]; fs: MemFs } {
+function memDeps(fs = new MemFs()): {
+  deps: CliDeps
+  output: string[]
+  errors: string[]
+  fs: MemFs
+} {
   const output: string[] = []
+  const errors: string[] = []
   const deps: CliDeps = {
     fs,
     homedir: () => '/home/u',
     platformFlavor: 'posix',
     now: () => new Date('2026-06-01T12:00:00Z'),
     write: (text) => output.push(text),
+    writeErr: (text) => errors.push(text),
     sleep: async () => {},
     columns: () => 100,
     selfUpdate: async () => {
@@ -17,7 +24,7 @@ function memDeps(fs = new MemFs()): { deps: CliDeps; output: string[]; fs: MemFs
       return 0
     },
   }
-  return { deps, output, fs }
+  return { deps, output, errors, fs }
 }
 
 const line = (uuid: string, ts: string, cwd: string, prompt?: string, entrypoint?: string) =>
@@ -155,6 +162,85 @@ describe('scan', () => {
     const snapshot = JSON.parse(output.join('')) as Snapshot
     expect(snapshot.sessions.map((s) => s.id)).toEqual(['cccc'])
     expect(snapshot.stores[0]!.rootPath).toBe('/srv/claude')
+  })
+})
+
+describe('user config', () => {
+  function seedCloneScenario(fs: MemFs): void {
+    fs.writeFile(
+      '/home/u/.claude/projects/-repo-peri/mmmm.jsonl',
+      line('u1', '2026-06-01T10:00:00Z', '/repo/peri', 'main peri work', 'cli'),
+    )
+    fs.writeFile(
+      '/home/u/.claude/projects/-repo-peri-stable/ssss.jsonl',
+      line('u2', '2026-06-01T10:00:01Z', '/repo/peri-stable', 'stable peri work', 'cli'),
+    )
+    fs.writeFile('/repo/peri/.git/config', '[remote "origin"]\n\turl = git@github.com:d/peri.git\n')
+    // peri-stable is a local clone: origin points at the peri directory
+    fs.writeFile('/repo/peri-stable/.git/config', '[remote "origin"]\n\turl = /repo/peri\n')
+  }
+
+  it('merges local clones into their source project via remote chasing', async () => {
+    const { deps, output, fs } = memDeps()
+    seedCloneScenario(fs)
+    expect(await run(['scan', '--json'], deps)).toBe(0)
+    const snapshot = JSON.parse(output.join('')) as Snapshot
+    expect(snapshot.projects.map((p) => p.id)).toEqual(['git-remote:github.com/d/peri'])
+    expect(snapshot.projects[0]!.roots.map((r) => r.path).sort()).toEqual([
+      '/repo/peri',
+      '/repo/peri-stable',
+    ])
+  })
+
+  it('splits a configured root back out, with its configured name', async () => {
+    const { deps, output, fs } = memDeps()
+    seedCloneScenario(fs)
+    fs.writeFile(
+      '/home/u/.hodor/config.json',
+      JSON.stringify({
+        splitRoots: ['/repo/peri-stable'],
+        projectNames: { 'split:local:/repo/peri-stable': 'peri-stable' },
+        sessions: { mmmm: { rename: 'Main line of work' } },
+        hide: { pathSegments: ['scratch'] },
+      }),
+    )
+    fs.writeFile(
+      '/home/u/.claude/projects/-x-scratch/zzzz.jsonl',
+      line('u3', '2026-06-01T09:00:00Z', '/x/scratch/dir'),
+    )
+    expect(await run(['scan'], deps)).toBe(0)
+    const text = output.join('')
+    expect(text).toContain('peri-stable — 1 session — /repo/peri-stable')
+    expect(text).toContain('peri — 1 session — github.com/d/peri')
+    expect(text).toContain('Main line of work')
+    expect(text).not.toContain('/x/scratch')
+    expect(text).toContain('scratch 1')
+  })
+
+  it('archives sessions from config, revealed again by --all', async () => {
+    const { deps, output, fs } = memDeps()
+    seedCloneScenario(fs)
+    fs.writeFile(
+      '/home/u/.hodor/config.json',
+      JSON.stringify({ sessions: { ssss: { archived: true } } }),
+    )
+    expect(await run(['scan'], deps)).toBe(0)
+    const text = output.join('')
+    expect(text).not.toContain('ssss')
+    expect(text).toContain('archived 1')
+
+    output.length = 0
+    expect(await run(['scan', '--all'], deps)).toBe(0)
+    expect(output.join('')).toContain('ssss')
+  })
+
+  it('warns on stderr and continues when the config is invalid', async () => {
+    const { deps, output, errors, fs } = memDeps()
+    seedCloneScenario(fs)
+    fs.writeFile('/home/u/.hodor/config.json', '{broken')
+    expect(await run(['scan', '--json'], deps)).toBe(0)
+    expect(errors.join('')).toContain('ignoring /home/u/.hodor/config.json')
+    expect(() => JSON.parse(output.join(''))).not.toThrow()
   })
 })
 
