@@ -38,6 +38,15 @@ Date: 2026-09-10
 - The `latest` git tag does not track the default branch tip (gh release
   assets are replaced in place); `version.json` is the source of truth.
 
+## Validated end-to-end (2026-09-10)
+
+From a clean container against the real published release: CI run 1 built
+and published `latest` in 28s; `curl …/install.sh | sh` installed
+`0.0.1-build.1.29d89fd` with PATH setup; `hodor scan` worked from the
+installed bundle; `hodor update` correctly reported up-to-date. Note for
+proxied environments only: Node's fetch ignores HTTPS_PROXY unless
+`NODE_USE_ENV_PROXY=1` is set — irrelevant on unproxied machines.
+
 ## Known trade-offs / later
 
 - Node >= 22 prerequisite. If that ever chafes, switch CI to also emit
