@@ -11,6 +11,11 @@ export interface HideRules {
   pathPrefixes: string[]
   /** Exact path segment names, e.g. "node_modules" or ".peri". */
   pathSegments: string[]
+  /**
+   * Consecutive segment runs matched anywhere in the path, written with "/"
+   * (separator-agnostic), e.g. "AppData/Local/Temp" for Windows temp dirs.
+   */
+  pathInfixes: string[]
   /** Hide any dot-directory segment (".peri", ".cache", …). */
   hideDotSegments: boolean
   /** Dot segments that stay visible, e.g. ".claude" (worktrees are real work). */
@@ -30,6 +35,7 @@ export interface HideRules {
 export const defaultHideRules: HideRules = {
   pathPrefixes: ['/tmp', '/private/tmp', '/var/folders'],
   pathSegments: ['node_modules'],
+  pathInfixes: ['AppData/Local/Temp'],
   hideDotSegments: true,
   dotSegmentAllowlist: ['.claude'],
   hideNonInteractive: true,
@@ -61,6 +67,14 @@ export function hiddenBy(input: VisibilityInput, rules: HideRules): string | und
         prefixSegments.every((seg, i) => seg === segments[i])
       ) {
         return `prefix:${prefix}`
+      }
+    }
+
+    for (const infix of rules.pathInfixes) {
+      const run = splitSegments(infix)
+      if (run.length === 0) continue
+      for (let i = 0; i + run.length <= segments.length; i++) {
+        if (run.every((seg, j) => segments[i + j] === seg)) return `infix:${infix}`
       }
     }
 

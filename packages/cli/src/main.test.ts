@@ -151,6 +151,49 @@ describe('scan', () => {
   })
 })
 
+describe('scan across a WSL store from Windows', () => {
+  it('resolves git projects behind \\\\wsl$ and unifies worktrees', async () => {
+    const fs = new MemFs('\\')
+    const { deps, output } = memDeps(fs)
+    deps.platformFlavor = 'win32'
+    deps.homedir = () => 'C:\\Users\\d'
+
+    const root = '\\\\wsl$\\Ubuntu\\home\\d\\.claude'
+    fs.writeFile(
+      `${root}\\projects\\-home-d-repo\\aaaa.jsonl`,
+      line('u1', '2026-06-01T10:00:00Z', '/home/d/repo', 'main session', 'cli'),
+    )
+    fs.writeFile(
+      `${root}\\projects\\-home-d-wt\\bbbb.jsonl`,
+      line('u2', '2026-06-01T10:00:01Z', '/home/d/wt', 'worktree session', 'cli'),
+    )
+    // The git tree is only reachable through the UNC prefix.
+    fs.writeFile(
+      '\\\\wsl$\\Ubuntu\\home\\d\\repo\\.git\\config',
+      '[remote "origin"]\n\turl = git@github.com:o/r.git\n',
+    )
+    fs.writeFile('\\\\wsl$\\Ubuntu\\home\\d\\repo\\.git\\worktrees\\wt\\commondir', '../..\n')
+    fs.writeFile('\\\\wsl$\\Ubuntu\\home\\d\\wt\\.git', 'gitdir: /home/d/repo/.git/worktrees/wt\n')
+
+    expect(await run(['scan', '--json', '--root', root], deps)).toBe(0)
+    const snapshot = JSON.parse(output.join('')) as Snapshot
+    expect(snapshot.stores[0]).toMatchObject({
+      pathFlavor: 'posix',
+      origin: { kind: 'wsl', distro: 'Ubuntu' },
+    })
+    expect(snapshot.projects).toHaveLength(1)
+    expect(snapshot.projects[0]).toMatchObject({
+      id: 'git-remote:github.com/o/r',
+      roots: [
+        { path: '/home/d/repo' },
+        { path: '/home/d/wt' },
+      ],
+    })
+    const wt = snapshot.assignments.find((a) => a.sessionId === 'bbbb')!
+    expect(wt.reasons.map((r) => r.source)).toContain('worktree-of')
+  })
+})
+
 describe('scan formatting details', () => {
   it('titles command-started sessions, sorts by recency, relativizes cwds', async () => {
     const { deps, output, fs } = memDeps()

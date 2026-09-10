@@ -97,6 +97,17 @@ function firstTextOf(content: unknown): string | undefined {
 type PromptContent = { kind: 'prompt'; text: string } | { kind: 'command'; name: string }
 
 /**
+ * Machine-generated user turns that make terrible titles: local command
+ * stdout, task notifications, system envelopes, interruption markers.
+ */
+const NON_PROMPT_PREFIXES = [
+  '<local-command-stdout>',
+  '<task-notification>',
+  '<system-',
+  '[Request interrupted',
+]
+
+/**
  * A session started with a slash command records it as XML-ish markup
  * (`<command-message>…</command-message> <command-name>/foo</command-name>`),
  * which makes a terrible title — extract the command name instead.
@@ -113,6 +124,7 @@ function classifyPromptContent(content: unknown): PromptContent | undefined {
     if (name === undefined) return undefined
     return { kind: 'command', name: name.startsWith('/') ? name : `/${name}` }
   }
+  if (NON_PROMPT_PREFIXES.some((prefix) => collapsed.startsWith(prefix))) return undefined
   return { kind: 'prompt', text: collapsed.slice(0, PROMPT_TEXT_MAX_LENGTH) }
 }
 

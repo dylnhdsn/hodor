@@ -21,6 +21,23 @@ export interface FileSystem {
 }
 
 /**
+ * Wrap a FileSystem so every path is translated before it reaches the inner
+ * implementation. Used to reach WSL stores from Windows: callers keep using
+ * posix paths (identity), while access goes through \\wsl$\<distro>\...
+ */
+export function translatePathFs(
+  inner: FileSystem,
+  translate: (path: string) => string,
+): FileSystem {
+  return {
+    stat: (path) => inner.stat(translate(path)),
+    listDir: (path) => inner.listDir(translate(path)),
+    readFile: (path) => inner.readFile(translate(path)),
+    readBytesFrom: (path, offset) => inner.readBytesFrom(translate(path), offset),
+  }
+}
+
+/**
  * In-memory FileSystem for tests. Directories are implicit: any path prefix
  * of a stored file is a directory. Separator is configurable so win32-shaped
  * trees can be simulated.

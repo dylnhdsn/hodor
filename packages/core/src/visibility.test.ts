@@ -26,6 +26,15 @@ describe('hiddenBy with default rules', () => {
     ).toBeUndefined()
   })
 
+  it('hides Windows temp paths by segment run', () => {
+    expect(hiddenBy(at('C:\\Users\\d\\AppData\\Local\\Temp\\tstest'), defaultHideRules)).toBe(
+      'infix:AppData/Local/Temp',
+    )
+    // The run must be consecutive and complete.
+    expect(hiddenBy(at('C:\\Users\\d\\AppData\\Local\\NotTemp'), defaultHideRules)).toBeUndefined()
+    expect(hiddenBy(at('C:\\Users\\d\\AppData\\Temp'), defaultHideRules)).toBeUndefined()
+  })
+
   it('hides node_modules by exact segment', () => {
     expect(hiddenBy(at('/home/d/proj/node_modules/lib'), defaultHideRules)).toBe(
       'segment:node_modules',
@@ -73,6 +82,7 @@ describe('hiddenBy with custom rules', () => {
     const rules = {
       pathPrefixes: ['/srv/ephemeral'],
       pathSegments: ['dist'],
+      pathInfixes: ['out/cache'],
       hideDotSegments: false,
       dotSegmentAllowlist: [],
       hideNonInteractive: false,
@@ -80,6 +90,7 @@ describe('hiddenBy with custom rules', () => {
     }
     expect(hiddenBy(at('/srv/ephemeral/x'), rules)).toBe('prefix:/srv/ephemeral')
     expect(hiddenBy(at('/a/dist/b'), rules)).toBe('segment:dist')
+    expect(hiddenBy(at('/a/out/cache/b'), rules)).toBe('infix:out/cache')
     expect(hiddenBy(at('/home/d/.peri/runs'), rules)).toBeUndefined()
     expect(hiddenBy(at('/home/d/proj', ['sdk-cli']), rules)).toBeUndefined()
   })

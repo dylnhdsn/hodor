@@ -250,6 +250,7 @@ describe('buildSnapshot', () => {
       hide: {
         pathPrefixes: ['/tmp'],
         pathSegments: [],
+        pathInfixes: [],
         hideDotSegments: true,
         dotSegmentAllowlist: ['.claude'],
         hideNonInteractive: true,

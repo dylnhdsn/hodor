@@ -164,6 +164,22 @@ describe('parseTranscriptLine edge cases', () => {
     expect(unextractable).not.toHaveProperty('promptText')
   })
 
+  it('never titles a session from machine-generated user turns', () => {
+    for (const content of [
+      '<local-command-stdout>Login successful</local-command-stdout>',
+      '<task-notification> <task-id>abc</task-id>',
+      '<system-reminder>stuff</system-reminder>',
+      '[Request interrupted by user]',
+      '[Request interrupted by user for tool use]',
+    ]) {
+      const line = parseTranscriptLine(
+        JSON.stringify({ type: 'user', uuid: 'u1', message: { content } }),
+      )
+      expect(line, content).not.toHaveProperty('promptText')
+      expect(line, content).not.toHaveProperty('commandName')
+    }
+  })
+
   it('reports why a line is invalid', () => {
     expect(parseTranscriptLine('{oops')).toMatchObject({ kind: 'invalid', error: expect.stringContaining('not JSON') })
     expect(parseTranscriptLine('42')).toMatchObject({ kind: 'invalid', error: 'not a JSON object' })

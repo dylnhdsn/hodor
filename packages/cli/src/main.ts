@@ -8,8 +8,11 @@ import {
   mungeCwd,
   pathOps,
   scanStore,
+  translatePathFs,
+  wslUncTranslator,
   type CoreState,
   type FileSystem,
+  type StoreId,
   type HideRules,
   type PathFlavor,
   type SessionStore,
@@ -49,8 +52,9 @@ Stores default to <home>/.claude; pass --root to add or replace store roots.
 
 Visibility (scan/watch):
   --all            Show everything, including ephemeral/agent-run sessions
-  --hide <rule>    Extra hide rule; with a path separator it's a path prefix
-                   (e.g. /srv/tmp), otherwise a directory name (e.g. dist).
+  --hide <rule>    Extra hide rule: an absolute path is a prefix (/srv/tmp),
+                   a relative path with separators is a segment run matched
+                   anywhere (Some/Sub/Dir), a bare name a directory (dist).
                    Defaults hide /tmp-like paths, node_modules, and
                    dot-directories except .claude. Hidden sessions stay in
                    --json output, tagged with the rule that hid them.
@@ -94,9 +98,12 @@ function hideRules(flags: Flags): HideRules | undefined {
     ...defaultHideRules,
     pathPrefixes: [...defaultHideRules.pathPrefixes],
     pathSegments: [...defaultHideRules.pathSegments],
+    pathInfixes: [...defaultHideRules.pathInfixes],
   }
   for (const value of flags.hide) {
-    if (/[\\/]/.test(value)) rules.pathPrefixes.push(value)
+    const absolute = value.startsWith('/') || value.startsWith('\\\\') || /^[A-Za-z]:[\\/]/.test(value)
+    if (absolute) rules.pathPrefixes.push(value)
+    else if (/[\\/]/.test(value)) rules.pathInfixes.push(value)
     else rules.pathSegments.push(value)
   }
   return rules
@@ -125,8 +132,28 @@ function makeStores(deps: CliDeps, roots: string[]): SessionStore[] {
   })
 }
 
-async function enrich(state: CoreState, fs: FileSystem): Promise<CoreState> {
-  return foldAll(state, await enrichGitContexts(state, fs))
+/**
+ * Per-store filesystem for reading cwd-relative things (git metadata): a
+ * WSL store's posix cwds are reachable from Windows only via \\wsl$\<distro>.
+ */
+function storeFs(deps: CliDeps, stores: SessionStore[]): (storeId: StoreId) => FileSystem {
+  const byStore = new Map<StoreId, FileSystem>()
+  for (const store of stores) {
+    byStore.set(
+      store.id,
+      store.origin.kind === 'wsl'
+        ? translatePathFs(deps.fs, wslUncTranslator(store.origin.distro))
+        : deps.fs,
+    )
+  }
+  return (storeId) => byStore.get(storeId) ?? deps.fs
+}
+
+async function enrich(
+  state: CoreState,
+  fsFor: (storeId: StoreId) => FileSystem,
+): Promise<CoreState> {
+  return foldAll(state, await enrichGitContexts(state, fsFor))
 }
 
 export function formatSnapshot(snapshot: Snapshot): string {
@@ -248,11 +275,12 @@ function printSnapshot(deps: CliDeps, snapshot: Snapshot, json: boolean): void {
 }
 
 async function scan(deps: CliDeps, flags: Flags): Promise<number> {
+  const stores = makeStores(deps, flags.roots)
   let state = emptyState
-  for (const store of makeStores(deps, flags.roots)) {
+  for (const store of stores) {
     state = foldAll(state, await scanStore(deps.fs, store))
   }
-  state = await enrich(state, deps.fs)
+  state = await enrich(state, storeFs(deps, stores))
   printSnapshot(deps, buildSnapshot(state, snapshotOptions(deps, flags)), flags.json)
   return 0
 }
@@ -270,10 +298,12 @@ async function statsCommand(deps: CliDeps, flags: Flags): Promise<number> {
 }
 
 async function watch(deps: CliDeps, flags: Flags): Promise<number> {
-  const tailers = makeStores(deps, flags.roots).map((store) => new StoreTailer(deps.fs, store))
+  const stores = makeStores(deps, flags.roots)
+  const fsFor = storeFs(deps, stores)
+  const tailers = stores.map((store) => new StoreTailer(deps.fs, store))
   let state = emptyState
   for (const tailer of tailers) state = foldAll(state, await tailer.poll())
-  state = await enrich(state, deps.fs)
+  state = await enrich(state, fsFor)
   printSnapshot(deps, buildSnapshot(state, snapshotOptions(deps, flags)), flags.json)
 
   for (let tick = 0; flags.ticks === undefined || tick < flags.ticks; tick++) {
@@ -287,7 +317,7 @@ async function watch(deps: CliDeps, flags: Flags): Promise<number> {
       }
     }
     if (!changed) continue
-    state = await enrich(state, deps.fs)
+    state = await enrich(state, fsFor)
     deps.write('---\n')
     printSnapshot(deps, buildSnapshot(state, snapshotOptions(deps, flags)), flags.json)
   }
