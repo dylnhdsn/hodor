@@ -81,7 +81,16 @@ describe('startServer', () => {
     })
 
     const snapshot = (await (await fetch(`${server.url}/api/snapshot`)).json()) as Snapshot
-    expect(snapshot.customProjects).toEqual([{ id: 'my-lane', name: 'My Lane' }])
+    expect(snapshot.customProjects).toEqual([
+      {
+        id: 'my-lane',
+        name: 'My Lane',
+        matchers: [],
+        excludeMatchers: [],
+        include: ['aaaa'],
+        exclude: [],
+      },
+    ])
     expect(snapshot.placements).toEqual([
       { sessionId: 'aaaa', customProjectId: 'my-lane', via: 'include' },
     ])
@@ -134,5 +143,80 @@ describe('startServer', () => {
     expect(page).toContain('hodor')
     expect(page).toContain('/api/snapshot')
     expect((await fetch(server.url + '/nope')).status).toBe(404)
+  })
+
+  it('answers HEAD like GET on read routes, without a body', async () => {
+    const { deps, fs } = serverDeps()
+    const server = await start(fs, deps)
+    const head = await fetch(server.url + '/api/snapshot', { method: 'HEAD' })
+    expect(head.status).toBe(200)
+    expect(head.headers.get('content-type')).toContain('application/json')
+    expect(await head.text()).toBe('')
+    expect((await fetch(server.url + '/', { method: 'HEAD' })).status).toBe(200)
+  })
+
+  it('materializes an auto project when an edit targets its derived id', async () => {
+    const { deps, fs } = serverDeps()
+    fs.writeFile('/home/u/.claude/projects/-r/aaaa.jsonl', line('u1', '2026-06-01T11:00:00Z', '/r/app'))
+    const server = await start(fs, deps)
+
+    const before = (await (await fetch(`${server.url}/api/snapshot`)).json()) as Snapshot
+    const autoId = before.projects[0]!.id
+    expect(before.customProjects).toEqual([])
+
+    // Renaming the auto project silently creates the custom record…
+    const renamed = await fetch(`${server.url}/api/project`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ op: 'rename-project', id: autoId, name: 'App work' }),
+    })
+    expect(renamed.status).toBe(200)
+    const { id } = (await renamed.json()) as { id: string }
+    expect(id).not.toBe(autoId)
+
+    const after = (await (await fetch(`${server.url}/api/snapshot`)).json()) as Snapshot
+    expect(after.customProjects).toEqual([
+      expect.objectContaining({
+        id,
+        name: 'App work',
+        derivedFrom: autoId,
+        // cwd-identity projects seed an exact-dir matcher, not a subtree
+        matchers: [{ kind: 'dir', path: '/r/app' }],
+      }),
+    ])
+    // …which claims the session, so the auto project is fully absorbed.
+    expect(after.placements.map((p) => p.customProjectId)).toEqual([id])
+
+    // A second edit addressed to the same auto id lands on the record.
+    await fetch(`${server.url}/api/project`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ op: 'archive-project', id: autoId, archived: true }),
+    })
+    const archived = (await (await fetch(`${server.url}/api/snapshot`)).json()) as Snapshot
+    expect(archived.customProjects).toEqual([expect.objectContaining({ id, archived: true })])
+    expect(archived.sessions[0]!.hiddenBy).toBe(`project-archived:${id}`)
+  })
+
+  it('previews which sessions a matcher would claim', async () => {
+    const { deps, fs } = serverDeps()
+    fs.writeFile('/home/u/.claude/projects/-r/aaaa.jsonl', line('u1', '2026-06-01T11:00:00Z', '/r/app'))
+    fs.writeFile('/home/u/.claude/projects/-r/bbbb.jsonl', line('u2', '2026-06-01T11:00:00Z', '/r/other'))
+    const server = await start(fs, deps)
+
+    const preview = await fetch(`${server.url}/api/preview`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ matcher: { kind: 'cwd', prefix: '/r/app' } }),
+    })
+    expect(preview.status).toBe(200)
+    expect(await preview.json()).toEqual({ sessionIds: ['aaaa'] })
+
+    const bad = await fetch(`${server.url}/api/preview`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ matcher: { kind: 'nope' } }),
+    })
+    expect(bad.status).toBe(400)
   })
 })

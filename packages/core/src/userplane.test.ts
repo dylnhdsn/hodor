@@ -7,6 +7,8 @@ import {
   computePlacements,
   emptyUserPlane,
   parseUserPlane,
+  previewMatcher,
+  seedMatchersFor,
   type CustomProject,
   type Matcher,
 } from './userplane.js'
@@ -42,6 +44,7 @@ function stateWith(events: SourceEvent[]) {
 const project = (over: Partial<CustomProject> & { id: string }): CustomProject => ({
   name: over.id,
   matchers: [],
+  excludeMatchers: [],
   include: [],
   exclude: [],
   ...over,
@@ -72,10 +75,33 @@ describe('parseUserPlane', () => {
           { kind: 'remote', url: 'github.com/o/ext' },
           { kind: 'session', id: 'abc' },
         ],
+        excludeMatchers: [],
         include: [],
         exclude: ['zzz'],
       },
     ])
+  })
+
+  it('round-trips archived, derivedFrom and excludeMatchers', () => {
+    const { plane, error } = parseUserPlane(
+      JSON.stringify({
+        projects: {
+          p1: {
+            name: 'peri',
+            matchers: [{ kind: 'remote', url: 'github.com/o/peri' }],
+            excludeMatchers: [{ kind: 'root', path: '/d/peri-stable' }],
+            archived: true,
+            derivedFrom: 'git-remote:github.com/o/peri',
+          },
+        },
+      }),
+    )
+    expect(error).toBeUndefined()
+    expect(plane.projects[0]).toMatchObject({
+      excludeMatchers: [{ kind: 'root', path: '/d/peri-stable' }],
+      archived: true,
+      derivedFrom: 'git-remote:github.com/o/peri',
+    })
   })
 
   it('degrades gracefully on malformed input', () => {
@@ -99,6 +125,7 @@ describe('compileUserPlane', () => {
         id: 'split:/home/d/peri-stable',
         name: 'stable lane',
         matchers: [{ kind: 'root', path: '/home/d/peri-stable' }],
+        excludeMatchers: [],
         include: [],
         exclude: [],
       },
@@ -268,5 +295,98 @@ describe('computePlacements', () => {
     const { state, sessions } = snapshotSessions()
     const after = computePlacements(state, sessions, plane)
     expect(after.map((p) => p.sessionId)).toEqual(['one'])
+  })
+
+  it('exclude matchers veto evidence matches, but includes still win', () => {
+    const { state, sessions } = snapshotSessions()
+    const placements = computePlacements(state, sessions, [
+      // 'one' matches via cwd but is vetoed by the root exclude…
+      project({
+        id: 'p1',
+        matchers: [{ kind: 'cwd', prefix: '/repo' }],
+        excludeMatchers: [{ kind: 'root', path: '/repo/a' }],
+      }),
+      // …while an explicit include beats the same veto.
+      project({
+        id: 'p2',
+        matchers: [{ kind: 'cwd', prefix: '/repo' }],
+        excludeMatchers: [{ kind: 'root', path: '/repo/a' }],
+        include: ['one'],
+      }),
+    ])
+    expect(placements).toEqual([{ sessionId: 'one', customProjectId: 'p2', via: 'include' }])
+  })
+})
+
+describe('seedMatchersFor', () => {
+  it('captures a remote identity as a remote matcher', () => {
+    expect(
+      seedMatchersFor({
+        id: 'git-remote:github.com/o/a',
+        name: 'a',
+        identity: { kind: 'git-remote', url: 'github.com/o/a' },
+        roots: [],
+      }),
+    ).toEqual([{ kind: 'remote', url: 'github.com/o/a' }])
+  })
+
+  it('captures a git-root identity as a subtree root matcher', () => {
+    expect(
+      seedMatchersFor({
+        id: 'git-root:s1:/repo/main',
+        name: 'main',
+        identity: { kind: 'path', storeId: 's1', root: '/repo/main' },
+        roots: [],
+      }),
+    ).toEqual([{ kind: 'root', path: '/repo/main' }])
+  })
+
+  it('captures a cwd identity as an exact-dir matcher, never a subtree', () => {
+    // Seeding a subtree claim for a bare folder (say, a home directory)
+    // would swallow every project underneath it on archive.
+    expect(
+      seedMatchersFor({
+        id: 'cwd:s1:/home/d',
+        name: 'd',
+        identity: { kind: 'path', storeId: 's1', root: '/home/d' },
+        roots: [],
+      }),
+    ).toEqual([{ kind: 'dir', path: '/home/d' }])
+  })
+})
+
+describe('dir matcher', () => {
+  it('matches the exact folder only', () => {
+    const state = stateWith([
+      ...sessionEvents('home', '/home/d'),
+      ...sessionEvents('nested', '/home/d/code/app'),
+    ])
+    const sessions = buildSnapshot(state, { now: NOW }).sessions
+    const placements = computePlacements(state, sessions, [
+      project({ id: 'p1', matchers: [{ kind: 'dir', path: '/home/d' }] }),
+    ])
+    expect(placements.map((p) => p.sessionId)).toEqual(['home'])
+  })
+})
+
+describe('previewMatcher', () => {
+  it('answers from the same evidence as placements', () => {
+    const state = stateWith([
+      ...sessionEvents('one', '/repo/a/src'),
+      ...sessionEvents('two', '/plain/dir'),
+      {
+        type: 'git-context-resolved',
+        storeId: 's1',
+        cwd: '/repo/a/src',
+        context: { repoRoot: '/repo/a', isWorktree: false, remoteUrl: 'git@github.com:o/a.git' },
+      },
+      { type: 'git-context-resolved', storeId: 's1', cwd: '/plain/dir', context: null },
+    ])
+    const sessions = buildSnapshot(state, { now: NOW }).sessions
+    expect(previewMatcher(state, sessions, { kind: 'remote', url: 'https://github.com/o/a' })).toEqual(
+      ['one'],
+    )
+    expect(previewMatcher(state, sessions, { kind: 'root', path: '/plain' })).toEqual(['two'])
+    expect(previewMatcher(state, sessions, { kind: 'session', id: 'nope' })).toEqual([])
   })
 })

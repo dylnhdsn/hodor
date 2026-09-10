@@ -44,7 +44,9 @@ Windows/WSL boundary; pass `--root <path>` to add or replace store roots
 ### Curation
 
 Sessions are grouped automatically (folder, worktree, repo remote); the
-user plane lets you organize on top of that without ever fighting a rescan:
+user plane lets you organize on top of that without ever fighting a rescan.
+Commands accept auto project ids too — editing one silently materializes
+it into a custom project seeded from its evidence:
 
 ```sh
 hodor project list                          # custom projects + matchers
@@ -53,19 +55,31 @@ hodor project match ext-v4 remote=github.com/acme/BrowserExtension
 hodor project match ext-v4 root=/home/me/code/extension
 hodor project include ext-v4 <sessionId>    # pin one session in
 hodor project exclude ext-v4 <sessionId>    # force one session out
+hodor project unpin ext-v4 <sessionId>      # drop a pin, matchers decide again
 hodor project rename ext-v4 "Extension v5"
-hodor project delete ext-v4
+hodor project archive ext-v4                # hides its sessions too, reversibly
+hodor project unarchive ext-v4
+hodor project revert ext-v4                 # materialized only: back to auto
+hodor project merge ext-v4 old-lane         # union old-lane into ext-v4
+hodor project split ext-v4 /home/me/code/fork "The fork"
+hodor project exclude-match ext-v4 root=/home/me/code/fork
 
 hodor session rename <sessionId> "the migration spike"
 hodor session archive <sessionId>           # hide (provenance: archived)
 hodor session unarchive <sessionId>
 ```
 
+Matcher kinds: `remote` (git remote URL), `root` (subtree under a repo
+root), `cwd` (subtree of raw cwds), `dir` (exact folder), `session` (one
+id). Archiving a project hides its sessions unless a live project claims
+them (`hiddenBy: project-archived:<id>`, revealed by `--all`). Nothing in
+the UI deletes; `hodor project delete` remains as a CLI-only escape hatch
+that only ever removes the mapping record.
+
 Everything lands in `~/.hodor` (`projects.json`, `config.json`) — on
 Windows+WSL setups the Windows home is shared so both sides see one truth.
-Matchers reference durable evidence (git remote, root path, cwd, session
-id), never derived ids, so your curation survives any improvement to the
-automatic grouping.
+Matchers reference durable evidence, never derived ids, so your curation
+survives any improvement to the automatic grouping.
 
 ## Install
 

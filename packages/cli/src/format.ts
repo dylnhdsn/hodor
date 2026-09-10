@@ -104,10 +104,16 @@ export function formatSnapshot(snapshot: Snapshot, columns: number): string {
   }
   const relOf = (s: Session): string => relativeCwd(s.cwd, derivedOf.get(s.id)?.roots ?? [])
 
-  // User-plane claims (label semantics: a session can be in many).
-  const claimed = new Set(snapshot.placements.map((p) => p.sessionId))
+  // User-plane claims (label semantics: a session can be in many). Archived
+  // projects don't render and don't claim for presentation — their sessions
+  // are hidden unless a live project claims them, or --all is in effect,
+  // where they fall through to their derived project like other hidden ones.
+  const liveCustom = snapshot.customProjects.filter((p) => p.archived !== true)
+  const liveIds = new Set(liveCustom.map((p) => p.id))
+  const livePlacements = snapshot.placements.filter((p) => liveIds.has(p.customProjectId))
+  const claimed = new Set(livePlacements.map((p) => p.sessionId))
   const byCustom = new Map<string, Session[]>()
-  for (const placement of snapshot.placements) {
+  for (const placement of livePlacements) {
     const session = sessionById.get(placement.sessionId)
     if (session === undefined || session.hiddenBy !== undefined) continue
     const list = byCustom.get(placement.customProjectId) ?? []
@@ -122,7 +128,7 @@ export function formatSnapshot(snapshot: Snapshot, columns: number): string {
   }
   const blocks: Block[] = []
 
-  for (const custom of snapshot.customProjects) {
+  for (const custom of liveCustom) {
     const sessions = byCustom.get(custom.id) ?? []
     if (sessions.length > 0) blocks.push({ title: custom.name, identity: 'custom', sessions })
   }
@@ -186,7 +192,11 @@ export function formatSnapshot(snapshot: Snapshot, columns: number): string {
     }
   }
 
+  const archivedProjects = snapshot.customProjects.length - liveCustom.length
   lines.push('')
+  if (archivedProjects > 0) {
+    lines.push(fitEnd(`archived: ${plural(archivedProjects, 'project')}`, width))
+  }
   if (hidden.length > 0) {
     const ruleCounts = new Map<string, number>()
     for (const s of hidden) {

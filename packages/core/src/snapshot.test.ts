@@ -393,7 +393,14 @@ describe('buildSnapshot', () => {
     ])
     // The split lives in the user plane as a claim.
     expect(snapshot.customProjects).toEqual([
-      { id: 'split:/home/d/peri-stable', name: 'stable lane' },
+      {
+        id: 'split:/home/d/peri-stable',
+        name: 'stable lane',
+        matchers: [{ kind: 'root', path: '/home/d/peri-stable' }],
+        excludeMatchers: [],
+        include: [],
+        exclude: [],
+      },
     ])
     expect(snapshot.placements).toEqual([
       {
@@ -415,6 +422,7 @@ describe('buildSnapshot', () => {
               id: 'p1',
               name: 'A things',
               matchers: [{ kind: 'remote', url: 'https://github.com/o/a' }],
+              excludeMatchers: [],
               include: [],
               exclude: [],
             },
@@ -424,7 +432,9 @@ describe('buildSnapshot', () => {
       ...baseEvents.slice(1),
     ]
     const snapshot = buildSnapshot(foldAll(emptyState, events), { now: NOW })
-    expect(snapshot.customProjects).toEqual([{ id: 'p1', name: 'A things' }])
+    expect(snapshot.customProjects.map((p) => ({ id: p.id, name: p.name }))).toEqual([
+      { id: 'p1', name: 'A things' },
+    ])
     expect(snapshot.placements.map((p) => p.sessionId)).toEqual(['aaa'])
   })
 
@@ -453,6 +463,53 @@ describe('buildSnapshot', () => {
     // with hiding disabled entirely (--all), archived sessions surface
     const all = buildSnapshot(state, { now: NOW })
     expect(all.sessions.find((s) => s.id === 'bbb')!.hiddenBy).toBeUndefined()
+  })
+
+  it('hides sessions whose every claim is from an archived project', () => {
+    const noRules = {
+      pathPrefixes: [],
+      pathSegments: [],
+      pathInfixes: [],
+      hideDotSegments: false,
+      dotSegmentAllowlist: [],
+      hideNonInteractive: false,
+      interactiveEntrypoints: [],
+    }
+    const planeProject = (id: string, cwd: string, archived: boolean) => ({
+      id,
+      name: id,
+      matchers: [{ kind: 'cwd', prefix: cwd } as const],
+      excludeMatchers: [],
+      include: [],
+      exclude: [],
+      ...(archived ? { archived: true } : {}),
+    })
+    const events: SourceEvent[] = [
+      ...baseEvents,
+      {
+        type: 'userplane-changed',
+        plane: { projects: [planeProject('old-lane', '/repo/a', true)] },
+      },
+    ]
+    const state = foldAll(emptyState, events)
+
+    // sole claim archived → hidden, with provenance; --all reveals
+    const snapshot = buildSnapshot(state, { now: NOW, hide: noRules })
+    expect(snapshot.sessions.find((s) => s.id === 'aaa')!.hiddenBy).toBe('project-archived:old-lane')
+    expect(snapshot.sessions.find((s) => s.id === 'bbb')!.hiddenBy).toBeUndefined()
+    expect(buildSnapshot(state, { now: NOW }).sessions.find((s) => s.id === 'aaa')!.hiddenBy).toBeUndefined()
+
+    // a live project also claiming the session keeps it visible
+    const rescued = foldAll(state, [
+      {
+        type: 'userplane-changed',
+        plane: {
+          projects: [planeProject('old-lane', '/repo/a', true), planeProject('live', '/repo/a', false)],
+        },
+      },
+    ])
+    const rescuedSnapshot = buildSnapshot(rescued, { now: NOW, hide: noRules })
+    expect(rescuedSnapshot.sessions.find((s) => s.id === 'aaa')!.hiddenBy).toBeUndefined()
   })
 
   it('is order-independent across files: shuffled events give the same snapshot', () => {

@@ -1,4 +1,4 @@
-import type { Placement, Project, Session, Snapshot } from '@hodor/core'
+import type { CustomProject, Project, Session, Snapshot } from '@hodor/core'
 
 /** Client-side derivations over a Snapshot — mirrors the CLI formatter. */
 
@@ -22,27 +22,59 @@ export function formatAge(nowMs: number, timestamp?: string): string {
 export const titleOf = (s: Session): string =>
   s.rename ?? s.summary ?? s.promptPreview ?? s.firstCommand ?? '(untitled)'
 
+/**
+ * One rail, one kind of thing (docs/brainstorm/010): the user sees
+ * "projects", never auto vs. custom. kind exists so edits know whether the
+ * server will materialize first, and so settings can state the true status.
+ */
+export interface RailProject {
+  kind: 'custom' | 'auto'
+  id: string
+  name: string
+  sessions: Session[]
+  custom?: CustomProject
+  auto?: Project
+}
+
 export interface View {
   visible: Session[]
   hidden: Session[]
+  /** Live (non-archived) custom project ids claiming each session. */
   claimsBySession: Map<string, string[]>
-  sessionsByCustom: Map<string, Session[]>
-  /** Absorb rule: derived projects keep only unclaimed visible sessions. */
-  sessionsByAuto: Map<string, Session[]>
-  autoProjects: Project[]
+  rail: RailProject[]
+  archivedProjects: CustomProject[]
+  /** Sessions of an archived project (they're hidden, the panel shows them). */
+  sessionsOfArchived: Map<string, Session[]>
   derivedOf: Map<string, Project>
 }
+
+const latestOf = (sessions: Session[]): string =>
+  sessions.reduce((max, s) => ((s.lastActivityAt ?? '') > max ? (s.lastActivityAt ?? '') : max), '')
 
 export function deriveView(snapshot: Snapshot): View {
   const byId = new Map(snapshot.sessions.map((s) => [s.id, s]))
   const visible = snapshot.sessions.filter((s) => s.hiddenBy === undefined)
   const hidden = snapshot.sessions.filter((s) => s.hiddenBy !== undefined)
 
+  const liveCustom = snapshot.customProjects.filter((p) => p.archived !== true)
+  const archivedProjects = snapshot.customProjects.filter((p) => p.archived === true)
+  const liveIds = new Set(liveCustom.map((p) => p.id))
+  const archivedIds = new Set(archivedProjects.map((p) => p.id))
+
   const claimsBySession = new Map<string, string[]>()
   const sessionsByCustom = new Map<string, Session[]>()
-  for (const p of snapshot.placements as Placement[]) {
+  const sessionsOfArchived = new Map<string, Session[]>()
+  for (const p of snapshot.placements) {
     const session = byId.get(p.sessionId)
-    if (session === undefined || session.hiddenBy !== undefined) continue
+    if (session === undefined) continue
+    if (archivedIds.has(p.customProjectId)) {
+      sessionsOfArchived.set(p.customProjectId, [
+        ...(sessionsOfArchived.get(p.customProjectId) ?? []),
+        session,
+      ])
+      continue
+    }
+    if (!liveIds.has(p.customProjectId) || session.hiddenBy !== undefined) continue
     claimsBySession.set(p.sessionId, [...(claimsBySession.get(p.sessionId) ?? []), p.customProjectId])
     sessionsByCustom.set(p.customProjectId, [
       ...(sessionsByCustom.get(p.customProjectId) ?? []),
@@ -58,13 +90,34 @@ export function deriveView(snapshot: Snapshot): View {
     const session = byId.get(a.sessionId)
     if (project === undefined || session === undefined) continue
     derivedOf.set(a.sessionId, project)
+    // Absorb rule: auto projects keep only unclaimed visible sessions.
     if (session.hiddenBy !== undefined || claimsBySession.has(a.sessionId)) continue
     sessionsByAuto.set(a.projectId, [...(sessionsByAuto.get(a.projectId) ?? []), session])
   }
 
-  const autoProjects = snapshot.projects.filter((p) => (sessionsByAuto.get(p.id) ?? []).length > 0)
+  const rail: RailProject[] = [
+    ...liveCustom.map((p) => ({
+      kind: 'custom' as const,
+      id: p.id,
+      name: p.name,
+      sessions: sessionsByCustom.get(p.id) ?? [],
+      custom: p,
+    })),
+    ...snapshot.projects
+      .filter((p) => (sessionsByAuto.get(p.id) ?? []).length > 0)
+      .map((p) => ({
+        kind: 'auto' as const,
+        id: p.id,
+        name: p.name,
+        sessions: sessionsByAuto.get(p.id) ?? [],
+        auto: p,
+      })),
+  ].sort(
+    (a, b) =>
+      latestOf(b.sessions).localeCompare(latestOf(a.sessions)) || a.name.localeCompare(b.name),
+  )
 
-  return { visible, hidden, claimsBySession, sessionsByCustom, sessionsByAuto, autoProjects, derivedOf }
+  return { visible, hidden, claimsBySession, rail, archivedProjects, sessionsOfArchived, derivedOf }
 }
 
 export const byRecency = (sessions: Session[]): Session[] =>
@@ -82,15 +135,26 @@ export function matchesQuery(session: Session, query: string): boolean {
   )
 }
 
+/** Distinct cwds across a project's sessions — split targets, stats. */
+export const cwdsOf = (sessions: Session[]): string[] =>
+  [...new Set(sessions.map((s) => s.cwd).filter((c): c is string => c !== undefined))].sort()
+
+export interface MutationResult {
+  ok: boolean
+  error?: string
+  /** Post-materialize project id — may differ from the id sent. */
+  id?: string
+}
+
 export async function postMutation(
-  path: '/api/project' | '/api/session',
+  path: '/api/project' | '/api/session' | '/api/preview',
   body: unknown,
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<MutationResult & { sessionIds?: string[] }> {
   const res = await fetch(path, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   })
-  const json = (await res.json()) as { error?: string }
-  return { ok: res.ok, ...(json.error !== undefined ? { error: json.error } : {}) }
+  const json = (await res.json()) as { error?: string; id?: string; sessionIds?: string[] }
+  return { ok: res.ok, ...json }
 }

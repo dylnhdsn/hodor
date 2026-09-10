@@ -1,7 +1,7 @@
 import type { CoreState, SessionAccum, ThreadAccum } from './fold.js'
 import { resolveProjects } from './resolver.js'
 import type { Assignment, Project, Runtime, Session, SessionStore, Thread } from './types.js'
-import { compileUserPlane, computePlacements, type Placement } from './userplane.js'
+import { compileUserPlane, computePlacements, type CustomProject, type Placement } from './userplane.js'
 import { hiddenBy, type HideRules } from './visibility.js'
 
 /**
@@ -17,8 +17,8 @@ export interface Snapshot {
   /** Derived (base-plane) projects — machine-owned, rederivable. */
   projects: Project[]
   assignments: Assignment[]
-  /** User-plane custom projects (config splits compiled in). */
-  customProjects: Array<{ id: string; name: string }>
+  /** User-plane custom projects, full records (config splits compiled in). */
+  customProjects: CustomProject[]
   /** Label-semantics claims: every (session, custom project) match. */
   placements: Placement[]
 }
@@ -125,15 +125,37 @@ export function buildSnapshot(state: CoreState, options: SnapshotOptions): Snaps
   const customProjects = compileUserPlane(state.userPlane, state.config)
   const placements = computePlacements(state, sessions, customProjects)
 
+  // Archived projects take their sessions with them — unless a live project
+  // also claims the session. Provenance, revealable via --all like the rest.
+  if (options.hide !== undefined) {
+    const archivedIds = new Set(customProjects.filter((p) => p.archived === true).map((p) => p.id))
+    if (archivedIds.size > 0) {
+      const claims = new Map<string, string[]>()
+      for (const placement of placements) {
+        claims.set(placement.sessionId, [
+          ...(claims.get(placement.sessionId) ?? []),
+          placement.customProjectId,
+        ])
+      }
+      for (const session of sessions) {
+        if (session.hiddenBy !== undefined) continue
+        const claimedBy = claims.get(session.id)
+        if (claimedBy !== undefined && claimedBy.every((id) => archivedIds.has(id))) {
+          session.hiddenBy = `project-archived:${claimedBy[0]!}`
+        }
+      }
+    }
+  }
+
   return {
     generatedAt: options.now.toISOString(),
     stores: Object.values(state.stores).sort((a, b) => a.id.localeCompare(b.id)),
     sessions,
     projects,
     assignments,
-    customProjects: customProjects
-      .map((p) => ({ id: p.id, name: p.name }))
-      .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id)),
+    customProjects: [...customProjects].sort(
+      (a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id),
+    ),
     placements,
   }
 }

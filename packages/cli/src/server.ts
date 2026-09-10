@@ -10,13 +10,16 @@ import {
   enrichGitContexts,
   foldAll,
   mergeHideRules,
+  previewMatcher,
   slugifyProjectId,
   type CoreState,
+  type Matcher,
   type PlaneOp,
   type SessionOp,
   type Snapshot,
 } from '@hodor/core'
 import type { CliDeps } from './main.js'
+import { materializeTarget } from './materialize.js'
 import { resolveStores, storeFs } from './stores.js'
 import { uiAssets } from './ui-assets.js'
 import { loadUserFiles, saveConfig, saveUserPlane, type UserFiles } from './userdata.js'
@@ -75,6 +78,7 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
   // Base state holds only source-derived facts; user files are overlaid
   // fresh on every snapshot so removals in config/projects.json take effect.
   let baseState: CoreState = emptyState
+  let presentedState: CoreState = emptyState
   let snapshot: Snapshot | undefined
   let snapshotJson = ''
   const sseClients = new Set<ServerResponse>()
@@ -112,6 +116,7 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
       ])
     }
 
+    presentedState = presented
     const next = buildSnapshot(presented, {
       now: deps.now(),
       hide: mergeHideRules(defaultHideRules, files.config.hide),
@@ -149,23 +154,74 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
         new Set(files.plane.projects.map((p) => p.id)),
       )
     }
+
+    // split-project may omit newId; slugged from the new project's name.
+    if (payload['op'] === 'split-project' && payload['newId'] === undefined) {
+      payload['newId'] = slugifyProjectId(
+        String(payload['name'] ?? ''),
+        new Set(files.plane.projects.map((p) => p.id)),
+      )
+    }
+
     const op = payload as unknown as PlaneOp
-    const result = applyPlaneOp(files.plane, op)
+    let plane = files.plane
+
+    // Editing an auto project materializes it first (docs/brainstorm/010) —
+    // the UI never needs to know which kind it was talking to.
+    const autoProjects = snapshot?.projects ?? []
+    if (op.op !== 'create-project' && op.op !== 'delete-project') {
+      const resolved = materializeTarget(plane, autoProjects, op.id)
+      if ('error' in resolved) return sendJson(res, 400, { error: resolved.error })
+      plane = resolved.plane
+      op.id = resolved.id
+      if (op.op === 'merge-projects') {
+        const from = materializeTarget(plane, autoProjects, op.from)
+        if ('error' in from) return sendJson(res, 400, { error: from.error })
+        plane = from.plane
+        op.from = from.id
+      }
+    }
+
+    const result = applyPlaneOp(plane, op)
     if (result.error !== undefined) return sendJson(res, 400, { error: result.error })
     await saveUserPlane(deps, files.home, result.plane)
     await refresh()
     return sendJson(res, 200, { ok: true, id: op.id })
   }
 
+  function handlePreview(res: ServerResponse, body: string): void {
+    let payload: { matcher?: Matcher }
+    try {
+      payload = JSON.parse(body) as { matcher?: Matcher }
+    } catch {
+      return sendJson(res, 400, { error: 'body must be JSON' })
+    }
+    const matcher = payload.matcher
+    const valid =
+      matcher !== undefined &&
+      ((matcher.kind === 'remote' && typeof matcher.url === 'string') ||
+        (matcher.kind === 'root' && typeof matcher.path === 'string') ||
+        (matcher.kind === 'cwd' && typeof matcher.prefix === 'string') ||
+        (matcher.kind === 'dir' && typeof matcher.path === 'string') ||
+        (matcher.kind === 'session' && typeof matcher.id === 'string'))
+    if (!valid) return sendJson(res, 400, { error: 'matcher must be remote/root/cwd/dir/session' })
+    const sessionIds = previewMatcher(presentedState, snapshot?.sessions ?? [], matcher)
+    return sendJson(res, 200, { sessionIds })
+  }
+
   const server = createServer((req, res) => {
     void (async () => {
       const url = new URL(req.url ?? '/', 'http://localhost')
       const path = url.pathname
+      // HEAD mirrors GET for read routes (curl -I, health checks): same
+      // headers, no body. SSE stays GET-only.
+      const isHead = req.method === 'HEAD'
+      const reads = isHead || req.method === 'GET'
 
-      if (req.method === 'GET' && path === '/api/snapshot') {
+      if (reads && path === '/api/snapshot') {
         if (snapshot === undefined) await refresh()
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-        res.end(snapshotJson)
+        res.end(isHead ? undefined : snapshotJson)
         return
       }
 
@@ -188,18 +244,23 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
         return
       }
 
-      if (req.method === 'GET') {
+      if (req.method === 'POST' && path === '/api/preview') {
+        handlePreview(res, await readBody(req))
+        return
+      }
+
+      if (reads) {
         const assetPath = path === '/' ? '/index.html' : path
         const asset = uiAssets[assetPath]
         if (asset !== undefined) {
           const bytes = Buffer.from(asset.base64, 'base64')
           res.writeHead(200, { 'content-type': asset.type, 'content-length': bytes.length })
-          res.end(bytes)
+          res.end(isHead ? undefined : bytes)
           return
         }
         if (path === '/') {
           res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
-          res.end(FALLBACK_PAGE)
+          res.end(isHead ? undefined : FALLBACK_PAGE)
           return
         }
       }
