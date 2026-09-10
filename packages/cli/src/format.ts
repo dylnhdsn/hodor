@@ -94,27 +94,66 @@ export function formatSnapshot(snapshot: Snapshot, columns: number): string {
   const hidden = snapshot.sessions.filter((s) => s.hiddenBy !== undefined)
   const sessionById = new Map(snapshot.sessions.map((s) => [s.id, s]))
 
-  const byProject = new Map<string, Session[]>()
+  // cwds render relative to the session's DERIVED project roots, whichever
+  // block the session appears in.
+  const derivedById = new Map(snapshot.projects.map((p) => [p.id, p]))
+  const derivedOf = new Map<string, Project>()
   for (const a of snapshot.assignments) {
-    const session = sessionById.get(a.sessionId)
+    const project = derivedById.get(a.projectId)
+    if (project !== undefined) derivedOf.set(a.sessionId, project)
+  }
+  const relOf = (s: Session): string => relativeCwd(s.cwd, derivedOf.get(s.id)?.roots ?? [])
+
+  // User-plane claims (label semantics: a session can be in many).
+  const claimed = new Set(snapshot.placements.map((p) => p.sessionId))
+  const byCustom = new Map<string, Session[]>()
+  for (const placement of snapshot.placements) {
+    const session = sessionById.get(placement.sessionId)
     if (session === undefined || session.hiddenBy !== undefined) continue
-    const list = byProject.get(a.projectId) ?? []
+    const list = byCustom.get(placement.customProjectId) ?? []
     list.push(session)
-    byProject.set(a.projectId, list)
+    byCustom.set(placement.customProjectId, list)
   }
 
-  // Oldest project first: the most recently active block ends the output.
+  interface Block {
+    title: string
+    identity: string
+    sessions: Session[]
+  }
+  const blocks: Block[] = []
+
+  for (const custom of snapshot.customProjects) {
+    const sessions = byCustom.get(custom.id) ?? []
+    if (sessions.length > 0) blocks.push({ title: custom.name, identity: 'custom', sessions })
+  }
+
+  // Absorb rule: auto (derived) projects show only unclaimed sessions, so
+  // merged repos give way while everything still appears somewhere.
+  const byDerived = new Map<string, Session[]>()
+  for (const a of snapshot.assignments) {
+    const session = sessionById.get(a.sessionId)
+    if (session === undefined || session.hiddenBy !== undefined || claimed.has(session.id)) continue
+    const list = byDerived.get(a.projectId) ?? []
+    list.push(session)
+    byDerived.set(a.projectId, list)
+  }
+  for (const project of snapshot.projects) {
+    const sessions = byDerived.get(project.id) ?? []
+    if (sessions.length > 0) {
+      blocks.push({ title: project.name, identity: identityOf(project), sessions })
+    }
+  }
+
+  // Oldest block first: the most recently active one ends the output.
   const latestOf = (sessions: Session[]): string =>
     sessions.reduce((max, s) => ((s.lastActivityAt ?? '') > max ? (s.lastActivityAt ?? '') : max), '')
-  const shownProjects = snapshot.projects
-    .filter((p) => (byProject.get(p.id) ?? []).length > 0)
-    .sort((a, b) => {
-      const byRecency = latestOf(byProject.get(a.id)!).localeCompare(latestOf(byProject.get(b.id)!))
-      return byRecency !== 0 ? byRecency : a.name.localeCompare(b.name)
-    })
+  blocks.sort(
+    (a, b) =>
+      latestOf(a.sessions).localeCompare(latestOf(b.sessions)) || a.title.localeCompare(b.title),
+  )
 
-  for (const project of shownProjects) {
-    const sessions = (byProject.get(project.id) ?? []).sort(
+  for (const block of blocks) {
+    const sessions = [...block.sessions].sort(
       (a, b) =>
         (a.lastActivityAt ?? '').localeCompare(b.lastActivityAt ?? '') || a.id.localeCompare(b.id),
     )
@@ -122,9 +161,9 @@ export function formatSnapshot(snapshot: Snapshot, columns: number): string {
 
     const meta = [plural(sessions.length, 'session'), ...(active > 0 ? [`${active} active`] : [])]
     lines.push('')
-    lines.push(fitEnd(`${project.name} — ${meta.join(', ')} — ${identityOf(project)}`, width))
+    lines.push(fitEnd(`${block.title} — ${meta.join(', ')} — ${block.identity}`, width))
 
-    const relCwds = new Map(sessions.map((s) => [s.id, relativeCwd(s.cwd, project.roots)]))
+    const relCwds = new Map(sessions.map((s) => [s.id, relOf(s)]))
     const longest = Math.max(1, ...[...relCwds.values()].map((c) => c.length))
     let cwdCol = Math.min(MAX_CWD_COL, longest)
     const fixed = 4 + 8 + 2 + 4 + 2 + 2 // indent+mark, id, gaps, age, gaps
@@ -138,7 +177,7 @@ export function formatSnapshot(snapshot: Snapshot, columns: number): string {
   }
 
   const assigned = new Set(snapshot.assignments.map((a) => a.sessionId))
-  const unassigned = visible.filter((s) => !assigned.has(s.id))
+  const unassigned = visible.filter((s) => !assigned.has(s.id) && !claimed.has(s.id))
   if (unassigned.length > 0) {
     lines.push('')
     lines.push('(unassigned)')
@@ -158,14 +197,24 @@ export function formatSnapshot(snapshot: Snapshot, columns: number): string {
       .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
       .map(([label, n]) => `${label} ${n}`)
       .join(', ')
-    const hiddenProjects = snapshot.projects.length - shownProjects.length
+    // Derived projects with no visible presence anywhere (all sessions
+    // hidden) — the "fully hidden" count for the footer.
+    const visibleDerived = new Set(
+      [...derivedOf.entries()]
+        .filter(([sessionId]) => {
+          const s = sessionById.get(sessionId)
+          return s !== undefined && s.hiddenBy === undefined
+        })
+        .map(([, project]) => project.id),
+    )
+    const hiddenProjects = snapshot.projects.length - visibleDerived.size
     const parts = [plural(hidden.length, 'session')]
     if (hiddenProjects > 0) parts.push(plural(hiddenProjects, 'project'))
     lines.push(fitEnd(`hidden: ${parts.join(', ')} — ${rules} (--all to show)`, width))
   }
   const activeTotal = visible.filter((s) => s.runtime.kind !== 'idle').length
   lines.push(
-    `${plural(visible.length, 'session')} in ${plural(shownProjects.length, 'project')}, ${activeTotal} active`,
+    `${plural(visible.length, 'session')} in ${plural(blocks.length, 'project')}, ${activeTotal} active`,
   )
 
   return lines.join('\n').replace(/^\n+/, '')

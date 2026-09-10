@@ -6,9 +6,12 @@ import {
   driveMountTranslator,
   enrichGitContexts,
   foldAll,
+  emptyUserPlane,
+  flavorOfPath,
   mergeHideRules,
   mungeCwd,
   parseHodorConfig,
+  parseUserPlane,
   pathOps,
   scanStore,
   translatePathFs,
@@ -20,6 +23,7 @@ import {
   type SourceEvent,
   type StoreId,
   type HideRules,
+  type UserPlane,
   type PathFlavor,
   type SessionStore,
   type Snapshot,
@@ -45,6 +49,8 @@ export interface CliDeps {
   listWslDistros(): Promise<string[]>
   /** The current distro name when running inside WSL; undefined elsewhere. */
   wslDistro(): string | undefined
+  /** Environment variable lookup (HODOR_HOME). */
+  env(name: string): string | undefined
   sleep(ms: number): Promise<void>
   /** Terminal width for human-readable output. */
   columns(): number
@@ -67,9 +73,13 @@ Stores default to <home>/.claude PLUS auto-discovered cross-boundary stores
 (WSL distros from Windows, the Windows store from inside WSL) — one combined
 view from either side. --no-discover limits to the local store; --root
 replaces discovery with exactly the roots given.
-User config lives at <home>/.hodor/config.json: hide-rule overrides,
-splitRoots (detach a checkout from its remote's project), projectNames
-(rename by project id from --json), and sessions (rename/archive/pin).
+User data lives in the hodor data home (HODOR_HOME; from WSL a unique
+Windows-side C:\\Users\\<u>\\.hodor is shared; else <home>/.hodor):
+  config.json    settings — hide-rule overrides, discoverStores, sessions
+                 (rename/archive/pin), legacy splitRoots/projectNames
+  projects.json  custom projects with evidence matchers (remote/root/cwd/
+                 session), include/exclude — label semantics, a session can
+                 belong to many; claimed sessions leave their auto project.
 
 Visibility (scan/watch):
   --all            Show everything, including ephemeral/agent-run sessions
@@ -142,19 +152,66 @@ function snapshotOptions(deps: CliDeps, flags: Flags, config: HodorConfig): Snap
   return options
 }
 
-async function loadConfig(deps: CliDeps): Promise<HodorConfig> {
-  const p = pathOps(deps.platformFlavor)
-  const path = p.join(deps.homedir(), '.hodor', 'config.json')
-  const content = await deps.fs.readFile(path)
-  if (content === undefined) return {}
-  const { config, error } = parseHodorConfig(content)
-  if (error !== undefined) deps.writeErr(`hodor: ignoring ${path}: ${error}\n`)
-  return config
+/**
+ * Where the user plane lives (docs/brainstorm/008): HODOR_HOME wins; from
+ * inside WSL a unique Windows-side install (/mnt/c/Users/<u>/.hodor) is the
+ * home, so Windows and WSL share one set of user data; otherwise ~/.hodor.
+ */
+async function resolveDataHome(deps: CliDeps): Promise<string> {
+  const override = deps.env('HODOR_HOME')
+  if (override !== undefined && override.length > 0) return override
+  if (deps.platformFlavor === 'posix' && deps.wslDistro() !== undefined) {
+    const candidates: string[] = []
+    for (const user of await deps.fs.listDir('/mnt/c/Users')) {
+      const dir = `/mnt/c/Users/${user}/.hodor`
+      if ((await deps.fs.stat(dir))?.kind === 'dir') candidates.push(dir)
+    }
+    if (candidates.length === 1) return candidates[0]!
+    if (candidates.length > 1) {
+      deps.writeErr(
+        'hodor: multiple Windows .hodor homes found; using the local one (set HODOR_HOME to choose)\n',
+      )
+    }
+  }
+  return pathOps(deps.platformFlavor).join(deps.homedir(), '.hodor')
 }
 
-/** Config enters the pure fold as events, like every other input. */
-function configEvents(config: HodorConfig): SourceEvent[] {
-  const events: SourceEvent[] = [{ type: 'config-changed', config }]
+interface UserFiles {
+  config: HodorConfig
+  plane: UserPlane
+}
+
+async function loadUserFiles(deps: CliDeps): Promise<UserFiles> {
+  const home = await resolveDataHome(deps)
+  const p = pathOps(flavorOfPath(home))
+
+  let config: HodorConfig = {}
+  const configPath = p.join(home, 'config.json')
+  const configRaw = await deps.fs.readFile(configPath)
+  if (configRaw !== undefined) {
+    const parsed = parseHodorConfig(configRaw)
+    if (parsed.error !== undefined) deps.writeErr(`hodor: ignoring ${configPath}: ${parsed.error}\n`)
+    config = parsed.config
+  }
+
+  let plane: UserPlane = emptyUserPlane
+  const planePath = p.join(home, 'projects.json')
+  const planeRaw = await deps.fs.readFile(planePath)
+  if (planeRaw !== undefined) {
+    const parsed = parseUserPlane(planeRaw)
+    if (parsed.error !== undefined) deps.writeErr(`hodor: ignoring ${planePath}: ${parsed.error}\n`)
+    plane = parsed.plane
+  }
+
+  return { config, plane }
+}
+
+/** Config and user plane enter the pure fold as events, like every input. */
+function configEvents({ config, plane }: UserFiles): SourceEvent[] {
+  const events: SourceEvent[] = [
+    { type: 'config-changed', config },
+    { type: 'userplane-changed', plane },
+  ]
   for (const [sessionId, override] of Object.entries(config.sessions ?? {})) {
     const meta: SessionMeta = { sessionId }
     if (override.rename !== undefined) meta.rename = override.rename
@@ -330,9 +387,10 @@ function printSnapshot(deps: CliDeps, snapshot: Snapshot, json: boolean): void {
 }
 
 async function scan(deps: CliDeps, flags: Flags): Promise<number> {
-  const config = await loadConfig(deps)
+  const files = await loadUserFiles(deps)
+  const config = files.config
   const stores = await resolveStores(deps, flags, config)
-  let state = foldAll(emptyState, configEvents(config))
+  let state = foldAll(emptyState, configEvents(files))
   for (const store of stores) {
     state = foldAll(state, await scanStore(deps.fs, store))
   }
@@ -342,8 +400,9 @@ async function scan(deps: CliDeps, flags: Flags): Promise<number> {
 }
 
 async function statsCommand(deps: CliDeps, flags: Flags): Promise<number> {
-  const config = await loadConfig(deps)
-  let state = foldAll(emptyState, configEvents(config))
+  const files = await loadUserFiles(deps)
+  const config = files.config
+  let state = foldAll(emptyState, configEvents(files))
   for (const store of await resolveStores(deps, flags, config)) {
     state = foldAll(state, await scanStore(deps.fs, store))
   }
@@ -355,11 +414,12 @@ async function statsCommand(deps: CliDeps, flags: Flags): Promise<number> {
 }
 
 async function watch(deps: CliDeps, flags: Flags): Promise<number> {
-  const config = await loadConfig(deps)
+  const files = await loadUserFiles(deps)
+  const config = files.config
   const stores = await resolveStores(deps, flags, config)
   const fsFor = storeFs(deps, stores)
   const tailers = stores.map((store) => new StoreTailer(deps.fs, store))
-  let state = foldAll(emptyState, configEvents(config))
+  let state = foldAll(emptyState, configEvents(files))
   for (const tailer of tailers) state = foldAll(state, await tailer.poll())
   state = await enrich(state, fsFor)
   printSnapshot(deps, buildSnapshot(state, snapshotOptions(deps, flags, config)), flags.json)

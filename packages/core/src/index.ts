@@ -1,5 +1,6 @@
 export * from './types.js'
 export * from './config.js'
+export * from './userplane.js'
 export * from './claude/munge.js'
 export * from './claude/transcript.js'
 export * from './events.js'

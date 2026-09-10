@@ -1,6 +1,7 @@
 import type { CoreState, SessionAccum, ThreadAccum } from './fold.js'
 import { resolveProjects } from './resolver.js'
 import type { Assignment, Project, Runtime, Session, SessionStore, Thread } from './types.js'
+import { compileUserPlane, computePlacements, type Placement } from './userplane.js'
 import { hiddenBy, type HideRules } from './visibility.js'
 
 /**
@@ -13,8 +14,13 @@ export interface Snapshot {
   generatedAt: string
   stores: SessionStore[]
   sessions: Session[]
+  /** Derived (base-plane) projects — machine-owned, rederivable. */
   projects: Project[]
   assignments: Assignment[]
+  /** User-plane custom projects (config splits compiled in). */
+  customProjects: Array<{ id: string; name: string }>
+  /** Label-semantics claims: every (session, custom project) match. */
+  placements: Placement[]
 }
 
 export interface SnapshotOptions {
@@ -116,11 +122,18 @@ export function buildSnapshot(state: CoreState, options: SnapshotOptions): Snaps
 
   const { projects, assignments } = resolveProjects(state, sessions)
 
+  const customProjects = compileUserPlane(state.userPlane, state.config)
+  const placements = computePlacements(state, sessions, customProjects)
+
   return {
     generatedAt: options.now.toISOString(),
     stores: Object.values(state.stores).sort((a, b) => a.id.localeCompare(b.id)),
     sessions,
     projects,
     assignments,
+    customProjects: customProjects
+      .map((p) => ({ id: p.id, name: p.name }))
+      .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id)),
+    placements,
   }
 }

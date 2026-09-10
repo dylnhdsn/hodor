@@ -61,6 +61,7 @@ process.exitCode = await run(process.argv.slice(2), {
     }
   },
   wslDistro: () => process.env['WSL_DISTRO_NAME'],
+  env: (name) => process.env[name],
   selfUpdate: () => {
     const token = resolveToken()
     return runUpdate({

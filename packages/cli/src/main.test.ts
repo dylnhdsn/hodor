@@ -21,6 +21,7 @@ function memDeps(fs = new MemFs()): {
     columns: () => 100,
     listWslDistros: async () => [],
     wslDistro: () => undefined,
+    env: () => undefined,
     selfUpdate: async () => {
       output.push('selfUpdate-stub\n')
       return 0
@@ -212,11 +213,82 @@ describe('user config', () => {
     )
     expect(await run(['scan'], deps)).toBe(0)
     const text = output.join('')
-    expect(text).toContain('peri-stable — 1 session — /repo/peri-stable')
+    // absorb: the claimed session leaves the auto project, which keeps the rest
+    expect(text).toContain('peri-stable — 1 session — custom')
     expect(text).toContain('peri — 1 session — github.com/d/peri')
     expect(text).toContain('Main line of work')
     expect(text).not.toContain('/x/scratch')
     expect(text).toContain('scratch 1')
+  })
+
+  it('renders label semantics from projects.json with the inbox guarantee', async () => {
+    const { deps, output, fs } = memDeps()
+    seedCloneScenario(fs)
+    fs.writeFile(
+      '/home/u/.hodor/projects.json',
+      JSON.stringify({
+        projects: {
+          'all-peri': {
+            name: 'All peri',
+            matchers: [{ kind: 'remote', url: 'github.com/d/peri' }],
+          },
+          'stable-only': {
+            name: 'Stable lane',
+            matchers: [{ kind: 'root', path: '/repo/peri-stable' }],
+          },
+        },
+      }),
+    )
+    expect(await run(['scan'], deps)).toBe(0)
+    const text = output.join('')
+    // both sessions match 'All peri' (chased remote); stable also matches
+    // 'Stable lane' — labels, so it appears in BOTH custom blocks
+    expect(text).toContain('All peri — 2 sessions — custom')
+    expect(text).toContain('Stable lane — 1 session — custom')
+    expect(text.match(/ssss/g)).toHaveLength(2)
+    // absorb: nothing left for the auto project
+    expect(text).not.toContain('github.com/d/peri\n')
+    expect(text).toContain('2 sessions in 2 projects')
+
+    // inbox guarantee: every visible session appears at least once
+    for (const id of ['mmmm', 'ssss']) {
+      expect(text).toContain(id)
+    }
+  })
+
+  it('resolves the data home from the Windows side when run inside WSL', async () => {
+    const fs = new MemFs()
+    const { deps, output } = memDeps(fs)
+    deps.homedir = () => '/home/d'
+    deps.wslDistro = () => 'Ubuntu'
+    fs.writeFile(
+      '/home/d/.claude/projects/-r/aaaa.jsonl',
+      line('u1', '2026-06-01T10:00:00Z', '/r', 'wsl session'),
+    )
+    // Windows-homed user plane, reachable through /mnt/c
+    fs.writeFile(
+      '/mnt/c/Users/d/.hodor/projects.json',
+      JSON.stringify({
+        projects: { w: { name: 'From Windows', matchers: [{ kind: 'cwd', prefix: '/r' }] } },
+      }),
+    )
+    expect(await run(['scan', '--no-discover'], deps)).toBe(0)
+    expect(output.join('')).toContain('From Windows — 1 session — custom')
+  })
+
+  it('warns and falls back locally when multiple Windows homes exist', async () => {
+    const fs = new MemFs()
+    const { deps, errors } = memDeps(fs)
+    deps.homedir = () => '/home/d'
+    deps.wslDistro = () => 'Ubuntu'
+    fs.writeFile('/mnt/c/Users/a/.hodor/config.json', '{}')
+    fs.writeFile('/mnt/c/Users/b/.hodor/config.json', '{}')
+    fs.writeFile(
+      '/home/d/.claude/projects/-r/aaaa.jsonl',
+      line('u1', '2026-06-01T10:00:00Z', '/r'),
+    )
+    expect(await run(['scan', '--no-discover'], deps)).toBe(0)
+    expect(errors.join('')).toContain('multiple Windows .hodor homes')
   })
 
   it('archives sessions from config, revealed again by --all', async () => {

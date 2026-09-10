@@ -1,6 +1,7 @@
 import type { TranscriptLine } from './claude/transcript.js'
 import type { HodorConfig } from './config.js'
 import type { GitContext } from './git.js'
+import type { UserPlane } from './userplane.js'
 import type { Runtime, SessionId, SessionMeta, SessionStore, StoreId } from './types.js'
 
 /**
@@ -23,3 +24,4 @@ export type SourceEvent =
   | { type: 'runtime-changed'; sessionId: SessionId; runtime: Runtime }
   | { type: 'meta-changed'; meta: SessionMeta }
   | { type: 'config-changed'; config: HodorConfig }
+  | { type: 'userplane-changed'; plane: UserPlane }

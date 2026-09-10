@@ -3,6 +3,7 @@ import type { HodorConfig } from './config.js'
 import type { SourceEvent } from './events.js'
 import type { GitContext } from './git.js'
 import type { Runtime, SessionId, SessionMeta, SessionStore, StoreId } from './types.js'
+import { emptyUserPlane, type UserPlane } from './userplane.js'
 
 /**
  * The pure core: state' = fold(state, event). No I/O, no clocks, no
@@ -49,8 +50,10 @@ export interface CoreState {
   metas: Record<SessionId, SessionMeta>
   /** Authoritative runtimes (e.g. hosted PTYs); absent = infer from activity. */
   runtimes: Record<SessionId, Runtime>
-  /** Persisted user configuration (splits, names) — the durable layer. */
+  /** Persisted user configuration (settings/policy). */
   config: HodorConfig
+  /** Persisted user plane: custom projects and their mappings. */
+  userPlane: UserPlane
 }
 
 export const emptyState: CoreState = {
@@ -60,6 +63,7 @@ export const emptyState: CoreState = {
   metas: {},
   runtimes: {},
   config: {},
+  userPlane: emptyUserPlane,
 }
 
 export function gitKey(storeId: StoreId, cwd: string): string {
@@ -179,6 +183,9 @@ export function fold(state: CoreState, event: SourceEvent): CoreState {
 
     case 'config-changed':
       return { ...state, config: event.config }
+
+    case 'userplane-changed':
+      return { ...state, userPlane: event.plane }
   }
 }
 

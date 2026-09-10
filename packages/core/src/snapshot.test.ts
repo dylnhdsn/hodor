@@ -359,7 +359,7 @@ describe('buildSnapshot', () => {
     expect(snapshot.assignments.map((a) => a.sessionId)).toEqual(['one', 'two'])
   })
 
-  it('splits configured roots away from their remote project, with renames', () => {
+  it('compiles configured split roots into user-plane claims, with renames', () => {
     const events: SourceEvent[] = [
       { type: 'store-discovered', store },
       {
@@ -381,22 +381,51 @@ describe('buildSnapshot', () => {
         type: 'git-context-resolved',
         storeId: 's1',
         cwd: '/home/d/peri-stable/docs',
-        // chasing already unified the remote — the split still wins
         context: { repoRoot: '/home/d/peri-stable', isWorktree: false, remoteUrl: 'git@github.com:d/peri.git' },
       },
     ]
     const snapshot = buildSnapshot(foldAll(emptyState, events), { now: NOW })
-    expect(snapshot.projects.map((p) => p.id).sort()).toEqual([
+    // The base plane stays pure heuristics: chasing unified both sessions.
+    expect(snapshot.projects.map((p) => p.id)).toEqual(['git-remote:github.com/d/peri'])
+    expect(snapshot.assignments.map((a) => a.projectId)).toEqual([
       'git-remote:github.com/d/peri',
-      'split:s1:/home/d/peri-stable',
+      'git-remote:github.com/d/peri',
     ])
-    const split = snapshot.projects.find((p) => p.id.startsWith('split:'))!
-    expect(split.name).toBe('stable lane')
-    expect(split.roots).toEqual([{ storeId: 's1', path: '/home/d/peri-stable' }])
-    const assignment = snapshot.assignments.find((a) => a.sessionId === 'stable')!
-    expect(assignment.projectId).toBe('split:s1:/home/d/peri-stable')
-    expect(assignment.confidence).toBe(1)
-    expect(assignment.reasons.map((r) => r.source)).toContain('config-split')
+    // The split lives in the user plane as a claim.
+    expect(snapshot.customProjects).toEqual([
+      { id: 'split:/home/d/peri-stable', name: 'stable lane' },
+    ])
+    expect(snapshot.placements).toEqual([
+      {
+        sessionId: 'stable',
+        customProjectId: 'split:/home/d/peri-stable',
+        via: { kind: 'root', path: '/home/d/peri-stable' },
+      },
+    ])
+  })
+
+  it('computes placements from an explicit user plane', () => {
+    const events: SourceEvent[] = [
+      { type: 'store-discovered', store },
+      {
+        type: 'userplane-changed',
+        plane: {
+          projects: [
+            {
+              id: 'p1',
+              name: 'A things',
+              matchers: [{ kind: 'remote', url: 'https://github.com/o/a' }],
+              include: [],
+              exclude: [],
+            },
+          ],
+        },
+      },
+      ...baseEvents.slice(1),
+    ]
+    const snapshot = buildSnapshot(foldAll(emptyState, events), { now: NOW })
+    expect(snapshot.customProjects).toEqual([{ id: 'p1', name: 'A things' }])
+    expect(snapshot.placements.map((p) => p.sessionId)).toEqual(['aaa'])
   })
 
   it('applies renames and archived from session meta', () => {

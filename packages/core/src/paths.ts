@@ -39,6 +39,13 @@ export function driveMountTranslator(mountRoot: string): (path: string) => strin
   }
 }
 
+/** Segment-aligned "is path at or under root", separator-agnostic. */
+export function isUnder(path: string, root: string): boolean {
+  const ps = path.split(/[\\/]+/).filter((s) => s.length > 0)
+  const rs = root.split(/[\\/]+/).filter((s) => s.length > 0)
+  return rs.length > 0 && rs.length <= ps.length && rs.every((seg, i) => seg === ps[i])
+}
+
 export function flavorOfPath(path: string): PathFlavor {
   if (path.startsWith('\\\\') || /^[A-Za-z]:[\\/]/.test(path) || path.includes('\\')) {
     return 'win32'

@@ -1,8 +1,10 @@
 # 008 — The two-plane model: derived data + user layer
 
 Date: 2026-09-10
-Status: design of record for the user layer. Decisions below marked
-DECIDED came from Dylan; PROPOSED items await a gut-check.
+Status: implemented (core/userplane.ts, snapshot placements, CLI
+projects.json + data-home resolution). Decisions below marked DECIDED
+came from Dylan; the PROPOSED absorb rule shipped as the default
+presentation policy and remains a formatter-only concern to revisit.
 
 ## The planes
 
