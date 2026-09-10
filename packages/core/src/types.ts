@@ -20,7 +20,12 @@ export interface SessionStore {
   rootPath: string
   /** How to interpret cwd strings found inside this store's transcripts. */
   pathFlavor: 'posix' | 'win32'
-  origin: { kind: 'native' } | { kind: 'wsl'; distro: string }
+  origin:
+    | { kind: 'native' }
+    /** A WSL distro's store, reached from Windows via \\wsl$. */
+    | { kind: 'wsl'; distro: string }
+    /** The Windows store, reached from inside WSL via a drive mount. */
+    | { kind: 'windows'; mountRoot: string }
   watchStrategy: 'fs-events' | 'poll'
 }
 

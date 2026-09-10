@@ -29,6 +29,8 @@ export interface HideOverrides {
 
 export interface HodorConfig {
   hide?: HideOverrides
+  /** Set false to stop auto-discovering cross-boundary (WSL/Windows) stores. */
+  discoverStores?: boolean
   /**
    * Roots to detach from remote-based grouping into their own project —
    * the "split" escape hatch when a clone of a repo is its own workstream.
@@ -64,6 +66,7 @@ const sessionOverrideSchema = z
 const configSchema = z
   .object({
     hide: hideSchema.optional(),
+    discoverStores: z.boolean().optional(),
     splitRoots: z.array(z.string()).optional(),
     projectNames: z.record(z.string(), z.string()).optional(),
     sessions: z.record(z.string(), sessionOverrideSchema).optional(),

@@ -19,6 +19,8 @@ function memDeps(fs = new MemFs()): {
     writeErr: (text) => errors.push(text),
     sleep: async () => {},
     columns: () => 100,
+    listWslDistros: async () => [],
+    wslDistro: () => undefined,
     selfUpdate: async () => {
       output.push('selfUpdate-stub\n')
       return 0
@@ -241,6 +243,93 @@ describe('user config', () => {
     expect(await run(['scan', '--json'], deps)).toBe(0)
     expect(errors.join('')).toContain('ignoring /home/u/.hodor/config.json')
     expect(() => JSON.parse(output.join(''))).not.toThrow()
+  })
+})
+
+describe('cross-boundary store discovery', () => {
+  it('from Windows: combines the native store with discovered WSL stores', async () => {
+    const fs = new MemFs('\\')
+    const { deps, output } = memDeps(fs)
+    deps.platformFlavor = 'win32'
+    deps.homedir = () => 'C:\\Users\\d'
+    deps.listWslDistros = async () => ['Ubuntu']
+
+    fs.writeFile(
+      'C:\\Users\\d\\.claude\\projects\\-C-Users-d-app\\wwww.jsonl',
+      line('u1', '2026-06-01T10:00:00Z', 'C:\\Users\\d\\app', 'windows session', 'cli'),
+    )
+    // Ubuntu has two home dirs; only one holds a store. A userless distro
+    // contributes nothing.
+    fs.writeFile('\\\\wsl$\\Ubuntu\\home\\other\\notes.txt', 'no store here')
+    fs.writeFile(
+      '\\\\wsl$\\Ubuntu\\home\\d\\.claude\\projects\\-home-d-repo\\llll.jsonl',
+      line('u2', '2026-06-01T10:00:01Z', '/home/d/repo', 'wsl session', 'cli'),
+    )
+    fs.writeFile(
+      '\\\\wsl$\\Ubuntu\\home\\d\\repo\\.git\\config',
+      '[remote "origin"]\n\turl = git@github.com:o/r.git\n',
+    )
+
+    expect(await run(['scan', '--json'], deps)).toBe(0)
+    const snapshot = JSON.parse(output.join('')) as Snapshot
+    expect(snapshot.stores.map((s) => s.id)).toEqual(['local', 'wsl:Ubuntu'])
+    expect(snapshot.sessions.map((s) => s.id).sort()).toEqual(['llll', 'wwww'])
+    // git enrichment still works for the discovered store
+    expect(snapshot.assignments.find((a) => a.sessionId === 'llll')!.projectId).toBe(
+      'git-remote:github.com/o/r',
+    )
+  })
+
+  it('from WSL: combines the native store with the Windows store via /mnt', async () => {
+    const fs = new MemFs()
+    const { deps, output } = memDeps(fs)
+    deps.homedir = () => '/home/d'
+    deps.wslDistro = () => 'Ubuntu'
+
+    fs.writeFile(
+      '/home/d/.claude/projects/-home-d-x/pppp.jsonl',
+      line('u1', '2026-06-01T10:00:00Z', '/home/d/x', 'wsl-side session', 'cli'),
+    )
+    fs.writeFile(
+      '/mnt/c/Users/d/.claude/projects/-C-Users-d-app/qqqq.jsonl',
+      line('u2', '2026-06-01T10:00:01Z', 'C:\\Users\\d\\app', 'windows-side session', 'cli'),
+    )
+    // The Windows repo is reachable from WSL only through the drive mount.
+    fs.writeFile(
+      '/mnt/c/Users/d/app/.git/config',
+      '[remote "origin"]\n\turl = git@github.com:o/winapp.git\n',
+    )
+    // Junk Users entries without stores are skipped.
+    fs.writeFile('/mnt/c/Users/Public/Desktop/readme.txt', '')
+
+    expect(await run(['scan', '--json'], deps)).toBe(0)
+    const snapshot = JSON.parse(output.join('')) as Snapshot
+    expect(snapshot.stores.map((s) => s.id)).toEqual(['local', 'win:d'])
+    expect(snapshot.stores[1]).toMatchObject({
+      pathFlavor: 'win32',
+      origin: { kind: 'windows', mountRoot: '/mnt' },
+    })
+    expect(snapshot.assignments.find((a) => a.sessionId === 'qqqq')!.projectId).toBe(
+      'git-remote:github.com/o/winapp',
+    )
+  })
+
+  it('--no-discover keeps only the local store', async () => {
+    const fs = new MemFs()
+    const { deps, output } = memDeps(fs)
+    deps.wslDistro = () => 'Ubuntu'
+    fs.writeFile(
+      '/home/u/.claude/projects/-a/aaaa.jsonl',
+      line('u1', '2026-06-01T10:00:00Z', '/a'),
+    )
+    fs.writeFile(
+      '/mnt/c/Users/d/.claude/projects/-b/bbbb.jsonl',
+      line('u2', '2026-06-01T10:00:01Z', 'C:\\b'),
+    )
+    expect(await run(['scan', '--json', '--no-discover'], deps)).toBe(0)
+    const snapshot = JSON.parse(output.join('')) as Snapshot
+    expect(snapshot.stores.map((s) => s.id)).toEqual(['local'])
+    expect(snapshot.sessions.map((s) => s.id)).toEqual(['aaaa'])
   })
 })
 

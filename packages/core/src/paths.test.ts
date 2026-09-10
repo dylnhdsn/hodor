@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { flavorOfPath, pathOps, wslUncTranslator } from './paths.js'
+import { driveMountTranslator, flavorOfPath, pathOps, wslUncTranslator } from './paths.js'
 
 describe('pathOps', () => {
   it('joins with the flavor separator', () => {
@@ -13,6 +13,21 @@ describe('wslUncTranslator', () => {
     const translate = wslUncTranslator('Ubuntu')
     expect(translate('/home/d/repo')).toBe('\\\\wsl$\\Ubuntu\\home\\d\\repo')
     expect(translate('/')).toBe('\\\\wsl$\\Ubuntu\\')
+  })
+})
+
+describe('driveMountTranslator', () => {
+  it('maps drive paths onto the WSL mount', () => {
+    const translate = driveMountTranslator('/mnt')
+    expect(translate('C:\\Users\\d\\app')).toBe('/mnt/c/Users/d/app')
+    expect(translate('D:/data/x')).toBe('/mnt/d/data/x')
+    expect(translate('C:\\')).toBe('/mnt/c/')
+  })
+
+  it('passes non-drive paths through untouched', () => {
+    const translate = driveMountTranslator('/mnt')
+    expect(translate('/already/posix')).toBe('/already/posix')
+    expect(translate('\\\\wsl$\\Ubuntu\\home')).toBe('\\\\wsl$\\Ubuntu\\home')
   })
 })
 

@@ -26,6 +26,19 @@ export function wslUncTranslator(distro: string): (path: string) => string {
   return (path) => `\\\\wsl$\\${distro}` + path.replace(/\//g, '\\')
 }
 
+/**
+ * Translate a win32 path from inside a Windows store to the mount path WSL
+ * uses to reach that drive: C:\Users\d\x → /mnt/c/Users/d/x. Non-drive
+ * paths pass through untouched.
+ */
+export function driveMountTranslator(mountRoot: string): (path: string) => string {
+  return (path) => {
+    const m = path.match(/^([A-Za-z]):[\\/](.*)$/)
+    if (m === null) return path
+    return `${mountRoot}/${m[1]!.toLowerCase()}/${m[2]!.replace(/\\/g, '/')}`
+  }
+}
+
 export function flavorOfPath(path: string): PathFlavor {
   if (path.startsWith('\\\\') || /^[A-Za-z]:[\\/]/.test(path) || path.includes('\\')) {
     return 'win32'

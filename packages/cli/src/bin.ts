@@ -45,6 +45,22 @@ process.exitCode = await run(process.argv.slice(2), {
   },
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   columns: () => process.stdout.columns ?? 120,
+  listWslDistros: async () => {
+    if (process.platform !== 'win32') return []
+    try {
+      // wsl.exe writes UTF-16LE to stdout; decode accordingly.
+      const result = spawnSync('wsl.exe', ['-l', '-q'], { encoding: 'buffer' })
+      if (result.status !== 0) return []
+      return result.stdout
+        .toString('utf16le')
+        .split(/\r?\n/)
+        .map((line) => line.replace(/[\u0000\uFEFF]/g, '').trim())
+        .filter((name) => name.length > 0 && !name.startsWith('docker-desktop'))
+    } catch {
+      return []
+    }
+  },
+  wslDistro: () => process.env['WSL_DISTRO_NAME'],
   selfUpdate: () => {
     const token = resolveToken()
     return runUpdate({
