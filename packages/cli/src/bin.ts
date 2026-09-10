@@ -62,6 +62,22 @@ process.exitCode = await run(process.argv.slice(2), {
   },
   wslDistro: () => process.env['WSL_DISTRO_NAME'],
   env: (name) => process.env[name],
+  openUrl: async (url) => {
+    // Best effort per platform; the printed URL is the fallback.
+    const attempts: Array<[string, string[]]> =
+      process.platform === 'win32'
+        ? [['cmd', ['/c', 'start', '', url]]]
+        : process.platform === 'darwin'
+          ? [['open', [url]]]
+          : [
+              ['xdg-open', [url]],
+              ['cmd.exe', ['/c', 'start', '', url]], // WSL with Windows interop
+            ]
+    for (const [command, cmdArgs] of attempts) {
+      const result = spawnSync(command, cmdArgs, { stdio: 'ignore' })
+      if (result.status === 0) return
+    }
+  },
   selfUpdate: () => {
     const token = resolveToken()
     return runUpdate({

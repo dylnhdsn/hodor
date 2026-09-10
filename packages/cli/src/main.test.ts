@@ -22,6 +22,7 @@ function memDeps(fs = new MemFs()): {
     listWslDistros: async () => [],
     wslDistro: () => undefined,
     env: () => undefined,
+    openUrl: async () => {},
     selfUpdate: async () => {
       output.push('selfUpdate-stub\n')
       return 0

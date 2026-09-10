@@ -25,6 +25,7 @@ import {
   type SnapshotOptions,
 } from '@hodor/core'
 import { projectCommand, sessionCommand } from './curate.js'
+import { resolveStores, storeFs } from './stores.js'
 import { formatSnapshot } from './format.js'
 import { loadUserFiles, type UserFiles } from './userdata.js'
 import { cliVersion } from './version.js'
@@ -51,6 +52,8 @@ export interface CliDeps {
   sleep(ms: number): Promise<void>
   /** Terminal width for human-readable output. */
   columns(): number
+  /** Open a URL in the user's browser (best effort). */
+  openUrl(url: string): Promise<void>
   /** Replace the installed bundle with the latest release (hodor update). */
   selfUpdate(): Promise<number>
 }
@@ -62,6 +65,8 @@ Usage:
   hodor watch [--json] [--interval <ms>] [--root <path>]...
                                             Scan, then live-update on changes
   hodor stats [--json] [--root <path>]...   Entrypoint and visibility histograms
+  hodor ui [--port <n>]                     Start the local web UI and open it
+  hodor serve [--port <n>]                  Start the UI/API server (default :4477)
   hodor project <list|create|rename|delete|match|unmatch|include|exclude>
                                             Curate custom projects (projects.json)
   hodor session <rename|archive|unarchive>  Per-session overrides (config.json)
@@ -98,6 +103,7 @@ interface Flags {
   roots: string[]
   hide: string[]
   intervalMs: number
+  port: number
   ticks?: number
   rest: string[]
   error?: string
@@ -111,14 +117,16 @@ function parseFlags(args: string[]): Flags {
     roots: [],
     hide: [],
     intervalMs: 2000,
+    port: 4477,
     rest: [],
   }
+  const valueFlags = new Set(['--root', '--interval', '--ticks', '--hide', '--port'])
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!
     if (arg === '--json') flags.json = true
     else if (arg === '--all') flags.all = true
     else if (arg === '--no-discover') flags.noDiscover = true
-    else if (arg === '--root' || arg === '--interval' || arg === '--ticks' || arg === '--hide') {
+    else if (valueFlags.has(arg)) {
       const value = args[++i]
       if (value === undefined) {
         flags.error = `${arg}: missing value`
@@ -128,6 +136,7 @@ function parseFlags(args: string[]): Flags {
       if (arg === '--hide') flags.hide.push(value)
       if (arg === '--interval') flags.intervalMs = Number(value)
       if (arg === '--ticks') flags.ticks = Number(value)
+      if (arg === '--port') flags.port = Number(value)
     } else flags.rest.push(arg)
   }
   return flags
@@ -167,104 +176,6 @@ function configEvents({ config, plane }: UserFiles): SourceEvent[] {
     events.push({ type: 'meta-changed', meta })
   }
   return events
-}
-
-function makeStores(deps: CliDeps, roots: string[]): SessionStore[] {
-  const rootPaths =
-    roots.length > 0 ? roots : [pathOps(deps.platformFlavor).join(deps.homedir(), '.claude')]
-  return rootPaths.map((rootPath, index) => {
-    const wsl = rootPath.match(/^\\\\wsl\$\\([^\\]+)/)
-    return {
-      id: rootPaths.length === 1 ? 'local' : `store${index}`,
-      rootPath,
-      // A WSL store read from Windows holds posix cwds in its transcripts.
-      pathFlavor: wsl ? 'posix' : deps.platformFlavor,
-      origin: wsl?.[1] !== undefined ? { kind: 'wsl', distro: wsl[1] } : { kind: 'native' },
-      watchStrategy: 'poll',
-    }
-  })
-}
-
-const hasProjects = async (deps: CliDeps, root: string, sep: string): Promise<boolean> =>
-  (await deps.fs.stat(`${root}${sep}projects`))?.kind === 'dir'
-
-/**
- * Cross-boundary discovery: from Windows, find each WSL distro's stores
- * behind \\wsl$; from inside WSL, find Windows stores behind /mnt/c. Both
- * sides then present one combined view.
- */
-async function discoverCrossStores(deps: CliDeps): Promise<SessionStore[]> {
-  const stores: SessionStore[] = []
-
-  if (deps.platformFlavor === 'win32') {
-    for (const distro of await deps.listWslDistros()) {
-      const base = `\\\\wsl$\\${distro}`
-      const candidates = [
-        ...(await deps.fs.listDir(`${base}\\home`)).map((user) => `${base}\\home\\${user}\\.claude`),
-        `${base}\\root\\.claude`,
-      ]
-      const found: string[] = []
-      for (const root of candidates) {
-        if (await hasProjects(deps, root, '\\')) found.push(root)
-      }
-      for (const rootPath of found) {
-        const user = rootPath.split('\\').slice(-2, -1)[0] ?? 'home'
-        stores.push({
-          id: found.length === 1 ? `wsl:${distro}` : `wsl:${distro}:${user}`,
-          rootPath,
-          pathFlavor: 'posix',
-          origin: { kind: 'wsl', distro },
-          watchStrategy: 'poll',
-        })
-      }
-    }
-    return stores
-  }
-
-  if (deps.wslDistro() !== undefined) {
-    for (const user of await deps.fs.listDir('/mnt/c/Users')) {
-      const rootPath = `/mnt/c/Users/${user}/.claude`
-      if (await hasProjects(deps, rootPath, '/')) {
-        stores.push({
-          id: `win:${user}`,
-          rootPath,
-          // The Windows store's transcripts record win32 cwds; access to
-          // those paths goes through the drive mount.
-          pathFlavor: 'win32',
-          origin: { kind: 'windows', mountRoot: '/mnt' },
-          watchStrategy: 'poll',
-        })
-      }
-    }
-  }
-  return stores
-}
-
-async function resolveStores(deps: CliDeps, flags: Flags, config: HodorConfig): Promise<SessionStore[]> {
-  if (flags.roots.length > 0) return makeStores(deps, flags.roots)
-  const stores = makeStores(deps, [])
-  if (!flags.noDiscover && config.discoverStores !== false) {
-    stores.push(...(await discoverCrossStores(deps)))
-  }
-  return stores
-}
-
-/**
- * Per-store filesystem for reading cwd-relative things (git metadata): a
- * WSL store's posix cwds are reachable from Windows only via \\wsl$\<distro>.
- */
-function storeFs(deps: CliDeps, stores: SessionStore[]): (storeId: StoreId) => FileSystem {
-  const byStore = new Map<StoreId, FileSystem>()
-  for (const store of stores) {
-    if (store.origin.kind === 'wsl') {
-      byStore.set(store.id, translatePathFs(deps.fs, wslUncTranslator(store.origin.distro)))
-    } else if (store.origin.kind === 'windows') {
-      byStore.set(store.id, translatePathFs(deps.fs, driveMountTranslator(store.origin.mountRoot)))
-    } else {
-      byStore.set(store.id, deps.fs)
-    }
-  }
-  return (storeId) => byStore.get(storeId) ?? deps.fs
 }
 
 async function enrich(
@@ -335,7 +246,7 @@ function printSnapshot(deps: CliDeps, snapshot: Snapshot, json: boolean): void {
 async function scan(deps: CliDeps, flags: Flags): Promise<number> {
   const files = await loadUserFiles(deps)
   const config = files.config
-  const stores = await resolveStores(deps, flags, config)
+  const stores = await resolveStores(deps, { roots: flags.roots, noDiscover: flags.noDiscover }, config)
   let state = foldAll(emptyState, configEvents(files))
   for (const store of stores) {
     state = foldAll(state, await scanStore(deps.fs, store))
@@ -349,7 +260,7 @@ async function statsCommand(deps: CliDeps, flags: Flags): Promise<number> {
   const files = await loadUserFiles(deps)
   const config = files.config
   let state = foldAll(emptyState, configEvents(files))
-  for (const store of await resolveStores(deps, flags, config)) {
+  for (const store of await resolveStores(deps, { roots: flags.roots, noDiscover: flags.noDiscover }, config)) {
     state = foldAll(state, await scanStore(deps.fs, store))
   }
   // Stats never need the git enricher — visibility and entrypoints are
@@ -362,7 +273,7 @@ async function statsCommand(deps: CliDeps, flags: Flags): Promise<number> {
 async function watch(deps: CliDeps, flags: Flags): Promise<number> {
   const files = await loadUserFiles(deps)
   const config = files.config
-  const stores = await resolveStores(deps, flags, config)
+  const stores = await resolveStores(deps, { roots: flags.roots, noDiscover: flags.noDiscover }, config)
   const fsFor = storeFs(deps, stores)
   const tailers = stores.map((store) => new StoreTailer(deps.fs, store))
   let state = foldAll(emptyState, configEvents(files))
@@ -426,6 +337,16 @@ export async function run(argv: string[], deps: CliDeps): Promise<number> {
           : `${munged.dirNamePrefix}-* (truncated; suffix is a CLI-internal hash)`) + '\n',
       )
       return 0
+    }
+
+    case 'serve':
+    case 'ui': {
+      const { startServer } = await import('./server.js')
+      const server = await startServer(deps, { port: flags.port })
+      deps.write(`hodor ui at ${server.url} (Ctrl+C to stop)\n`)
+      if (command === 'ui') await deps.openUrl(server.url)
+      // Runs until interrupted; tests use startServer directly instead.
+      return new Promise<number>(() => {})
     }
 
     case 'project':
