@@ -1,4 +1,4 @@
-import type { CustomProject, Project, Session, Snapshot } from '@hodor/core'
+import type { CustomProject, Placement, Project, Session, Snapshot } from '@hodor/core'
 
 /** Client-side derivations over a Snapshot — mirrors the CLI formatter. */
 
@@ -39,13 +39,18 @@ export interface RailProject {
 export interface View {
   visible: Session[]
   hidden: Session[]
+  byId: Map<string, Session>
   /** Live (non-archived) custom project ids claiming each session. */
   claimsBySession: Map<string, string[]>
+  /** Every claim on each session, archived projects included (provenance). */
+  placementsBySession: Map<string, Placement[]>
   rail: RailProject[]
   archivedProjects: CustomProject[]
   /** Sessions of an archived project (they're hidden, the panel shows them). */
   sessionsOfArchived: Map<string, Session[]>
   derivedOf: Map<string, Project>
+  /** Fork lineage: ancestor session id → its forks. */
+  forksOf: Map<string, Session[]>
 }
 
 const latestOf = (sessions: Session[]): string =>
@@ -62,11 +67,13 @@ export function deriveView(snapshot: Snapshot): View {
   const archivedIds = new Set(archivedProjects.map((p) => p.id))
 
   const claimsBySession = new Map<string, string[]>()
+  const placementsBySession = new Map<string, Placement[]>()
   const sessionsByCustom = new Map<string, Session[]>()
   const sessionsOfArchived = new Map<string, Session[]>()
   for (const p of snapshot.placements) {
     const session = byId.get(p.sessionId)
     if (session === undefined) continue
+    placementsBySession.set(p.sessionId, [...(placementsBySession.get(p.sessionId) ?? []), p])
     if (archivedIds.has(p.customProjectId)) {
       sessionsOfArchived.set(p.customProjectId, [
         ...(sessionsOfArchived.get(p.customProjectId) ?? []),
@@ -117,7 +124,24 @@ export function deriveView(snapshot: Snapshot): View {
       latestOf(b.sessions).localeCompare(latestOf(a.sessions)) || a.name.localeCompare(b.name),
   )
 
-  return { visible, hidden, claimsBySession, rail, archivedProjects, sessionsOfArchived, derivedOf }
+  const forksOf = new Map<string, Session[]>()
+  for (const session of snapshot.sessions) {
+    if (session.forkedFrom === undefined) continue
+    forksOf.set(session.forkedFrom, [...(forksOf.get(session.forkedFrom) ?? []), session])
+  }
+
+  return {
+    visible,
+    hidden,
+    byId,
+    claimsBySession,
+    placementsBySession,
+    rail,
+    archivedProjects,
+    sessionsOfArchived,
+    derivedOf,
+    forksOf,
+  }
 }
 
 export const byRecency = (sessions: Session[]): Session[] =>
@@ -144,6 +168,24 @@ export interface MutationResult {
   error?: string
   /** Post-materialize project id — may differ from the id sent. */
   id?: string
+}
+
+export interface TranscriptEntry {
+  type: 'user' | 'assistant' | 'system'
+  timestamp?: string
+  isSidechain: boolean
+  text: string
+}
+
+export async function fetchTranscript(sessionId: string, limit = 24): Promise<TranscriptEntry[]> {
+  try {
+    const res = await fetch(`/api/transcript?id=${encodeURIComponent(sessionId)}&limit=${limit}`)
+    if (!res.ok) return []
+    const json = (await res.json()) as { messages?: TranscriptEntry[] }
+    return json.messages ?? []
+  } catch {
+    return []
+  }
 }
 
 export async function postMutation(

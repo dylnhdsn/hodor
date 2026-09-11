@@ -34,6 +34,12 @@ export interface SessionAccum {
   firstCommand?: string
   /** Unique entrypoint values observed (cli, sdk, remote, …). */
   entrypoints: string[]
+  /**
+   * A forked/resumed-as-new session carries copied history whose lines
+   * still hold the ORIGINAL session id — the first mismatch names the
+   * ancestor.
+   */
+  forkedFrom?: SessionId
   userCount: number
   assistantCount: number
   main: ThreadAccum
@@ -102,6 +108,14 @@ function applyMessage(accum: SessionAccum, line: MessageLine): void {
 
   if (line.entrypoint !== undefined && !accum.entrypoints.includes(line.entrypoint)) {
     accum.entrypoints.push(line.entrypoint)
+  }
+
+  if (
+    accum.forkedFrom === undefined &&
+    line.sessionId !== undefined &&
+    line.sessionId !== accum.id
+  ) {
+    accum.forkedFrom = line.sessionId
   }
 
   if (line.isSidechain) {

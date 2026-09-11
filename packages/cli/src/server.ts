@@ -10,10 +10,12 @@ import {
   enrichGitContexts,
   foldAll,
   mergeHideRules,
+  parseTranscript,
   previewMatcher,
   slugifyProjectId,
   type CoreState,
   type Matcher,
+  type MessageLine,
   type PlaneOp,
   type SessionOp,
   type Snapshot,
@@ -189,6 +191,36 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
     return sendJson(res, 200, { ok: true, id: op.id })
   }
 
+  /**
+   * The tail of a session's conversation, for the detail pane: the last
+   * human-readable turns (prompts, commands, assistant text), meta and
+   * tool-only lines skipped. Read-only, straight off the transcript file.
+   */
+  async function handleTranscript(res: ServerResponse, url: URL): Promise<void> {
+    const id = url.searchParams.get('id') ?? ''
+    const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit') ?? 40)))
+    const session = snapshot?.sessions.find((s) => s.id === id)
+    if (session === undefined) return sendJson(res, 404, { error: `no session "${id}"` })
+
+    let content: string | undefined
+    try {
+      content = await deps.fs.readFile(session.transcriptPath)
+    } catch {
+      content = undefined
+    }
+    if (content === undefined) return sendJson(res, 200, { messages: [] })
+    const messages = parseTranscript(content)
+      .filter((line): line is MessageLine => line.kind === 'message')
+      .map((line) => ({
+        type: line.type,
+        ...(line.timestamp !== undefined ? { timestamp: line.timestamp } : {}),
+        isSidechain: line.isSidechain,
+        text: line.promptText ?? line.commandName ?? line.textPreview,
+      }))
+      .filter((entry) => entry.text !== undefined)
+    return sendJson(res, 200, { messages: messages.slice(-limit) })
+  }
+
   function handlePreview(res: ServerResponse, body: string): void {
     let payload: { matcher?: Matcher }
     try {
@@ -246,6 +278,12 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
 
       if (req.method === 'POST' && path === '/api/preview') {
         handlePreview(res, await readBody(req))
+        return
+      }
+
+      if (req.method === 'GET' && path === '/api/transcript') {
+        if (snapshot === undefined) await refresh()
+        await handleTranscript(res, url)
         return
       }
 

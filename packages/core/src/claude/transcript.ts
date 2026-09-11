@@ -60,6 +60,8 @@ export interface MessageLine {
   promptText?: string
   /** For user messages that invoke a slash command: its name, e.g. "/model". */
   commandName?: string
+  /** For assistant messages: first text block, collapsed and truncated. */
+  textPreview?: string
   spawnedBy?: { toolUseId: string; assistantUuid: string }
 }
 
@@ -82,6 +84,7 @@ export interface InvalidLine {
 export type TranscriptLine = MessageLine | SummaryLine | OtherLine | InvalidLine
 
 export const PROMPT_TEXT_MAX_LENGTH = 120
+export const ASSISTANT_PREVIEW_MAX_LENGTH = 200
 
 /** Message content is a string or an array of blocks; take the first text. */
 function firstTextOf(content: unknown): string | undefined {
@@ -179,6 +182,12 @@ export function parseTranscriptLine(raw: string): TranscriptLine {
       const content = classifyPromptContent(d.message?.content)
       if (content?.kind === 'prompt') line.promptText = content.text
       if (content?.kind === 'command') line.commandName = content.name
+    }
+    if (type === 'assistant') {
+      const text = firstTextOf(d.message?.content)?.replace(/\s+/g, ' ').trim()
+      if (text !== undefined && text.length > 0) {
+        line.textPreview = text.slice(0, ASSISTANT_PREVIEW_MAX_LENGTH)
+      }
     }
     if (d.toolUseID !== undefined && d.sourceToolAssistantUUID !== undefined) {
       line.spawnedBy = { toolUseId: d.toolUseID, assistantUuid: d.sourceToolAssistantUUID }

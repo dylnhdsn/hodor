@@ -1,14 +1,16 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { CustomProject, Matcher, Session, Snapshot } from '@hodor/core'
 import {
   byRecency,
   cwdsOf,
   deriveView,
+  fetchTranscript,
   formatAge,
   matchesQuery,
   postMutation,
   titleOf,
   type RailProject,
+  type TranscriptEntry,
   type View,
 } from './data.js'
 import { useSnapshot } from './useSnapshot.js'
@@ -37,6 +39,7 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set())
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [detailId, setDetailId] = useState<string | undefined>(undefined)
 
   const view = useMemo(() => deriveView(snapshot), [snapshot])
   const nowMs = Date.parse(snapshot.generatedAt)
@@ -183,7 +186,10 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
                 </span>
                 {project !== undefined && (
                   <button
-                    onClick={() => setSettingsOpen(!settingsOpen)}
+                    onClick={() => {
+                      setSettingsOpen(!settingsOpen)
+                      setDetailId(undefined)
+                    }}
                     className={`whitespace-nowrap rounded border px-2 py-1 text-xs ${
                       settingsOpen
                         ? 'border-zinc-500 text-zinc-100'
@@ -220,7 +226,12 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
                     showHiddenBy={filter.kind === 'hidden'}
                     checked={selected.has(s.id)}
                     anySelected={selected.size > 0}
+                    inspecting={detailId === s.id}
                     toggle={() => toggleSelected(s.id)}
+                    open={() => {
+                      setDetailId(detailId === s.id ? undefined : s.id)
+                      setSettingsOpen(false)
+                    }}
                     mutateProject={mutateProject}
                   />
                 ))}
@@ -228,14 +239,24 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
                   <li className="px-4 py-8 text-center text-zinc-600">nothing here</li>
                 )}
               </ul>
-              {settingsOpen && project !== undefined && (
+              {detailId !== undefined && view.byId.has(detailId) ? (
+                <DetailPane
+                  key={detailId}
+                  session={view.byId.get(detailId)!}
+                  nowMs={nowMs}
+                  view={view}
+                  snapshot={snapshot}
+                  jump={(id) => setDetailId(id)}
+                  close={() => setDetailId(undefined)}
+                />
+              ) : settingsOpen && project !== undefined ? (
                 <SettingsPanel
                   key={project.id}
                   project={project}
                   rail={view.rail}
                   mutateProject={mutateProject}
                 />
-              )}
+              ) : undefined}
             </div>
           </>
         )}
@@ -402,10 +423,13 @@ function SessionRow(props: {
   showHiddenBy: boolean
   checked: boolean
   anySelected: boolean
+  inspecting: boolean
   toggle: () => void
+  open: () => void
   mutateProject: (body: Record<string, unknown>) => Promise<boolean>
 }) {
-  const { session: s, nowMs, view, customNames, rail, showHiddenBy, checked, anySelected, toggle, mutateProject } = props
+  const { session: s, nowMs, view, customNames, rail, showHiddenBy } = props
+  const { checked, anySelected, inspecting, toggle, open, mutateProject } = props
   const active = s.runtime.kind !== 'idle'
   const claims = view.claimsBySession.get(s.id) ?? []
   const derived = view.derivedOf.get(s.id)
@@ -425,13 +449,19 @@ function SessionRow(props: {
     await postMutation('/api/session', { op: 'archive-session', sessionId: s.id, archived })
   }
 
+  const stop = (e: React.SyntheticEvent) => e.stopPropagation()
+
   return (
-    <li className="group px-4 py-2 hover:bg-zinc-900/60">
+    <li
+      onClick={open}
+      className={`group cursor-pointer px-4 py-2 ${inspecting ? 'bg-zinc-900' : 'hover:bg-zinc-900/60'}`}
+    >
       <div className="flex items-center gap-2">
         <input
           type="checkbox"
           checked={checked}
           onChange={toggle}
+          onClick={stop}
           className={`h-3 w-3 shrink-0 accent-indigo-500 ${
             anySelected ? '' : 'opacity-0 transition group-hover:opacity-100'
           }`}
@@ -446,7 +476,10 @@ function SessionRow(props: {
             {customNames.get(id) ?? id}
           </span>
         ))}
-        <span className="ml-auto flex shrink-0 items-center gap-2 opacity-0 transition group-hover:opacity-100">
+        <span
+          onClick={stop}
+          className="ml-auto flex shrink-0 items-center gap-2 opacity-0 transition group-hover:opacity-100"
+        >
           <select
             defaultValue=""
             onChange={(e) => {
@@ -481,6 +514,16 @@ function SessionRow(props: {
       <div className="mt-0.5 flex items-center gap-2 pl-7 text-xs text-zinc-500">
         <span className="font-mono">{s.id.slice(0, 8)}</span>
         <span>{formatAge(nowMs, s.lastActivityAt)}</span>
+        {s.counts.sidechains > 0 && (
+          <span className="rounded bg-zinc-800 px-1.5 text-[11px] text-zinc-400" title="subagent runs">
+            ⑂ {s.counts.sidechains}
+          </span>
+        )}
+        {s.forkedFrom !== undefined && (
+          <span className="rounded bg-zinc-800 px-1.5 text-[11px] text-zinc-400" title="forked session">
+            fork
+          </span>
+        )}
         {derived !== undefined && <span className="truncate text-zinc-600">{derived.name}</span>}
         <span className="truncate">{s.cwd}</span>
         {showHiddenBy && s.hiddenBy !== undefined && (
@@ -488,6 +531,201 @@ function SessionRow(props: {
         )}
       </div>
     </li>
+  )
+}
+
+// ---------- session detail pane ----------
+
+function DetailPane(props: {
+  session: Session
+  nowMs: number
+  view: View
+  snapshot: Snapshot
+  jump: (id: string) => void
+  close: () => void
+}) {
+  const { session: s, nowMs, view, snapshot, jump, close } = props
+  const [tail, setTail] = useState<TranscriptEntry[] | undefined>(undefined)
+
+  useEffect(() => {
+    let cancelled = false
+    setTail(undefined)
+    void fetchTranscript(s.id, 12).then((messages) => {
+      if (!cancelled) setTail(messages)
+    })
+    return () => {
+      cancelled = true
+    }
+    // refetch when activity moves, so an open pane follows a live session
+  }, [s.id, s.lastActivityAt])
+
+  const sidechains = s.threads.filter((t) => t.kind === 'sidechain')
+  const placements = view.placementsBySession.get(s.id) ?? []
+  const derived = view.derivedOf.get(s.id)
+  const ancestor = s.forkedFrom !== undefined ? view.byId.get(s.forkedFrom) : undefined
+  const forks = view.forksOf.get(s.id) ?? []
+  const projectName = (id: string) => snapshot.customProjects.find((p) => p.id === id)?.name ?? id
+  const isArchivedProject = (id: string) =>
+    snapshot.customProjects.find((p) => p.id === id)?.archived === true
+
+  async function rename() {
+    const name = window.prompt('Rename session', titleOf(s))
+    if (name === null || name.trim().length === 0) return
+    await postMutation('/api/session', { op: 'rename-session', sessionId: s.id, name: name.trim() })
+  }
+
+  return (
+    <div className="w-96 shrink-0 overflow-y-auto border-l border-zinc-800 px-4 py-3 text-xs">
+      <div className="mb-1 flex items-start gap-2">
+        <h2 className="min-w-0 flex-1 text-sm font-semibold break-words text-zinc-100">
+          {titleOf(s)}
+        </h2>
+        <button onClick={close} className="shrink-0 px-1 text-zinc-500 hover:text-zinc-200">
+          ✕
+        </button>
+      </div>
+      <div className="mb-3 flex items-center gap-2 text-zinc-500">
+        <span className="font-mono">{s.id.slice(0, 8)}</span>
+        <button
+          onClick={() => void navigator.clipboard.writeText(s.id).catch(() => {})}
+          className="text-zinc-600 hover:text-zinc-300"
+        >
+          copy id
+        </button>
+        <button onClick={() => void rename()} className="text-zinc-600 hover:text-zinc-300">
+          rename
+        </button>
+        {s.hiddenBy === 'archived' ? (
+          <button
+            onClick={() =>
+              void postMutation('/api/session', { op: 'archive-session', sessionId: s.id, archived: false })
+            }
+            className="text-zinc-600 hover:text-zinc-300"
+          >
+            unarchive
+          </button>
+        ) : (
+          <button
+            onClick={() =>
+              void postMutation('/api/session', { op: 'archive-session', sessionId: s.id, archived: true })
+            }
+            className="text-zinc-600 hover:text-zinc-300"
+          >
+            archive
+          </button>
+        )}
+      </div>
+
+      {s.hiddenBy !== undefined && (
+        <p className="mb-3 rounded bg-amber-950/60 px-2 py-1 text-amber-300">
+          hidden — {s.hiddenBy}
+        </p>
+      )}
+
+      <Section title="facts">
+        <Fact label="last activity" value={formatAge(nowMs, s.lastActivityAt)} />
+        <Fact label="created" value={formatAge(nowMs, s.createdAt)} />
+        <Fact label="messages" value={`${s.counts.user} you · ${s.counts.assistant} claude`} />
+        {s.gitBranch !== undefined && <Fact label="branch" value={s.gitBranch} />}
+        <Fact label="entrypoint" value={s.entrypoints.join(', ') || '-'} />
+        {s.cliVersion !== undefined && <Fact label="cli" value={s.cliVersion} />}
+        <Fact label="cwd" value={s.cwd ?? '-'} mono />
+      </Section>
+
+      {(ancestor !== undefined || s.forkedFrom !== undefined || forks.length > 0) && (
+        <Section title="lineage">
+          {s.forkedFrom !== undefined && (
+            <div className="py-0.5">
+              forked from{' '}
+              {ancestor !== undefined ? (
+                <button onClick={() => jump(ancestor.id)} className="text-indigo-300 hover:underline">
+                  {titleOf(ancestor)}
+                </button>
+              ) : (
+                <span className="font-mono text-zinc-500">{s.forkedFrom.slice(0, 8)} (gone)</span>
+              )}
+            </div>
+          )}
+          {forks.map((fork) => (
+            <div key={fork.id} className="py-0.5">
+              fork:{' '}
+              <button onClick={() => jump(fork.id)} className="text-indigo-300 hover:underline">
+                {titleOf(fork)}
+              </button>
+            </div>
+          ))}
+        </Section>
+      )}
+
+      {sidechains.length > 0 && (
+        <Section title={`subagents (${sidechains.length})`}>
+          {sidechains.map((t) => (
+            <div key={t.id} className="flex items-center justify-between py-0.5 text-zinc-400">
+              <span>⑂ {t.messageCount} messages</span>
+              <span className="text-zinc-600">{formatAge(nowMs, t.lastTs)}</span>
+            </div>
+          ))}
+        </Section>
+      )}
+
+      <Section title="projects">
+        {placements.map((p) => (
+          <div key={p.customProjectId} className="py-0.5">
+            <span className="text-zinc-300">{projectName(p.customProjectId)}</span>
+            {isArchivedProject(p.customProjectId) && <span className="text-amber-400"> (archived)</span>}
+            <span className="text-zinc-600">
+              {' — '}
+              {p.via === 'include' ? 'pinned by you' : `${p.via.kind}=${matcherValue(p.via)}`}
+            </span>
+          </div>
+        ))}
+        {derived !== undefined && (
+          <div className="py-0.5 text-zinc-500">
+            auto: {derived.name}
+            <span className="text-zinc-600">
+              {' — '}
+              {derived.identity.kind === 'git-remote'
+                ? `remote ${derived.identity.url}`
+                : `path ${derived.identity.root}`}
+            </span>
+          </div>
+        )}
+        {placements.length === 0 && derived === undefined && (
+          <p className="text-zinc-600">not grouped anywhere</p>
+        )}
+      </Section>
+
+      <Section title="conversation">
+        {tail === undefined && <p className="text-zinc-600">loading…</p>}
+        {tail !== undefined && tail.length === 0 && (
+          <p className="text-zinc-600">nothing readable in the transcript</p>
+        )}
+        {tail?.map((entry, i) => (
+          <div key={i} className={`py-1 ${entry.isSidechain ? 'opacity-60' : ''}`}>
+            <span
+              className={`mr-1.5 font-medium ${
+                entry.type === 'user' ? 'text-indigo-300' : 'text-emerald-300'
+              }`}
+            >
+              {entry.isSidechain ? '⑂ ' : ''}
+              {entry.type === 'user' ? 'you' : 'claude'}
+            </span>
+            <span className="text-zinc-400">{entry.text}</span>
+          </div>
+        ))}
+      </Section>
+    </div>
+  )
+}
+
+function Fact(props: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div className="flex justify-between gap-3 py-0.5">
+      <span className="shrink-0 text-zinc-600">{props.label}</span>
+      <span className={`truncate text-zinc-300 ${props.mono === true ? 'font-mono' : ''}`}>
+        {props.value}
+      </span>
+    </div>
   )
 }
 

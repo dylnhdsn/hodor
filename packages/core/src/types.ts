@@ -48,6 +48,8 @@ export interface Session {
   firstCommand?: string
   /** Unique entrypoint values observed on this session's lines (cli, sdk, …). */
   entrypoints: string[]
+  /** Ancestor session id when this session was forked/resumed-as-new. */
+  forkedFrom?: SessionId
   /** Set when a visibility rule classified this session as noise (provenance). */
   hiddenBy?: string
   createdAt?: Timestamp

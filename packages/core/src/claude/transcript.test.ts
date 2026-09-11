@@ -36,6 +36,38 @@ describe('parseTranscriptLine on real captured lines', () => {
     })
   })
 
+  it('extracts an assistant text preview, collapsed and truncated', () => {
+    const line = parseTranscriptLine(
+      JSON.stringify({
+        type: 'assistant',
+        uuid: 'a1',
+        parentUuid: 'u1',
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'tool_use', id: 't1', name: 'Bash', input: {} },
+            { type: 'text', text: '  Done —\n\n the tests   pass. '.repeat(20) },
+          ],
+        },
+      }),
+    )
+    expect(line.kind).toBe('message')
+    const preview = (line as { textPreview?: string }).textPreview!
+    expect(preview.startsWith('Done — the tests pass.')).toBe(true)
+    expect(preview.length).toBe(200)
+
+    // tool-use-only content yields no preview
+    const toolOnly = parseTranscriptLine(
+      JSON.stringify({
+        type: 'assistant',
+        uuid: 'a2',
+        parentUuid: 'u1',
+        message: { role: 'assistant', content: [{ type: 'tool_use', id: 't2', name: 'Read' }] },
+      }),
+    )
+    expect(toolOnly).not.toHaveProperty('textPreview')
+  })
+
   it('downgrades a uuid-less system line to operational noise', () => {
     const raw = REAL_LINES.find((l) => JSON.parse(l).type === 'system')!
     expect(parseTranscriptLine(raw)).toEqual({ kind: 'other', type: 'system' })

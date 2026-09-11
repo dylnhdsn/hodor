@@ -198,6 +198,49 @@ describe('startServer', () => {
     expect(archived.sessions[0]!.hiddenBy).toBe(`project-archived:${id}`)
   })
 
+  it('serves a session transcript tail: prompts and assistant text only', async () => {
+    const { deps, fs } = serverDeps()
+    const entries = [
+      line('u1', '2026-06-01T10:00:00Z', '/r', 'fix the tests'),
+      JSON.stringify({
+        type: 'assistant',
+        uuid: 'a1',
+        parentUuid: 'u1',
+        timestamp: '2026-06-01T10:00:10Z',
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'tool_use', id: 't1', name: 'Bash', input: {} },
+            { type: 'text', text: 'On it — running the suite.' },
+          ],
+        },
+      }) + '\n',
+      // meta/tool-only lines carry no text and are skipped
+      JSON.stringify({
+        type: 'user',
+        uuid: 'u2',
+        parentUuid: 'a1',
+        isMeta: true,
+        timestamp: '2026-06-01T10:00:11Z',
+        message: { role: 'user', content: '<local-command-stdout>ok</local-command-stdout>' },
+      }) + '\n',
+    ]
+    fs.writeFile('/home/u/.claude/projects/-r/aaaa.jsonl', entries.join(''))
+    const server = await start(fs, deps)
+
+    const res = await fetch(`${server.url}/api/transcript?id=aaaa`)
+    expect(res.status).toBe(200)
+    const { messages } = (await res.json()) as {
+      messages: Array<{ type: string; text: string; isSidechain: boolean }>
+    }
+    expect(messages).toEqual([
+      expect.objectContaining({ type: 'user', text: 'fix the tests', isSidechain: false }),
+      expect.objectContaining({ type: 'assistant', text: 'On it — running the suite.' }),
+    ])
+
+    expect((await fetch(`${server.url}/api/transcript?id=nope`)).status).toBe(404)
+  })
+
   it('previews which sessions a matcher would claim', async () => {
     const { deps, fs } = serverDeps()
     fs.writeFile('/home/u/.claude/projects/-r/aaaa.jsonl', line('u1', '2026-06-01T11:00:00Z', '/r/app'))

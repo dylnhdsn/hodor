@@ -76,6 +76,7 @@ function toSession(accum: SessionAccum, runtime: Runtime): Session {
   }
   const cwd = accum.cwds[accum.cwds.length - 1]
   if (cwd !== undefined) session.cwd = cwd
+  if (accum.forkedFrom !== undefined) session.forkedFrom = accum.forkedFrom
   if (accum.gitBranch !== undefined) session.gitBranch = accum.gitBranch
   if (accum.summary !== undefined) session.summary = accum.summary
   if (accum.promptPreview !== undefined) session.promptPreview = accum.promptPreview

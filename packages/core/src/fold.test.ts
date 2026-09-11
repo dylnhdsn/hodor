@@ -40,6 +40,20 @@ describe('fold', () => {
     expect(accum.main.messageCount).toBe(3)
   })
 
+  it('detects fork lineage from copied lines carrying the original session id', () => {
+    const state = foldAll(emptyState, [
+      lines('fork', [
+        // copied history keeps the ancestor's id…
+        msg({ uuid: 'u1', sessionId: 'original', timestamp: '2026-01-01T10:00:00Z' }),
+        // …new turns carry the fork's own id
+        msg({ uuid: 'u2', sessionId: 'fork', timestamp: '2026-01-01T11:00:00Z' }),
+      ]),
+      lines('plain', [msg({ uuid: 'p1', sessionId: 'plain' })]),
+    ])
+    expect(state.sessions['fork']!.forkedFrom).toBe('original')
+    expect(state.sessions['plain']!.forkedFrom).toBeUndefined()
+  })
+
   it('is incremental: two appends equal one combined append', () => {
     const l1 = msg({ uuid: 'u1', timestamp: '2026-01-01T10:00:00Z', cwd: '/x' })
     const l2 = msg({ uuid: 'u2', timestamp: '2026-01-01T10:00:10Z' })

@@ -4,13 +4,16 @@ A session manager: discovers Claude CLI sessions, extracts structured data
 about them, and organizes them into projects. Data core first; UI second;
 Electron shell later.
 
-**Status**: data core + two-plane mapping + first UI. Store discovery
+**Status**: data core + two-plane mapping + web UI. Store discovery
 (Windows ⇄ WSL both directions), tolerant transcript parsing, an
 event-folding state model with incremental live tailing, git enrichment
 (repos, worktrees, remotes, local-remote chasing — no git binary needed),
 visibility rules with provenance, a user plane (custom projects with
 evidence matchers), curation commands, and a live web UI served from the
-single-file build. See [docs/brainstorm](docs/brainstorm/) for design notes.
+single-file build: unified project rail, per-project settings with
+matcher preview, and a session detail pane with subagent runs, fork
+lineage, placement provenance, and the conversation tail. See
+[docs/brainstorm](docs/brainstorm/) for design notes.
 
 ## Layout
 
