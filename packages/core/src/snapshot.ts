@@ -134,6 +134,15 @@ function toSession(
   // max (not sum) also tolerates stores that only carry one marker kind.
   const compactions = Math.max(accum.compactBoundaries, accum.compactSummaries)
   if (compactions > 0) session.compactions = compactions
+  if (accum.lastCompaction !== undefined) session.lastCompaction = { ...accum.lastCompaction }
+  if (accum.contextTokens !== undefined) session.contextTokens = accum.contextTokens
+  if (Object.keys(accum.hookStats).length > 0) {
+    session.hooks = Object.fromEntries(
+      Object.entries(accum.hookStats).map(([command, s]) => [command, { ...s }]),
+    )
+  }
+  if (accum.hookErrorCount > 0) session.hookErrors = accum.hookErrorCount
+  if (accum.hookBlockCount > 0) session.hookBlocks = accum.hookBlockCount
   if (accum.summary !== undefined) session.summary = accum.summary
   if (accum.promptPreview !== undefined) session.promptPreview = accum.promptPreview
   if (accum.firstCommand !== undefined) session.firstCommand = accum.firstCommand

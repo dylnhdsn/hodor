@@ -159,6 +159,77 @@ describe('fold', () => {
     expect(tools.toolCallCount).toBe(3)
   })
 
+  it('accumulates hook runs, errors, and blocks from hook summary lines', () => {
+    const state = foldAll(emptyState, [
+      lines('a', [
+        msg({
+          uuid: 'h1',
+          type: 'system',
+          subtype: 'stop_hook_summary',
+          hookRuns: [{ command: '~/.claude/stop-hook.sh', durationMs: 55 }],
+        }),
+        msg({
+          uuid: 'h2',
+          type: 'system',
+          subtype: 'stop_hook_summary',
+          hookRuns: [
+            { command: '~/.claude/stop-hook.sh', durationMs: 45 },
+            { command: '~/.claude/lint-hook.sh' },
+          ],
+          hookErrorCount: 1,
+          hookBlocked: true,
+        }),
+      ]),
+    ])
+    const accum = state.sessions['a']!
+    expect(accum.hookStats).toEqual({
+      '~/.claude/stop-hook.sh': { runs: 2, totalMs: 100 },
+      '~/.claude/lint-hook.sh': { runs: 1, totalMs: 0 },
+    })
+    expect(accum.hookErrorCount).toBe(1)
+    expect(accum.hookBlockCount).toBe(1)
+  })
+
+  it('tracks context fill from the newest main-thread response, order-independent', () => {
+    const early = msg({
+      uuid: 'a1', type: 'assistant', model: 'm', messageId: 'm1', timestamp: '2026-01-01T10:00:00Z',
+      usage: { input: 10, output: 1, cacheRead: 100, cacheWrite5m: 5, cacheWrite1h: 0, thinking: 0 },
+    })
+    const late = msg({
+      uuid: 'a2', type: 'assistant', model: 'm', messageId: 'm2', timestamp: '2026-01-01T11:00:00Z',
+      usage: { input: 2, output: 1, cacheRead: 700, cacheWrite5m: 0, cacheWrite1h: 98, thinking: 0 },
+    })
+    // sidechain usage never counts as the session's context
+    const sc = msg({
+      uuid: 's1', type: 'assistant', isSidechain: true, agentId: 'x', model: 'm', messageId: 'm3',
+      timestamp: '2026-01-01T12:00:00Z',
+      usage: { input: 9999, output: 1, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0, thinking: 0 },
+    })
+    const forward = foldAll(emptyState, [lines('a', [early, late, sc])])
+    const backward = foldAll(emptyState, [lines('a', [sc]), lines('a', [late]), lines('a', [early])])
+    expect(forward.sessions['a']!.contextTokens).toBe(800)
+    expect(backward.sessions['a']!.contextTokens).toBe(800)
+  })
+
+  it('keeps the last compaction sizes from boundary metadata', () => {
+    const state = foldAll(emptyState, [
+      lines('a', [
+        {
+          kind: 'other',
+          type: 'system',
+          subtype: 'compact_boundary',
+          compact: { preTokens: 785638, postTokens: 14656, droppedTokens: 770982 },
+        },
+      ]),
+    ])
+    expect(state.sessions['a']!.lastCompaction).toEqual({
+      preTokens: 785638,
+      postTokens: 14656,
+      droppedTokens: 770982,
+    })
+    expect(state.sessions['a']!.compactBoundaries).toBe(1)
+  })
+
   it('detects fork lineage from copied lines carrying the original session id', () => {
     const state = foldAll(emptyState, [
       lines('fork', [

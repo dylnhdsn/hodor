@@ -70,6 +70,17 @@ export interface SessionAccum {
    * the max rather than the sum. */
   compactBoundaries: number
   compactSummaries: number
+  /** Context size around the most recent compaction boundary seen. */
+  lastCompaction?: { preTokens?: number; postTokens?: number; droppedTokens?: number }
+  /** Hook executions by command, from stop_hook_summary system lines. */
+  hookStats: Record<string, { runs: number; totalMs: number }>
+  hookErrorCount: number
+  hookBlockCount: number
+  /** Tokens in context at the latest main-thread response (input + cache
+   * read + cache writes of that response), tracked max-by-timestamp so
+   * event order never matters. */
+  contextTokens?: number
+  contextTs?: string
   main: ThreadAccum
   sidechains: ThreadAccum[]
   /** message uuid → index into sidechains, for incremental chain-following. */
@@ -124,6 +135,9 @@ function newAccum(id: SessionId, storeId: StoreId, transcriptPath: string): Sess
     apiErrorCount: 0,
     compactBoundaries: 0,
     compactSummaries: 0,
+    hookStats: {},
+    hookErrorCount: 0,
+    hookBlockCount: 0,
     main: { messageCount: 0 },
     sidechains: [],
     uuidToSidechain: {},
@@ -156,6 +170,16 @@ function billUsage(accum: SessionAccum, thread: ThreadAccum, line: MessageLine):
   thread.usageByModel ??= {}
   const totals = (thread.usageByModel[line.model] ??= emptyUsage())
   addUsage(totals, line.usage)
+
+  // Context fill: the newest main-thread response's input-side tokens ARE
+  // the context size at that moment. Max-by-timestamp, so order is moot.
+  if (thread === accum.main && line.timestamp !== undefined) {
+    if (accum.contextTs === undefined || line.timestamp >= accum.contextTs) {
+      accum.contextTs = line.timestamp
+      accum.contextTokens =
+        line.usage.input + line.usage.cacheRead + line.usage.cacheWrite5m + line.usage.cacheWrite1h
+    }
+  }
 }
 
 function applyMessage(accum: SessionAccum, line: MessageLine): void {
@@ -183,6 +207,21 @@ function applyMessage(accum: SessionAccum, line: MessageLine): void {
   if (line.inferenceGeo !== undefined) accum.inferenceGeo = line.inferenceGeo
   if (line.speed === 'fast') accum.fastMode = true
   if (line.isCompactSummary === true) accum.compactSummaries += 1
+
+  for (const run of line.hookRuns ?? []) {
+    const entry = (accum.hookStats[run.command] ??= { runs: 0, totalMs: 0 })
+    entry.runs += 1
+    entry.totalMs += run.durationMs ?? 0
+  }
+  if (line.hookErrorCount !== undefined) accum.hookErrorCount += line.hookErrorCount
+  if (line.hookBlocked === true) accum.hookBlockCount += 1
+
+  // Boundary lines appear with a uuid (message path) or without (other
+  // path, handled in the fold's line loop) depending on CLI version.
+  if (line.subtype === 'compact_boundary') {
+    accum.compactBoundaries += 1
+    if (line.compact !== undefined) accum.lastCompaction = { ...line.compact }
+  }
 
   if (line.isSidechain) {
     // Modern per-file subagent runs stamp every line with an agentId — one
@@ -246,6 +285,10 @@ function cloneAccum(accum: SessionAccum): SessionAccum {
     agentMeta: { ...accum.agentMeta },
     billedMessageIds: { ...accum.billedMessageIds },
     toolCounts: { ...accum.toolCounts },
+    hookStats: Object.fromEntries(
+      Object.entries(accum.hookStats).map(([command, s]) => [command, { ...s }]),
+    ),
+    ...(accum.lastCompaction !== undefined ? { lastCompaction: { ...accum.lastCompaction } } : {}),
   }
 }
 
@@ -264,6 +307,7 @@ export function fold(state: CoreState, event: SourceEvent): CoreState {
         else if (line.kind === 'summary') accum.summary = line.summary
         else if (line.kind === 'other' && line.subtype === 'compact_boundary') {
           accum.compactBoundaries += 1
+          if (line.compact !== undefined) accum.lastCompaction = { ...line.compact }
         }
       }
       return { ...state, sessions: { ...state.sessions, [event.sessionId]: accum } }

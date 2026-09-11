@@ -645,8 +645,18 @@ function DetailPane(props: {
           <Fact label="tier" value={s.serviceTier} />
         )}
         {s.inferenceGeo !== undefined && <Fact label="inference geo" value={s.inferenceGeo} />}
+        {s.contextTokens !== undefined && (
+          <Fact label="context" value={`${formatTokens(s.contextTokens)} tokens`} />
+        )}
         {s.compactions !== undefined && (
-          <Fact label="compactions" value={`${s.compactions}×`} />
+          <Fact
+            label="compactions"
+            value={
+              s.lastCompaction?.preTokens !== undefined && s.lastCompaction.postTokens !== undefined
+                ? `${s.compactions}× (last ${formatTokens(s.lastCompaction.preTokens)} → ${formatTokens(s.lastCompaction.postTokens)})`
+                : `${s.compactions}×`
+            }
+          />
         )}
         {s.cliVersion !== undefined && <Fact label="cli" value={s.cliVersion} />}
         <Fact label="cwd" value={s.cwd ?? '-'} mono />
@@ -659,6 +669,28 @@ function DetailPane(props: {
       </Section>
 
       {s.toolCounts !== undefined && <ToolsSection toolCounts={s.toolCounts} />}
+
+      {s.hooks !== undefined && (
+        <Section title="hooks">
+          {Object.entries(s.hooks).map(([command, h]) => (
+            <div key={command} className="flex items-center justify-between gap-2 py-0.5">
+              <span className="min-w-0 truncate font-mono text-zinc-400" title={command}>
+                {command.split('/').pop()}
+              </span>
+              <span className="shrink-0 text-zinc-600">
+                {h.runs}× · {h.totalMs >= 1000 ? `${(h.totalMs / 1000).toFixed(1)}s` : `${h.totalMs}ms`}
+              </span>
+            </div>
+          ))}
+          {(s.hookErrors !== undefined || s.hookBlocks !== undefined) && (
+            <p className="mt-1 text-amber-400">
+              {s.hookErrors !== undefined ? `${s.hookErrors} error${s.hookErrors === 1 ? '' : 's'}` : ''}
+              {s.hookErrors !== undefined && s.hookBlocks !== undefined ? ' · ' : ''}
+              {s.hookBlocks !== undefined ? `blocked continuation ${s.hookBlocks}×` : ''}
+            </p>
+          )}
+        </Section>
+      )}
 
       {s.usage !== undefined && (
         <Section title="usage">

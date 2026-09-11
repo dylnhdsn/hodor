@@ -127,7 +127,7 @@ describe('parseTranscriptLine on real captured lines', () => {
     expect(parseTranscriptLine(raw)).toEqual({ kind: 'other', type: 'system', subtype: 'stop_hook_summary' })
   })
 
-  it('keeps the subtype on compaction boundary lines (uuid-less system)', () => {
+  it('keeps subtype and compaction sizes on boundary lines (uuid-less system)', () => {
     const line = parseTranscriptLine(
       JSON.stringify({
         parentUuid: null,
@@ -135,10 +135,38 @@ describe('parseTranscriptLine on real captured lines', () => {
         type: 'system',
         subtype: 'compact_boundary',
         content: 'Conversation compacted',
-        compactMetadata: { trigger: 'auto', preTokens: 785638 },
+        compactMetadata: { trigger: 'auto', preTokens: 785638, postTokens: 14656, cumulativeDroppedTokens: 770982, durationMs: 142277 },
       }),
     )
-    expect(line).toEqual({ kind: 'other', type: 'system', subtype: 'compact_boundary' })
+    expect(line).toEqual({
+      kind: 'other',
+      type: 'system',
+      subtype: 'compact_boundary',
+      compact: { preTokens: 785638, postTokens: 14656, droppedTokens: 770982 },
+    })
+  })
+
+  it('extracts hook summaries from system lines that carry a uuid', () => {
+    const line = parseTranscriptLine(
+      JSON.stringify({
+        type: 'system',
+        subtype: 'stop_hook_summary',
+        uuid: 'h1',
+        parentUuid: 'a1',
+        hookCount: 1,
+        hookInfos: [{ command: '~/.claude/stop-hook-git-check.sh', durationMs: 55 }],
+        hookErrors: ['boom'],
+        preventedContinuation: true,
+      }),
+    )
+    expect(line).toMatchObject({
+      kind: 'message',
+      type: 'system',
+      subtype: 'stop_hook_summary',
+      hookRuns: [{ command: '~/.claude/stop-hook-git-check.sh', durationMs: 55 }],
+      hookErrorCount: 1,
+      hookBlocked: true,
+    })
   })
 
   it('extracts slug, effort, and compact-summary flags; compact summaries never title', () => {

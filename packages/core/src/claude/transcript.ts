@@ -27,6 +27,21 @@ const messageLineSchema = z
     entrypoint: z.string().optional(),
     slug: z.string().optional(),
     effort: z.string().optional(),
+    subtype: z.string().optional(),
+    compactMetadata: z
+      .object({
+        preTokens: z.number().optional(),
+        postTokens: z.number().optional(),
+        cumulativeDroppedTokens: z.number().optional(),
+      })
+      .passthrough()
+      .optional(),
+    hookCount: z.number().optional(),
+    hookInfos: z
+      .array(z.object({ command: z.string(), durationMs: z.number().optional() }).passthrough())
+      .optional(),
+    hookErrors: z.array(z.unknown()).optional(),
+    preventedContinuation: z.boolean().optional(),
     agentId: z.string().optional(),
     toolUseID: z.string().optional(),
     sourceToolAssistantUUID: z.string().optional(),
@@ -123,6 +138,18 @@ export interface MessageLine {
   isApiError?: boolean
   /** The post-compaction summary turn — machine text, never a title. */
   isCompactSummary?: boolean
+  /** System lines: their operational subtype (e.g. "stop_hook_summary"). */
+  subtype?: string
+  /** compact_boundary lines: context size before/after the compaction.
+   * Boundary lines appear both with and without a uuid across CLI
+   * versions, so MessageLine and OtherLine both carry this. */
+  compact?: { preTokens?: number; postTokens?: number; droppedTokens?: number }
+  /** Hook summary lines: the hooks that ran, with wall-clock durations. */
+  hookRuns?: Array<{ command: string; durationMs?: number }>
+  /** Hook summary lines: how many hooks errored. */
+  hookErrorCount?: number
+  /** Hook summary lines: a hook blocked continuation. */
+  hookBlocked?: boolean
 }
 
 export interface SummaryLine {
@@ -137,6 +164,8 @@ export interface OtherLine {
   /** Operational system lines: e.g. "compact_boundary". Kept even for
    * uuid-less lines, which is where compaction boundaries live. */
   subtype?: string
+  /** compact_boundary lines: context size before/after the compaction. */
+  compact?: { preTokens?: number; postTokens?: number; droppedTokens?: number }
 }
 
 export interface InvalidLine {
@@ -224,6 +253,19 @@ export function parseTranscriptLine(raw: string): TranscriptLine {
     return typeof subtype === 'string' ? subtype : undefined
   }
 
+  const compactOf = (): OtherLine['compact'] => {
+    const meta = (json as { compactMetadata?: unknown }).compactMetadata
+    if (typeof meta !== 'object' || meta === null) return undefined
+    const m = meta as { preTokens?: unknown; postTokens?: unknown; cumulativeDroppedTokens?: unknown }
+    return {
+      ...(typeof m.preTokens === 'number' ? { preTokens: m.preTokens } : {}),
+      ...(typeof m.postTokens === 'number' ? { postTokens: m.postTokens } : {}),
+      ...(typeof m.cumulativeDroppedTokens === 'number'
+        ? { droppedTokens: m.cumulativeDroppedTokens }
+        : {}),
+    }
+  }
+
   if (MESSAGE_TYPES.has(type)) {
     const parsed = messageLineSchema.safeParse(json)
     if (!parsed.success) {
@@ -231,7 +273,13 @@ export function parseTranscriptLine(raw: string): TranscriptLine {
       // operational noise, not a message — but its subtype can still carry
       // signal (compaction boundaries are uuid-less system lines).
       const subtype = subtypeOf()
-      return { kind: 'other', type, ...(subtype !== undefined ? { subtype } : {}) }
+      const compact = subtype === 'compact_boundary' ? compactOf() : undefined
+      return {
+        kind: 'other',
+        type,
+        ...(subtype !== undefined ? { subtype } : {}),
+        ...(compact !== undefined ? { compact } : {}),
+      }
     }
     const d = parsed.data
     const line: MessageLine = {
@@ -253,6 +301,27 @@ export function parseTranscriptLine(raw: string): TranscriptLine {
     if (d.effort !== undefined) line.effort = d.effort
     if (d.isApiErrorMessage === true) line.isApiError = true
     if (d.isCompactSummary === true) line.isCompactSummary = true
+    if (d.subtype !== undefined) line.subtype = d.subtype
+    if (d.subtype === 'compact_boundary' && d.compactMetadata !== undefined) {
+      const m = d.compactMetadata
+      line.compact = {
+        ...(m.preTokens !== undefined ? { preTokens: m.preTokens } : {}),
+        ...(m.postTokens !== undefined ? { postTokens: m.postTokens } : {}),
+        ...(m.cumulativeDroppedTokens !== undefined
+          ? { droppedTokens: m.cumulativeDroppedTokens }
+          : {}),
+      }
+    }
+    if (d.hookInfos !== undefined && d.hookInfos.length > 0) {
+      line.hookRuns = d.hookInfos.map((info) => ({
+        command: info.command,
+        ...(info.durationMs !== undefined ? { durationMs: info.durationMs } : {}),
+      }))
+    }
+    if (d.hookErrors !== undefined && d.hookErrors.length > 0) {
+      line.hookErrorCount = d.hookErrors.length
+    }
+    if (d.preventedContinuation === true) line.hookBlocked = true
     if (type === 'user' && !line.isMeta && line.isCompactSummary !== true) {
       const content = classifyPromptContent(d.message?.content)
       if (content?.kind === 'prompt') line.promptText = content.text

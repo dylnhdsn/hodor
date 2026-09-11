@@ -73,6 +73,15 @@ export interface Session {
   apiErrors?: number
   /** How many times this session's context was compacted. */
   compactions?: number
+  /** Context size around the most recent compaction. */
+  lastCompaction?: { preTokens?: number; postTokens?: number; droppedTokens?: number }
+  /** Tokens in context at the latest response — how full the session is. */
+  contextTokens?: number
+  /** Hook executions by command (stop_hook_summary lines). */
+  hooks?: Record<string, { runs: number; totalMs: number }>
+  /** Hooks that errored / blocked continuation. */
+  hookErrors?: number
+  hookBlocks?: number
   /** Token usage by model, summed across all threads. */
   usage?: Record<string, UsageTotals>
   /** Estimated USD from usage × the pricing table. */
