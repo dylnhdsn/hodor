@@ -6,6 +6,8 @@
  * become a real hazard.
  */
 
+import type { UsageTotals } from './pricing.js'
+
 export type StoreId = string
 export type SessionId = string
 export type ThreadId = string
@@ -55,7 +57,13 @@ export interface Session {
   createdAt?: Timestamp
   lastActivityAt?: Timestamp
   cliVersion?: string
-  counts: { user: number; assistant: number; sidechains: number }
+  counts: { user: number; assistant: number; sidechains: number; toolCalls: number }
+  /** Token usage by model, summed across all threads. */
+  usage?: Record<string, UsageTotals>
+  /** Estimated USD from usage × the pricing table. */
+  costUsd?: number
+  /** Models with tokens but no pricing entry — costUsd is a floor, not a total. */
+  costUnpriced?: string[]
   threads: Thread[]
   runtime: Runtime
 }
@@ -74,6 +82,10 @@ export interface Thread {
   firstTs: Timestamp
   lastTs: Timestamp
   messageCount: number
+  /** Token usage by model for this thread alone. */
+  usage?: Record<string, UsageTotals>
+  /** Estimated USD for this thread alone. */
+  costUsd?: number
 }
 
 export type Runtime =

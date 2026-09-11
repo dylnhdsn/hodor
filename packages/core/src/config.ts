@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import type { ModelPricing } from './pricing.js'
 import type { SessionId } from './types.js'
 import type { HideRules } from './visibility.js'
 
@@ -40,6 +41,12 @@ export interface HodorConfig {
   projectNames?: Record<string, string>
   /** Per-session overrides keyed by session id. */
   sessions?: Record<SessionId, SessionOverride>
+  /**
+   * Cost-table overrides by model id (USD per million tokens). Merged over
+   * the built-in current-generation table — add legacy models or correct
+   * price drift here.
+   */
+  pricing?: Record<string, Partial<ModelPricing>>
 }
 
 const hideSchema = z
@@ -63,6 +70,16 @@ const sessionOverrideSchema = z
   })
   .passthrough()
 
+const pricingSchema = z
+  .object({
+    input: z.number().optional(),
+    output: z.number().optional(),
+    cacheRead: z.number().optional(),
+    cacheWrite5m: z.number().optional(),
+    cacheWrite1h: z.number().optional(),
+  })
+  .passthrough()
+
 const configSchema = z
   .object({
     hide: hideSchema.optional(),
@@ -70,6 +87,7 @@ const configSchema = z
     splitRoots: z.array(z.string()).optional(),
     projectNames: z.record(z.string(), z.string()).optional(),
     sessions: z.record(z.string(), sessionOverrideSchema).optional(),
+    pricing: z.record(z.string(), pricingSchema).optional(),
   })
   .passthrough()
 

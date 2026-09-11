@@ -40,6 +40,44 @@ describe('fold', () => {
     expect(accum.main.messageCount).toBe(3)
   })
 
+  it('bills usage once per API message id, into the thread that produced it', () => {
+    const u = { input: 10, output: 100, cacheRead: 1000, cacheWrite5m: 50, cacheWrite1h: 0 }
+    const state = foldAll(emptyState, [
+      lines('a', [
+        // one API response written as three content-block lines: bill once
+        msg({ uuid: 'a1', type: 'assistant', model: 'claude-opus-5', messageId: 'm1', usage: u, toolUses: 1 }),
+        msg({ uuid: 'a2', type: 'assistant', model: 'claude-opus-5', messageId: 'm1', usage: u, toolUses: 1 }),
+        msg({ uuid: 'a3', type: 'assistant', model: 'claude-opus-5', messageId: 'm1', usage: u }),
+        // a sidechain response bills into its own thread
+        msg({
+          uuid: 's1',
+          type: 'assistant',
+          isSidechain: true,
+          agentId: 'x1',
+          model: 'claude-haiku-4-5',
+          messageId: 'm2',
+          usage: { input: 5, output: 7, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0 },
+        }),
+      ]),
+    ])
+    const accum = state.sessions['a']!
+    expect(accum.main.usageByModel).toEqual({ 'claude-opus-5': u })
+    expect(accum.sidechains[0]!.usageByModel).toEqual({
+      'claude-haiku-4-5': { input: 5, output: 7, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0 },
+    })
+    expect(accum.toolCallCount).toBe(2)
+  })
+
+  it('usage billing is incremental-safe: split appends equal one append', () => {
+    const u = { input: 1, output: 2, cacheRead: 3, cacheWrite5m: 4, cacheWrite1h: 5 }
+    const l1 = msg({ uuid: 'a1', type: 'assistant', model: 'm', messageId: 'id1', usage: u })
+    const l2 = msg({ uuid: 'a2', type: 'assistant', model: 'm', messageId: 'id1', usage: u })
+    const split = foldAll(emptyState, [lines('a', [l1]), lines('a', [l2])])
+    const combined = foldAll(emptyState, [lines('a', [l1, l2])])
+    expect(split).toEqual(combined)
+    expect(split.sessions['a']!.main.usageByModel).toEqual({ m: u })
+  })
+
   it('groups modern subagent lines into one thread per agentId', () => {
     // Two agent files feed the same session; their line events can
     // interleave across polls — agentId keeps each run one thread.

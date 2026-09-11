@@ -68,6 +68,60 @@ describe('parseTranscriptLine on real captured lines', () => {
     expect(toolOnly).not.toHaveProperty('textPreview')
   })
 
+  it('extracts model, message id, usage, and tool-use counts from assistant lines', () => {
+    const line = parseTranscriptLine(
+      JSON.stringify({
+        type: 'assistant',
+        uuid: 'a1',
+        parentUuid: 'u1',
+        message: {
+          role: 'assistant',
+          id: 'msg_01ABC',
+          model: 'claude-opus-5',
+          usage: {
+            input_tokens: 2,
+            cache_creation_input_tokens: 19294,
+            cache_read_input_tokens: 39066,
+            output_tokens: 770,
+            cache_creation: { ephemeral_1h_input_tokens: 19294, ephemeral_5m_input_tokens: 0 },
+            service_tier: 'standard',
+          },
+          content: [
+            { type: 'tool_use', id: 't1', name: 'Bash', input: {} },
+            { type: 'tool_use', id: 't2', name: 'Read', input: {} },
+          ],
+        },
+      }),
+    )
+    expect(line).toMatchObject({
+      model: 'claude-opus-5',
+      messageId: 'msg_01ABC',
+      usage: { input: 2, output: 770, cacheRead: 39066, cacheWrite5m: 0, cacheWrite1h: 19294 },
+      toolUses: 2,
+    })
+  })
+
+  it('falls back to the 5m TTL when only the cache-write total exists', () => {
+    const line = parseTranscriptLine(
+      JSON.stringify({
+        type: 'assistant',
+        uuid: 'a1',
+        parentUuid: null,
+        message: {
+          role: 'assistant',
+          id: 'msg_2',
+          model: 'claude-sonnet-4-6',
+          usage: { input_tokens: 5, output_tokens: 9, cache_creation_input_tokens: 123 },
+          content: [{ type: 'text', text: 'hi' }],
+        },
+      }),
+    )
+    expect(line).toMatchObject({
+      usage: { input: 5, output: 9, cacheRead: 0, cacheWrite5m: 123, cacheWrite1h: 0 },
+    })
+    expect(line).not.toHaveProperty('toolUses')
+  })
+
   it('downgrades a uuid-less system line to operational noise', () => {
     const raw = REAL_LINES.find((l) => JSON.parse(l).type === 'system')!
     expect(parseTranscriptLine(raw)).toEqual({ kind: 'other', type: 'system' })

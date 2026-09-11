@@ -1,4 +1,5 @@
 import type { CoreState, SessionAccum, ThreadAccum } from './fold.js'
+import { addUsage, costOfUsage, emptyUsage, mergePricing, type ModelPricing, type UsageTotals } from './pricing.js'
 import { resolveProjects } from './resolver.js'
 import type { Assignment, Project, Runtime, Session, SessionStore, Thread } from './types.js'
 import { compileUserPlane, computePlacements, type CustomProject, type Placement } from './userplane.js'
@@ -37,6 +38,7 @@ function toThread(
   id: string,
   kind: Thread['kind'],
   accum: ThreadAccum,
+  pricing: Record<string, ModelPricing>,
   agentMeta?: { agentType?: string; description?: string },
 ): Thread {
   const thread: Thread = {
@@ -50,6 +52,10 @@ function toThread(
   if (accum.agentId !== undefined) thread.agentId = accum.agentId
   if (agentMeta?.agentType !== undefined) thread.agentType = agentMeta.agentType
   if (agentMeta?.description !== undefined) thread.description = agentMeta.description
+  if (accum.usageByModel !== undefined) {
+    thread.usage = accum.usageByModel
+    thread.costUsd = costOfUsage(accum.usageByModel, pricing).usd
+  }
   return thread
 }
 
@@ -63,15 +69,22 @@ function inferRuntime(accum: SessionAccum, now: Date, windowMs: number): Runtime
   return { kind: 'idle' }
 }
 
-function toSession(accum: SessionAccum, runtime: Runtime): Session {
+function toSession(
+  accum: SessionAccum,
+  runtime: Runtime,
+  pricing: Record<string, ModelPricing>,
+): Session {
   const threads: Thread[] = []
-  if (accum.main.messageCount > 0) threads.push(toThread(`${accum.id}:main`, 'main', accum.main))
+  if (accum.main.messageCount > 0) {
+    threads.push(toThread(`${accum.id}:main`, 'main', accum.main, pricing))
+  }
   accum.sidechains.forEach((sc, i) =>
     threads.push(
       toThread(
         `${accum.id}:sc${i}`,
         'sidechain',
         sc,
+        pricing,
         sc.agentId !== undefined ? accum.agentMeta[sc.agentId] : undefined,
       ),
     ),
@@ -87,9 +100,24 @@ function toSession(accum: SessionAccum, runtime: Runtime): Session {
       user: accum.userCount,
       assistant: accum.assistantCount,
       sidechains: accum.sidechains.length,
+      toolCalls: accum.toolCallCount,
     },
     threads,
     runtime,
+  }
+
+  // Session usage = sum over threads, cost from the same table.
+  const byModel: Record<string, UsageTotals> = {}
+  for (const thread of [accum.main, ...accum.sidechains]) {
+    for (const [model, totals] of Object.entries(thread.usageByModel ?? {})) {
+      addUsage((byModel[model] ??= emptyUsage()), totals)
+    }
+  }
+  if (Object.keys(byModel).length > 0) {
+    session.usage = byModel
+    const cost = costOfUsage(byModel, pricing)
+    session.costUsd = cost.usd
+    if (cost.unpriced.length > 0) session.costUnpriced = cost.unpriced
   }
   const cwd = accum.cwds[accum.cwds.length - 1]
   if (cwd !== undefined) session.cwd = cwd
@@ -106,6 +134,7 @@ function toSession(accum: SessionAccum, runtime: Runtime): Session {
 
 export function buildSnapshot(state: CoreState, options: SnapshotOptions): Snapshot {
   const windowMs = options.activeWindowMs ?? DEFAULT_ACTIVE_WINDOW_MS
+  const pricing = mergePricing(state.config.pricing)
 
   const sessions = Object.values(state.sessions)
     .filter((accum) => accum.main.messageCount > 0 || accum.sidechains.length > 0)
@@ -113,6 +142,7 @@ export function buildSnapshot(state: CoreState, options: SnapshotOptions): Snaps
       const session = toSession(
         accum,
         state.runtimes[accum.id] ?? inferRuntime(accum, options.now, windowMs),
+        pricing,
       )
       const meta = state.metas[accum.id]
       if (meta?.rename !== undefined) session.rename = meta.rename

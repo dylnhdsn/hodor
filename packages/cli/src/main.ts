@@ -1,18 +1,25 @@
 import {
   StoreTailer,
+  addUsage,
   buildSnapshot,
+  costOfUsage,
   defaultHideRules,
+  defaultPricing,
   emptyState,
+  emptyUsage,
   driveMountTranslator,
   enrichGitContexts,
   foldAll,
   mergeHideRules,
+  mergePricing,
   mungeCwd,
   pathOps,
   scanStore,
   translatePathFs,
   wslUncTranslator,
   type CoreState,
+  type ModelPricing,
+  type UsageTotals,
   type FileSystem,
   type HodorConfig,
   type SessionMeta,
@@ -201,12 +208,25 @@ export interface Stats {
     hiddenBy?: string
     title: string
   }>
+  usage: {
+    /** Estimated USD across every session (hidden included — money is money). */
+    totalUsd: number
+    /** Portion spent inside subagent (sidechain) threads. */
+    subagentUsd: number
+    /** Models with tokens but no pricing entry — totalUsd is a floor. */
+    unpriced: string[]
+    byModel: Record<string, UsageTotals & { usd: number }>
+  }
+  topCostSessions: Array<{ id: string; usd: number; hiddenBy?: string; title: string }>
   entrypointsVisible: Record<string, number>
   entrypointsHidden: Record<string, number>
   hiddenByRule: Record<string, number>
 }
 
-export function computeStats(snapshot: Snapshot): Stats {
+export function computeStats(
+  snapshot: Snapshot,
+  pricing: Record<string, ModelPricing> = defaultPricing,
+): Stats {
   const stats: Stats = {
     total: snapshot.sessions.length,
     visible: 0,
@@ -216,6 +236,8 @@ export function computeStats(snapshot: Snapshot): Stats {
     subagentRunsVisible: 0,
     subagentRunsHidden: 0,
     topSubagentSessions: [],
+    usage: { totalUsd: 0, subagentUsd: 0, unpriced: [], byModel: {} },
+    topCostSessions: [],
     entrypointsVisible: {},
     entrypointsHidden: {},
     hiddenByRule: {},
@@ -244,14 +266,48 @@ export function computeStats(snapshot: Snapshot): Stats {
           session.rename ?? session.summary ?? session.promptPreview ?? session.firstCommand ?? '(untitled)',
       })
     }
+    if (session.costUsd !== undefined && session.costUsd > 0) {
+      stats.usage.totalUsd += session.costUsd
+      stats.topCostSessions.push({
+        id: session.id,
+        usd: session.costUsd,
+        ...(session.hiddenBy !== undefined ? { hiddenBy: session.hiddenBy } : {}),
+        title:
+          session.rename ?? session.summary ?? session.promptPreview ?? session.firstCommand ?? '(untitled)',
+      })
+    }
+    for (const thread of session.threads) {
+      if (thread.kind === 'sidechain' && thread.costUsd !== undefined) {
+        stats.usage.subagentUsd += thread.costUsd
+      }
+    }
+    for (const [model, totals] of Object.entries(session.usage ?? {})) {
+      const entry = (stats.usage.byModel[model] ??= { ...emptyUsage(), usd: 0 })
+      addUsage(entry, totals)
+    }
+    for (const model of session.costUnpriced ?? []) {
+      if (!stats.usage.unpriced.includes(model)) stats.usage.unpriced.push(model)
+    }
     const target = isHidden ? stats.entrypointsHidden : stats.entrypointsVisible
     const keys = session.entrypoints.length > 0 ? session.entrypoints : ['(none)']
     for (const key of keys) bump(target, key)
   }
+  for (const [model, entry] of Object.entries(stats.usage.byModel)) {
+    entry.usd = costOfUsage({ [model]: entry }, pricing).usd
+  }
+  stats.usage.unpriced.sort()
   stats.topSubagentSessions.sort((a, b) => b.runs - a.runs || a.id.localeCompare(b.id))
   stats.topSubagentSessions = stats.topSubagentSessions.slice(0, 8)
+  stats.topCostSessions.sort((a, b) => b.usd - a.usd || a.id.localeCompare(b.id))
+  stats.topCostSessions = stats.topCostSessions.slice(0, 8)
   return stats
 }
+
+export const formatTokens = (n: number): string =>
+  n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
+
+export const formatUsd = (usd: number): string =>
+  usd >= 100 ? `$${usd.toFixed(0)}` : `$${usd.toFixed(2)}`
 
 function formatHistogram(title: string, record: Record<string, number>): string[] {
   const entries = Object.entries(record).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
@@ -268,6 +324,30 @@ export function formatStats(stats: Stats): string {
         ? ` (${stats.subagentRunsVisible} on visible sessions, ${stats.subagentRunsHidden} on hidden)`
         : ''),
   ]
+  if (stats.usage.totalUsd > 0 || stats.usage.unpriced.length > 0) {
+    const unpriced =
+      stats.usage.unpriced.length > 0 ? ` — unpriced: ${stats.usage.unpriced.join(', ')}` : ''
+    lines.push(
+      `est. cost: ${formatUsd(stats.usage.totalUsd)} total, ${formatUsd(stats.usage.subagentUsd)} in subagent runs${unpriced}`,
+    )
+    const models = Object.entries(stats.usage.byModel).sort((a, b) => b[1].usd - a[1].usd)
+    if (models.length > 0) {
+      lines.push('', 'by model:')
+      const width = Math.max(...models.map(([m]) => m.length))
+      for (const [model, u] of models) {
+        lines.push(
+          `  ${model.padEnd(width)}  in ${formatTokens(u.input).padStart(7)}  out ${formatTokens(u.output).padStart(7)}  cache r ${formatTokens(u.cacheRead).padStart(7)} w ${formatTokens(u.cacheWrite5m + u.cacheWrite1h).padStart(7)}  ${formatUsd(u.usd)}`,
+        )
+      }
+    }
+  }
+  if (stats.topCostSessions.length > 0) {
+    lines.push('', 'top sessions by est. cost:')
+    for (const s of stats.topCostSessions) {
+      const state = s.hiddenBy !== undefined ? `hidden (${s.hiddenBy})` : 'visible'
+      lines.push(`  ${s.id.slice(0, 8)}  ${formatUsd(s.usd).padStart(8)}  ${state}  ${s.title.slice(0, 55)}`)
+    }
+  }
   if (stats.topSubagentSessions.length > 0) {
     lines.push('', 'top sessions by subagent runs:')
     for (const s of stats.topSubagentSessions) {
@@ -311,7 +391,10 @@ async function statsCommand(deps: CliDeps, flags: Flags): Promise<number> {
   }
   // Stats never need the git enricher — visibility and entrypoints are
   // transcript-derived, so skip the expensive part.
-  const stats = computeStats(buildSnapshot(state, snapshotOptions(deps, flags, config)))
+  const stats = computeStats(
+    buildSnapshot(state, snapshotOptions(deps, flags, config)),
+    mergePricing(config.pricing),
+  )
   deps.write((flags.json ? JSON.stringify(stats, null, 2) : formatStats(stats)) + '\n')
   return 0
 }

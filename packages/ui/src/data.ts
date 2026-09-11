@@ -22,6 +22,12 @@ export function formatAge(nowMs: number, timestamp?: string): string {
 export const titleOf = (s: Session): string =>
   s.rename ?? s.summary ?? s.promptPreview ?? s.firstCommand ?? '(untitled)'
 
+export const formatTokens = (n: number): string =>
+  n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
+
+export const formatUsd = (usd: number): string =>
+  usd >= 100 ? `$${usd.toFixed(0)}` : `$${usd.toFixed(2)}`
+
 /**
  * One rail, one kind of thing (docs/brainstorm/010): the user sees
  * "projects", never auto vs. custom. kind exists so edits know whether the

@@ -197,7 +197,7 @@ describe('buildSnapshot', () => {
         createdAt: '2026-06-01T10:00:00Z',
         lastActivityAt: '2026-06-01T10:00:05Z',
         cliVersion: '2.1.0',
-        counts: { user: 1, assistant: 1, sidechains: 1 },
+        counts: { user: 1, assistant: 1, sidechains: 1, toolCalls: 0 },
         threads: [
           {
             id: 'full:main',
@@ -463,6 +463,74 @@ describe('buildSnapshot', () => {
     // with hiding disabled entirely (--all), archived sessions surface
     const all = buildSnapshot(state, { now: NOW })
     expect(all.sessions.find((s) => s.id === 'bbb')!.hiddenBy).toBeUndefined()
+  })
+
+  it('sums usage across threads and prices it, honoring config overrides', () => {
+    const mainUsage = { input: 100, output: 1_000_000, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0 }
+    const scUsage = { input: 0, output: 1_000_000, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0 }
+    const events: SourceEvent[] = [
+      { type: 'store-discovered', store },
+      {
+        type: 'transcript-lines',
+        storeId: 's1',
+        transcriptPath: '/home/.claude/projects/-x/aaa.jsonl',
+        sessionId: 'aaa',
+        lines: [
+          { ...msg('u1', '2026-06-01T10:00:00Z', '/repo/a') },
+          {
+            kind: 'message',
+            type: 'assistant',
+            uuid: 'a1',
+            parentUuid: 'u1',
+            isSidechain: false,
+            isMeta: false,
+            timestamp: '2026-06-01T10:00:05Z',
+            model: 'claude-opus-5',
+            messageId: 'm1',
+            usage: mainUsage,
+            toolUses: 3,
+          },
+          {
+            kind: 'message',
+            type: 'assistant',
+            uuid: 'sc1',
+            parentUuid: null,
+            isSidechain: true,
+            isMeta: false,
+            agentId: 'x1',
+            timestamp: '2026-06-01T10:00:06Z',
+            model: 'claude-mystery-9',
+            messageId: 'm2',
+            usage: scUsage,
+          },
+        ],
+      },
+    ]
+    const snapshot = buildSnapshot(foldAll(emptyState, events), { now: NOW })
+    const session = snapshot.sessions.find((s) => s.id === 'aaa')!
+    expect(session.usage).toEqual({ 'claude-opus-5': mainUsage, 'claude-mystery-9': scUsage })
+    // 1M output on opus-5 = $25 + 100 input tokens; mystery model unpriced
+    expect(session.costUsd).toBeCloseTo(25.0005, 4)
+    expect(session.costUnpriced).toEqual(['claude-mystery-9'])
+    expect(session.counts.toolCalls).toBe(3)
+    const sidechain = session.threads.find((t) => t.kind === 'sidechain')!
+    expect(sidechain.usage).toEqual({ 'claude-mystery-9': scUsage })
+    expect(sidechain.costUsd).toBe(0)
+
+    // config pricing makes the mystery model priceable
+    const priced = buildSnapshot(
+      foldAll(emptyState, [
+        ...events,
+        {
+          type: 'config-changed',
+          config: { pricing: { 'claude-mystery-9': { input: 1, output: 2, cacheRead: 0.1, cacheWrite5m: 1.25, cacheWrite1h: 2 } } },
+        },
+      ]),
+      { now: NOW },
+    )
+    const pricedSession = priced.sessions.find((s) => s.id === 'aaa')!
+    expect(pricedSession.costUsd).toBeCloseTo(27.0005, 4)
+    expect(pricedSession.costUnpriced).toBeUndefined()
   })
 
   it('carries subagent meta onto sidechain threads', () => {

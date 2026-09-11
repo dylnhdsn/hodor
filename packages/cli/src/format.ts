@@ -164,8 +164,13 @@ export function formatSnapshot(snapshot: Snapshot, columns: number): string {
         (a.lastActivityAt ?? '').localeCompare(b.lastActivityAt ?? '') || a.id.localeCompare(b.id),
     )
     const active = sessions.filter((s) => s.runtime.kind !== 'idle').length
+    const blockCost = sessions.reduce((sum, s) => sum + (s.costUsd ?? 0), 0)
 
-    const meta = [plural(sessions.length, 'session'), ...(active > 0 ? [`${active} active`] : [])]
+    const meta = [
+      plural(sessions.length, 'session'),
+      ...(active > 0 ? [`${active} active`] : []),
+      ...(blockCost >= 0.005 ? [`~$${blockCost.toFixed(2)}`] : []),
+    ]
     lines.push('')
     lines.push(fitEnd(`${block.title} — ${meta.join(', ')} — ${block.identity}`, width))
 
@@ -223,8 +228,12 @@ export function formatSnapshot(snapshot: Snapshot, columns: number): string {
     lines.push(fitEnd(`hidden: ${parts.join(', ')} — ${rules} (--all to show)`, width))
   }
   const activeTotal = visible.filter((s) => s.runtime.kind !== 'idle').length
+  // Cost sums EVERY session, hidden included — hiding is presentation,
+  // money is money.
+  const totalCost = snapshot.sessions.reduce((sum, s) => sum + (s.costUsd ?? 0), 0)
+  const cost = totalCost >= 0.005 ? `, ~$${totalCost.toFixed(2)} est. total` : ''
   lines.push(
-    `${plural(visible.length, 'session')} in ${plural(blocks.length, 'project')}, ${activeTotal} active`,
+    `${plural(visible.length, 'session')} in ${plural(blocks.length, 'project')}, ${activeTotal} active${cost}`,
   )
 
   return lines.join('\n').replace(/^\n+/, '')

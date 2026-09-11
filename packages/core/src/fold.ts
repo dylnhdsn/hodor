@@ -2,6 +2,7 @@ import type { MessageLine } from './claude/transcript.js'
 import type { HodorConfig } from './config.js'
 import type { SourceEvent } from './events.js'
 import type { GitContext } from './git.js'
+import { addUsage, emptyUsage, type UsageTotals } from './pricing.js'
 import type { Runtime, SessionId, SessionMeta, SessionStore, StoreId } from './types.js'
 import { emptyUserPlane, type UserPlane } from './userplane.js'
 
@@ -18,6 +19,8 @@ export interface ThreadAccum {
   spawnedBy?: { toolUseId: string; assistantUuid: string }
   /** Modern subagent runs: the agent id stamped on their lines. */
   agentId?: string
+  /** Token usage by model, billed once per API message id. */
+  usageByModel?: Record<string, UsageTotals>
 }
 
 export interface SessionAccum {
@@ -44,6 +47,11 @@ export interface SessionAccum {
   forkedFrom?: SessionId
   userCount: number
   assistantCount: number
+  /** tool_use blocks seen, main and sidechains alike. */
+  toolCallCount: number
+  /** API message ids already billed — usage repeats on every content-block
+   * line of one response, so each id counts exactly once. */
+  billedMessageIds: Record<string, true>
   main: ThreadAccum
   sidechains: ThreadAccum[]
   /** message uuid → index into sidechains, for incremental chain-following. */
@@ -92,6 +100,8 @@ function newAccum(id: SessionId, storeId: StoreId, transcriptPath: string): Sess
     entrypoints: [],
     userCount: 0,
     assistantCount: 0,
+    toolCallCount: 0,
+    billedMessageIds: {},
     main: { messageCount: 0 },
     sidechains: [],
     uuidToSidechain: {},
@@ -105,6 +115,21 @@ function touchThread(thread: ThreadAccum, ts: string | undefined): void {
   if (ts === undefined) return
   if (thread.firstTs === undefined || ts < thread.firstTs) thread.firstTs = ts
   if (thread.lastTs === undefined || ts > thread.lastTs) thread.lastTs = ts
+}
+
+/** Bill a line's usage into its thread — once per API message id. */
+function billUsage(accum: SessionAccum, thread: ThreadAccum, line: MessageLine): void {
+  if (line.toolUses !== undefined) accum.toolCallCount += line.toolUses
+  if (line.usage === undefined || line.model === undefined) return
+  // Lines without a message id can't be deduped; bill them individually
+  // (observed only on synthetic lines, which carry no usage anyway).
+  if (line.messageId !== undefined) {
+    if (accum.billedMessageIds[line.messageId] === true) return
+    accum.billedMessageIds[line.messageId] = true
+  }
+  thread.usageByModel ??= {}
+  const totals = (thread.usageByModel[line.model] ??= emptyUsage())
+  addUsage(totals, line.usage)
 }
 
 function applyMessage(accum: SessionAccum, line: MessageLine): void {
@@ -145,10 +170,12 @@ function applyMessage(accum: SessionAccum, line: MessageLine): void {
     if (line.agentId !== undefined) accum.agentToSidechain[line.agentId] = index
     accum.uuidToSidechain[line.uuid] = index
     touchThread(accum.sidechains[index]!, ts)
+    billUsage(accum, accum.sidechains[index]!, line)
     return
   }
 
   touchThread(accum.main, ts)
+  billUsage(accum, accum.main, line)
   if (line.type === 'user' && !line.isMeta) {
     accum.userCount += 1
     if (accum.promptPreview === undefined && line.promptText !== undefined) {
@@ -164,16 +191,27 @@ function applyMessage(accum: SessionAccum, line: MessageLine): void {
   if (line.version !== undefined) accum.cliVersion = line.version
 }
 
+function cloneThread(thread: ThreadAccum): ThreadAccum {
+  const clone: ThreadAccum = { ...thread }
+  if (thread.usageByModel !== undefined) {
+    clone.usageByModel = Object.fromEntries(
+      Object.entries(thread.usageByModel).map(([model, totals]) => [model, { ...totals }]),
+    )
+  }
+  return clone
+}
+
 function cloneAccum(accum: SessionAccum): SessionAccum {
   return {
     ...accum,
     cwds: [...accum.cwds],
     entrypoints: [...accum.entrypoints],
-    main: { ...accum.main },
-    sidechains: accum.sidechains.map((t) => ({ ...t })),
+    main: cloneThread(accum.main),
+    sidechains: accum.sidechains.map(cloneThread),
     uuidToSidechain: { ...accum.uuidToSidechain },
     agentToSidechain: { ...accum.agentToSidechain },
     agentMeta: { ...accum.agentMeta },
+    billedMessageIds: { ...accum.billedMessageIds },
   }
 }
 

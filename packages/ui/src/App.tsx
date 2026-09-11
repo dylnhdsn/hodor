@@ -6,6 +6,8 @@ import {
   deriveView,
   fetchTranscript,
   formatAge,
+  formatTokens,
+  formatUsd,
   matchesQuery,
   postMutation,
   titleOf,
@@ -293,12 +295,14 @@ function ProjectStats(props: { project: RailProject; nowMs: number }) {
   const latest = project.sessions
     .map((s) => s.lastActivityAt ?? '')
     .reduce((a, b) => (a > b ? a : b), '')
+  const cost = project.sessions.reduce((sum, s) => sum + (s.costUsd ?? 0), 0)
   const roots = cwdsOf(project.sessions)
   return (
     <div className="mt-1.5 flex items-center gap-3 text-xs text-zinc-500">
       <span className="font-medium text-zinc-300">{project.name}</span>
       {active > 0 && <span className="text-emerald-400">{active} active</span>}
       {latest !== '' && <span>last {formatAge(nowMs, latest)}</span>}
+      {cost >= 0.005 && <span className="text-zinc-400">~{formatUsd(cost)}</span>}
       {roots.length > 0 && (
         <span className="truncate text-zinc-600">
           {roots[0]}
@@ -514,6 +518,11 @@ function SessionRow(props: {
       <div className="mt-0.5 flex items-center gap-2 pl-7 text-xs text-zinc-500">
         <span className="font-mono">{s.id.slice(0, 8)}</span>
         <span>{formatAge(nowMs, s.lastActivityAt)}</span>
+        {s.costUsd !== undefined && s.costUsd >= 0.01 && (
+          <span className="text-zinc-400" title="estimated cost">
+            {formatUsd(s.costUsd)}
+          </span>
+        )}
         {s.counts.sidechains > 0 && (
           <span className="rounded bg-zinc-800 px-1.5 text-[11px] text-zinc-400" title="subagent runs">
             ⑂ {s.counts.sidechains}
@@ -626,11 +635,34 @@ function DetailPane(props: {
         <Fact label="last activity" value={formatAge(nowMs, s.lastActivityAt)} />
         <Fact label="created" value={formatAge(nowMs, s.createdAt)} />
         <Fact label="messages" value={`${s.counts.user} you · ${s.counts.assistant} claude`} />
+        {s.counts.toolCalls > 0 && <Fact label="tool calls" value={String(s.counts.toolCalls)} />}
         {s.gitBranch !== undefined && <Fact label="branch" value={s.gitBranch} />}
         <Fact label="entrypoint" value={s.entrypoints.join(', ') || '-'} />
         {s.cliVersion !== undefined && <Fact label="cli" value={s.cliVersion} />}
         <Fact label="cwd" value={s.cwd ?? '-'} mono />
       </Section>
+
+      {s.usage !== undefined && (
+        <Section title="usage">
+          {Object.entries(s.usage).map(([model, u]) => (
+            <div key={model} className="py-0.5">
+              <div className="text-zinc-300">{model.replace(/^claude-/, '')}</div>
+              <div className="pl-2 text-zinc-500">
+                in {formatTokens(u.input)} · out {formatTokens(u.output)} · cache read{' '}
+                {formatTokens(u.cacheRead)} · cache write {formatTokens(u.cacheWrite5m + u.cacheWrite1h)}
+              </div>
+            </div>
+          ))}
+          {s.costUsd !== undefined && (
+            <div className="mt-1 border-t border-zinc-800 pt-1 text-zinc-300">
+              est. cost {formatUsd(s.costUsd)}
+              {(s.costUnpriced ?? []).length > 0 && (
+                <span className="text-amber-400"> + unpriced: {s.costUnpriced!.join(', ')}</span>
+              )}
+            </div>
+          )}
+        </Section>
+      )}
 
       {(ancestor !== undefined || s.forkedFrom !== undefined || forks.length > 0) && (
         <Section title="lineage">
@@ -664,6 +696,9 @@ function DetailPane(props: {
               <div className="flex items-center justify-between text-zinc-400">
                 <span>
                   ⑂ {t.agentType ?? 'agent'} · {t.messageCount} message{t.messageCount === 1 ? '' : 's'}
+                  {t.costUsd !== undefined && t.costUsd >= 0.005 && (
+                    <span className="text-zinc-500"> · {formatUsd(t.costUsd)}</span>
+                  )}
                 </span>
                 <span className="text-zinc-600">{formatAge(nowMs, t.lastTs)}</span>
               </div>

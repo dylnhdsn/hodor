@@ -35,7 +35,7 @@ hodor scan            # discover + organize sessions, human-readable
 hodor scan --all      # include hidden sessions
 hodor scan --json     # the full structured snapshot
 hodor watch           # scan, then live-update as transcripts change
-hodor stats           # entrypoint + visibility histograms
+hodor stats           # entrypoints, subagent runs, token usage + est. cost
 hodor bucket <cwd>    # the ~/.claude/projects bucket name for a cwd
 hodor update          # self-update to the newest published build
 ```
@@ -83,6 +83,19 @@ Everything lands in `~/.hodor` (`projects.json`, `config.json`) — on
 Windows+WSL setups the Windows home is shared so both sides see one truth.
 Matchers reference durable evidence, never derived ids, so your curation
 survives any improvement to the automatic grouping.
+
+### Usage & cost
+
+Token usage (input, output, cache reads, cache writes by TTL) is read
+off every session and every subagent run, deduplicated per API message,
+and priced per model at first-party API list rates — an estimate of
+API-equivalent spend, not an invoice. Unknown models are counted but
+flagged unpriced rather than silently costing $0; add or correct rates
+via `pricing` in `~/.hodor/config.json` (USD per million tokens):
+
+```jsonc
+{ "pricing": { "claude-sonnet-4-5": { "input": 3, "output": 15 } } }
+```
 
 ## Install
 

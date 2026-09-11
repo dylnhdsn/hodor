@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import type { UsageTotals } from '../pricing.js'
 
 /**
  * Tolerant parser for Claude Code transcript JSONL lines.
@@ -26,7 +27,28 @@ const messageLineSchema = z
     toolUseID: z.string().optional(),
     sourceToolAssistantUUID: z.string().optional(),
     message: z
-      .object({ role: z.string().optional(), content: z.unknown().optional() })
+      .object({
+        role: z.string().optional(),
+        content: z.unknown().optional(),
+        id: z.string().optional(),
+        model: z.string().optional(),
+        usage: z
+          .object({
+            input_tokens: z.number().optional(),
+            output_tokens: z.number().optional(),
+            cache_read_input_tokens: z.number().optional(),
+            cache_creation_input_tokens: z.number().optional(),
+            cache_creation: z
+              .object({
+                ephemeral_5m_input_tokens: z.number().optional(),
+                ephemeral_1h_input_tokens: z.number().optional(),
+              })
+              .passthrough()
+              .optional(),
+          })
+          .passthrough()
+          .optional(),
+      })
       .passthrough()
       .optional(),
   })
@@ -66,6 +88,18 @@ export interface MessageLine {
   /** Modern subagent transcripts stamp every line with the run's agent id. */
   agentId?: string
   spawnedBy?: { toolUseId: string; assistantUuid: string }
+  /** Assistant lines: which model produced this message. */
+  model?: string
+  /**
+   * Assistant lines: the API message id. One API response is written as one
+   * line PER CONTENT BLOCK, each repeating the same usage — billing must
+   * dedupe on this id or token counts multiply by the block count.
+   */
+  messageId?: string
+  /** Assistant lines: token usage for the whole API response. */
+  usage?: UsageTotals
+  /** Number of tool_use blocks on this line (each block appears once). */
+  toolUses?: number
 }
 
 export interface SummaryLine {
@@ -191,6 +225,28 @@ export function parseTranscriptLine(raw: string): TranscriptLine {
       const text = firstTextOf(d.message?.content)?.replace(/\s+/g, ' ').trim()
       if (text !== undefined && text.length > 0) {
         line.textPreview = text.slice(0, ASSISTANT_PREVIEW_MAX_LENGTH)
+      }
+      if (d.message?.model !== undefined) line.model = d.message.model
+      if (d.message?.id !== undefined) line.messageId = d.message.id
+      const u = d.message?.usage
+      if (u !== undefined) {
+        // Prefer the per-TTL breakdown; older lines only have the total
+        // cache_creation_input_tokens, which was always the 5m TTL then.
+        const write5m = u.cache_creation?.ephemeral_5m_input_tokens
+        const write1h = u.cache_creation?.ephemeral_1h_input_tokens
+        line.usage = {
+          input: u.input_tokens ?? 0,
+          output: u.output_tokens ?? 0,
+          cacheRead: u.cache_read_input_tokens ?? 0,
+          cacheWrite5m: write5m ?? u.cache_creation_input_tokens ?? 0,
+          cacheWrite1h: write1h ?? 0,
+        }
+      }
+      if (Array.isArray(d.message?.content)) {
+        const toolUses = d.message.content.filter(
+          (block) => (block as { type?: unknown } | null)?.type === 'tool_use',
+        ).length
+        if (toolUses > 0) line.toolUses = toolUses
       }
     }
     if (d.toolUseID !== undefined && d.sourceToolAssistantUUID !== undefined) {
