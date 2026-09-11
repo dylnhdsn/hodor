@@ -6,10 +6,12 @@ function memDeps(fs = new MemFs()): {
   deps: CliDeps
   output: string[]
   errors: string[]
+  spawns: Array<{ file: string; args: string[] }>
   fs: MemFs
 } {
   const output: string[] = []
   const errors: string[] = []
+  const spawns: Array<{ file: string; args: string[] }> = []
   const deps: CliDeps = {
     fs,
     homedir: () => '/home/u',
@@ -23,12 +25,17 @@ function memDeps(fs = new MemFs()): {
     wslDistro: () => undefined,
     env: () => undefined,
     openUrl: async () => {},
+    osPlatform: 'linux',
+    spawnDetached: async (file, args) => {
+      spawns.push({ file, args })
+      if (file !== 'x-terminal-emulator') throw new Error(`spawn ${file}: not stubbed`)
+    },
     selfUpdate: async () => {
       output.push('selfUpdate-stub\n')
       return 0
     },
   }
-  return { deps, output, errors, fs }
+  return { deps, output, errors, spawns, fs }
 }
 
 const line = (uuid: string, ts: string, cwd: string, prompt?: string, entrypoint?: string) =>
@@ -605,6 +612,34 @@ describe('stats', () => {
       entrypointsHidden: { sdk: 1, '(none)': 1 },
       hiddenByRule: { 'dot-segment:.peri': 1, 'prefix:/tmp': 1 },
     })
+  })
+})
+
+describe('resume', () => {
+  it('prints the command with --print, launches otherwise, rejects ambiguity', async () => {
+    const { deps, output, errors, spawns, fs } = memDeps()
+    // second cwd on the same session: resume must use the FIRST (the store
+    // bucket is keyed by it)
+    fs.writeFile(
+      '/home/u/.claude/projects/-r/abc111.jsonl',
+      line('u1', '2026-06-01T10:00:00Z', '/r/app') + line('u1b', '2026-06-01T10:05:00Z', '/r/app/sub'),
+    )
+    fs.writeFile('/home/u/.claude/projects/-r/abd222.jsonl', line('u2', '2026-06-01T10:00:00Z', '/r/app'))
+
+    expect(await run(['resume', 'abc', '--print'], deps)).toBe(0)
+    expect(output.join('')).toContain('cd "/r/app"')
+    expect(output.join('')).toContain('claude --resume abc111')
+
+    expect(await run(['resume', 'abc', '--fork', '--print'], deps)).toBe(0)
+    expect(output.join('')).toContain('claude --resume abc111 --fork-session')
+
+    expect(await run(['resume', 'abc'], deps)).toBe(0)
+    expect(spawns.some((s) => s.file === 'x-terminal-emulator')).toBe(true)
+    expect(output.join('')).toContain('launched x-terminal-emulator in /r/app')
+
+    expect(await run(['resume', 'ab'], deps)).toBe(1)
+    expect(errors.join('')).toContain('ambiguous')
+    expect(await run(['resume', 'zzz'], deps)).toBe(1)
   })
 })
 

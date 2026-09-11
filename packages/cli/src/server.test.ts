@@ -3,8 +3,14 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type { CliDeps } from './main.js'
 import { startServer, type RunningServer } from './server.js'
 
-function serverDeps(fs = new MemFs()): { deps: CliDeps; fs: MemFs; errors: string[] } {
+function serverDeps(fs = new MemFs()): {
+  deps: CliDeps
+  fs: MemFs
+  errors: string[]
+  spawns: Array<{ file: string; args: string[] }>
+} {
   const errors: string[] = []
+  const spawns: Array<{ file: string; args: string[] }> = []
   const deps: CliDeps = {
     fs,
     homedir: () => '/home/u',
@@ -18,9 +24,14 @@ function serverDeps(fs = new MemFs()): { deps: CliDeps; fs: MemFs; errors: strin
     wslDistro: () => undefined,
     env: () => undefined,
     openUrl: async () => {},
+    osPlatform: 'linux',
+    spawnDetached: async (file, args) => {
+      spawns.push({ file, args })
+      if (file !== 'x-terminal-emulator') throw new Error(`spawn ${file}: not stubbed`)
+    },
     selfUpdate: async () => 0,
   }
-  return { deps, fs, errors }
+  return { deps, fs, errors, spawns }
 }
 
 const line = (uuid: string, ts: string, cwd: string, prompt?: string) =>
@@ -280,6 +291,61 @@ describe('startServer', () => {
       ['go', false],
       ['probe the thing', true],
     ])
+  })
+
+  it('launches resume/fork terminals and validates new-session roots', async () => {
+    const { deps, fs, spawns } = serverDeps()
+    fs.writeFile('/home/u/.claude/projects/-r/aaaa.jsonl', line('u1', '2026-06-01T11:00:00Z', '/r/app'))
+    const server = await start(fs, deps)
+
+    const resume = await fetch(`${server.url}/api/launch`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ kind: 'resume', sessionId: 'aaaa' }),
+    })
+    expect(resume.status).toBe(200)
+    expect((await resume.json()) as object).toMatchObject({
+      ok: true,
+      method: 'x-terminal-emulator',
+      command: 'claude --resume aaaa',
+      cwd: '/r/app',
+    })
+    expect(spawns[0]!.file).toBe('x-terminal-emulator')
+
+    const fork = await fetch(`${server.url}/api/launch`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ kind: 'fork', sessionId: 'aaaa' }),
+    })
+    expect((await fork.json()) as object).toMatchObject({
+      command: 'claude --resume aaaa --fork-session',
+    })
+
+    // new sessions only launch into roots the data already knows
+    const good = await fetch(`${server.url}/api/launch`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ kind: 'new', storeId: 'local', root: '/r/app' }),
+    })
+    expect(good.status).toBe(200)
+    expect((await good.json()) as object).toMatchObject({ ok: true, command: 'claude' })
+
+    const bad = await fetch(`${server.url}/api/launch`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ kind: 'new', storeId: 'local', root: '/etc' }),
+    })
+    expect(bad.status).toBe(400)
+
+    expect(
+      (
+        await fetch(`${server.url}/api/launch`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ kind: 'resume', sessionId: 'nope' }),
+        })
+      ).status,
+    ).toBe(404)
   })
 
   it('previews which sessions a matcher would claim', async () => {

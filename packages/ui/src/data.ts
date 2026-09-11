@@ -207,6 +207,53 @@ export async function fetchTranscript(sessionId: string, limit = 24): Promise<Tr
   }
 }
 
+export interface LaunchResponse {
+  ok: boolean
+  method?: string
+  error?: string
+  command: string
+  cwd: string
+}
+
+export async function requestLaunch(
+  body:
+    | { kind: 'resume' | 'fork'; sessionId: string }
+    | { kind: 'new'; storeId: string; root: string },
+): Promise<LaunchResponse> {
+  try {
+    const res = await fetch('/api/launch', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    return (await res.json()) as LaunchResponse
+  } catch (error) {
+    return { ok: false, error: String(error), command: '', cwd: '' }
+  }
+}
+
+/**
+ * Launch, falling back to the clipboard: when no terminal could be opened
+ * (headless server, exotic setup), copy the exact command instead.
+ */
+export async function launchOrCopy(
+  body: Parameters<typeof requestLaunch>[0],
+): Promise<void> {
+  const result = await requestLaunch(body)
+  if (result.ok) return
+  const paste = result.command !== '' ? `cd ${JSON.stringify(result.cwd)} && ${result.command}` : ''
+  if (paste !== '') {
+    try {
+      await navigator.clipboard.writeText(paste)
+      window.alert(`Couldn't open a terminal — command copied to clipboard:\n\n${paste}`)
+      return
+    } catch {
+      // fall through to the plain alert
+    }
+  }
+  window.alert(`Couldn't launch: ${result.error ?? 'unknown error'}${paste !== '' ? `\n\n${paste}` : ''}`)
+}
+
 export async function postMutation(
   path: '/api/project' | '/api/session' | '/api/preview',
   body: unknown,

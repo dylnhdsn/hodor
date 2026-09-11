@@ -22,6 +22,7 @@ import {
   type Snapshot,
 } from '@hodor/core'
 import { flavorOfPath, pathOps } from '@hodor/core'
+import { runLaunch, type LaunchTarget } from './launch.js'
 import type { CliDeps } from './main.js'
 import { materializeTarget } from './materialize.js'
 import { resolveStores, storeFs } from './stores.js'
@@ -240,6 +241,62 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
     return sendJson(res, 200, { messages: messages.slice(-limit) })
   }
 
+  /**
+   * Launch a real terminal on this machine: resume/fork a session in its
+   * own cwd, or start a fresh claude in a known project root. Always
+   * answers with the copyable command, so a failed spawn (headless box,
+   * exotic terminal) still leaves the user one paste away.
+   */
+  async function handleLaunch(res: ServerResponse, body: string): Promise<void> {
+    let payload: { kind?: string; sessionId?: string; storeId?: string; root?: string }
+    try {
+      payload = JSON.parse(body) as typeof payload
+    } catch {
+      return sendJson(res, 400, { error: 'body must be JSON' })
+    }
+    if (snapshot === undefined) await refresh()
+
+    let target: LaunchTarget
+    if (payload.kind === 'resume' || payload.kind === 'fork') {
+      const session = snapshot?.sessions.find((s) => s.id === payload.sessionId)
+      if (session === undefined) return sendJson(res, 404, { error: `no session "${payload.sessionId}"` })
+      // Resume from the FIRST cwd: the store bucket is keyed by it, so
+      // resuming elsewhere would re-home the session into a new bucket.
+      const cwd = session.cwds[0] ?? session.cwd
+      if (cwd === undefined) return sendJson(res, 400, { error: 'session has no cwd' })
+      const store = snapshot?.stores.find((s) => s.id === session.storeId)
+      if (store === undefined) return sendJson(res, 400, { error: 'session store unknown' })
+      target = {
+        cwd,
+        flavor: store.pathFlavor,
+        origin: store.origin,
+        claudeArgs: [
+          '--resume',
+          session.id,
+          ...(payload.kind === 'fork' ? ['--fork-session'] : []),
+        ],
+      }
+    } else if (payload.kind === 'new') {
+      const store = snapshot?.stores.find((s) => s.id === payload.storeId)
+      if (store === undefined) return sendJson(res, 400, { error: 'unknown store' })
+      // Only launch into places the data already knows about.
+      const known =
+        snapshot?.projects.some((p) =>
+          p.roots.some((r) => r.storeId === payload.storeId && r.path === payload.root),
+        ) === true ||
+        snapshot?.sessions.some((s) => s.storeId === payload.storeId && s.cwds.includes(payload.root ?? '')) === true
+      if (!known || payload.root === undefined) {
+        return sendJson(res, 400, { error: 'root is not a known project root' })
+      }
+      target = { cwd: payload.root, flavor: store.pathFlavor, origin: store.origin, claudeArgs: [] }
+    } else {
+      return sendJson(res, 400, { error: 'kind must be resume, fork, or new' })
+    }
+
+    const result = await runLaunch(deps, target)
+    return sendJson(res, result.ok ? 200 : 500, result)
+  }
+
   function handlePreview(res: ServerResponse, body: string): void {
     let payload: { matcher?: Matcher }
     try {
@@ -297,6 +354,11 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
 
       if (req.method === 'POST' && path === '/api/preview') {
         handlePreview(res, await readBody(req))
+        return
+      }
+
+      if (req.method === 'POST' && path === '/api/launch') {
+        await handleLaunch(res, await readBody(req))
         return
       }
 

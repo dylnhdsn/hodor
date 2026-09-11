@@ -9,6 +9,7 @@ import {
   formatBytes,
   formatTokens,
   formatUsd,
+  launchOrCopy,
   matchesQuery,
   postMutation,
   titleOf,
@@ -72,6 +73,19 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
   const customNames = new Map(
     snapshot.customProjects.filter((p) => p.archived !== true).map((p) => [p.id, p.name]),
   )
+
+  // Where "+ new session" launches: the project's first known root.
+  const newSessionTarget = useMemo(() => {
+    if (project === undefined) return undefined
+    const root = project.auto?.roots[0]
+    if (root !== undefined) return { storeId: root.storeId, root: root.path }
+    for (const s of project.sessions) {
+      const derivedRoot = view.derivedOf.get(s.id)?.roots[0]
+      if (derivedRoot !== undefined) return { storeId: derivedRoot.storeId, root: derivedRoot.path }
+      if (s.cwd !== undefined) return { storeId: s.storeId, root: s.cwd }
+    }
+    return undefined
+  }, [project, view])
 
   // Mutations that target a project follow the id the server answers with —
   // editing an auto project materializes it under a new (custom) id.
@@ -203,7 +217,9 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
                   </button>
                 )}
               </div>
-              {project !== undefined && <ProjectStats project={project} nowMs={nowMs} />}
+              {project !== undefined && (
+                <ProjectStats project={project} nowMs={nowMs} newSession={newSessionTarget} />
+              )}
             </header>
 
             {selected.size > 0 && (
@@ -290,8 +306,12 @@ function RailItem(props: { label: string; count: number; active: boolean; onClic
   )
 }
 
-function ProjectStats(props: { project: RailProject; nowMs: number }) {
-  const { project, nowMs } = props
+function ProjectStats(props: {
+  project: RailProject
+  nowMs: number
+  newSession?: { storeId: string; root: string } | undefined
+}) {
+  const { project, nowMs, newSession } = props
   const active = project.sessions.filter((s) => s.runtime.kind !== 'idle').length
   const latest = project.sessions
     .map((s) => s.lastActivityAt ?? '')
@@ -301,6 +321,15 @@ function ProjectStats(props: { project: RailProject; nowMs: number }) {
   return (
     <div className="mt-1.5 flex items-center gap-3 text-xs text-zinc-500">
       <span className="font-medium text-zinc-300">{project.name}</span>
+      {newSession !== undefined && (
+        <button
+          onClick={() => void launchOrCopy({ kind: 'new', ...newSession })}
+          className="text-emerald-500 hover:text-emerald-300"
+          title={`open a terminal running claude in ${newSession.root}`}
+        >
+          + new session
+        </button>
+      )}
       {active > 0 && <span className="text-emerald-400">{active} active</span>}
       {latest !== '' && <span>last {formatAge(nowMs, latest)}</span>}
       {cost >= 0.005 && <span className="text-zinc-400">~{formatUsd(cost)}</span>}
@@ -502,6 +531,20 @@ function SessionRow(props: {
                 </option>
               ))}
           </select>
+          <button
+            onClick={() => void launchOrCopy({ kind: 'resume', sessionId: s.id })}
+            className="text-[11px] text-emerald-500 hover:text-emerald-300"
+            title="open a terminal resuming this session"
+          >
+            resume
+          </button>
+          <button
+            onClick={() => void launchOrCopy({ kind: 'fork', sessionId: s.id })}
+            className="text-[11px] text-zinc-500 hover:text-zinc-200"
+            title="resume as a new forked session"
+          >
+            fork
+          </button>
           <button onClick={() => void rename()} className="text-[11px] text-zinc-500 hover:text-zinc-200">
             rename
           </button>
@@ -596,8 +639,33 @@ function DetailPane(props: {
           ✕
         </button>
       </div>
-      <div className="mb-3 flex items-center gap-2 text-zinc-500">
+      <div className="mb-3 flex flex-wrap items-center gap-2 text-zinc-500">
         <span className="font-mono">{s.id.slice(0, 8)}</span>
+        <button
+          onClick={() => void launchOrCopy({ kind: 'resume', sessionId: s.id })}
+          className="text-emerald-500 hover:text-emerald-300"
+          title="open a terminal resuming this session"
+        >
+          resume
+        </button>
+        <button
+          onClick={() => void launchOrCopy({ kind: 'fork', sessionId: s.id })}
+          className="text-zinc-500 hover:text-zinc-200"
+          title="resume as a new forked session"
+        >
+          fork
+        </button>
+        <button
+          onClick={() =>
+            void navigator.clipboard
+              .writeText(`cd ${JSON.stringify(s.cwds[0] ?? s.cwd ?? '.')} && claude --resume ${s.id}`)
+              .catch(() => {})
+          }
+          className="text-zinc-600 hover:text-zinc-300"
+          title="copy the resume command"
+        >
+          copy cmd
+        </button>
         <button
           onClick={() => void navigator.clipboard.writeText(s.id).catch(() => {})}
           className="text-zinc-600 hover:text-zinc-300"

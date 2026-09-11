@@ -3,7 +3,7 @@
  * is both what bin/hodor.js loads in a dev checkout (via dist/) and the
  * entry scripts/bundle.mjs bundles into the distributable hodor.mjs.
  */
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { rename, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
@@ -62,6 +62,21 @@ process.exitCode = await run(process.argv.slice(2), {
   },
   wslDistro: () => process.env['WSL_DISTRO_NAME'],
   env: (name) => process.env[name],
+  osPlatform:
+    process.platform === 'win32' ? 'win32' : process.platform === 'darwin' ? 'darwin' : 'linux',
+  spawnDetached: (file, args) =>
+    new Promise<void>((resolve, reject) => {
+      try {
+        const child = spawn(file, args, { detached: true, stdio: 'ignore' })
+        child.once('spawn', () => {
+          child.unref()
+          resolve()
+        })
+        child.once('error', reject)
+      } catch (error) {
+        reject(error instanceof Error ? error : new Error(String(error)))
+      }
+    }),
   openUrl: async (url) => {
     // Best effort per platform; the printed URL is the fallback.
     const attempts: Array<[string, string[]]> =

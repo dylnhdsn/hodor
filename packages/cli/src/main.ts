@@ -33,6 +33,7 @@ import {
   type SnapshotOptions,
 } from '@hodor/core'
 import { projectCommand, sessionCommand } from './curate.js'
+import { composeLaunch, runLaunch } from './launch.js'
 import { resolveStores, storeFs } from './stores.js'
 import { formatSnapshot } from './format.js'
 import { loadUserFiles, type UserFiles } from './userdata.js'
@@ -64,6 +65,10 @@ export interface CliDeps {
   openUrl(url: string): Promise<void>
   /** Replace the installed bundle with the latest release (hodor update). */
   selfUpdate(): Promise<number>
+  /** The real OS family (platformFlavor only says how paths look). */
+  osPlatform: 'win32' | 'darwin' | 'linux'
+  /** Fire-and-forget spawn; rejects when the executable can't start. */
+  spawnDetached(file: string, args: string[]): Promise<void>
 }
 
 const USAGE = `hodor — session manager (data core, early days)
@@ -73,6 +78,10 @@ Usage:
   hodor watch [--json] [--interval <ms>] [--root <path>]...
                                             Scan, then live-update on changes
   hodor stats [--json] [--root <path>]...   Entrypoint and visibility histograms
+  hodor resume <sessionId> [--fork] [--print]
+                                            Open a terminal resuming that session
+                                            (--fork: new session id; --print:
+                                            show the command instead)
   hodor ui [--port <n>]                     Start the local web UI and open it
   hodor serve [--port <n>]                  Start the UI/API server (default :4477)
   hodor project <list|create|rename|delete|match|unmatch|include|exclude>
@@ -108,6 +117,8 @@ interface Flags {
   json: boolean
   all: boolean
   noDiscover: boolean
+  fork: boolean
+  print: boolean
   roots: string[]
   hide: string[]
   intervalMs: number
@@ -122,6 +133,8 @@ function parseFlags(args: string[]): Flags {
     json: false,
     all: false,
     noDiscover: false,
+    fork: false,
+    print: false,
     roots: [],
     hide: [],
     intervalMs: 2000,
@@ -134,6 +147,8 @@ function parseFlags(args: string[]): Flags {
     if (arg === '--json') flags.json = true
     else if (arg === '--all') flags.all = true
     else if (arg === '--no-discover') flags.noDiscover = true
+    else if (arg === '--fork') flags.fork = true
+    else if (arg === '--print') flags.print = true
     else if (valueFlags.has(arg)) {
       const value = args[++i]
       if (value === undefined) {
@@ -409,6 +424,63 @@ async function scan(deps: CliDeps, flags: Flags): Promise<number> {
   return 0
 }
 
+/** hodor resume <sessionId> [--fork] [--print] — open a terminal on it. */
+async function resumeCommand(deps: CliDeps, flags: Flags): Promise<number> {
+  const idArg = flags.rest[0]
+  if (idArg === undefined) {
+    deps.writeErr('hodor: resume needs a session id (a unique prefix works)\n')
+    return 1
+  }
+  const files = await loadUserFiles(deps)
+  const stores = await resolveStores(
+    deps,
+    { roots: flags.roots, noDiscover: flags.noDiscover },
+    files.config,
+  )
+  let state = foldAll(emptyState, configEvents(files))
+  for (const store of stores) {
+    state = foldAll(state, await scanStore(deps.fs, store))
+  }
+
+  const matches = Object.values(state.sessions).filter((s) => s.id.startsWith(idArg))
+  if (matches.length === 0) return fail(deps, `no session matches "${idArg}"`)
+  if (matches.length > 1) {
+    return fail(deps, `"${idArg}" is ambiguous (${matches.length} sessions) — give more of the id`)
+  }
+  const session = matches[0]!
+  // First cwd, not last: the store bucket is keyed by where the session
+  // started, and resuming elsewhere would re-home it into a new bucket.
+  const cwd = session.cwds[0]
+  if (cwd === undefined) return fail(deps, `session ${session.id.slice(0, 8)} has no cwd`)
+  const store = state.stores[session.storeId]
+  if (store === undefined) return fail(deps, 'session store unknown')
+
+  const target = {
+    cwd,
+    flavor: store.pathFlavor,
+    origin: store.origin,
+    claudeArgs: ['--resume', session.id, ...(flags.fork ? ['--fork-session'] : [])],
+  }
+  if (flags.print) {
+    const plan = composeLaunch({ os: deps.osPlatform, wslDistro: deps.wslDistro() }, target)
+    deps.write(`cd ${JSON.stringify(plan.cwd)}\n${plan.command}\n`)
+    return 0
+  }
+  const result = await runLaunch(deps, target)
+  if (result.ok) {
+    deps.write(`launched ${result.method} in ${result.cwd}\n`)
+    return 0
+  }
+  deps.writeErr(`hodor: could not open a terminal (${result.error ?? 'unknown'})\n`)
+  deps.write(`run it yourself:\n  cd ${JSON.stringify(result.cwd)}\n  ${result.command}\n`)
+  return 1
+}
+
+function fail(deps: CliDeps, message: string): number {
+  deps.writeErr(`hodor: ${message}\n`)
+  return 1
+}
+
 async function statsCommand(deps: CliDeps, flags: Flags): Promise<number> {
   const files = await loadUserFiles(deps)
   const config = files.config
@@ -505,6 +577,9 @@ export async function run(argv: string[], deps: CliDeps): Promise<number> {
       // Runs until interrupted; tests use startServer directly instead.
       return new Promise<number>(() => {})
     }
+
+    case 'resume':
+      return resumeCommand(deps, flags)
 
     case 'project':
       return projectCommand(deps, args)

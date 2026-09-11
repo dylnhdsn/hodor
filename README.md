@@ -31,6 +31,7 @@ lineage, placement provenance, and the conversation tail. See
 ```sh
 hodor ui              # start the local server and open the UI in a browser
 hodor serve           # same server, no browser (default port 4477; --port N)
+hodor resume <id>     # open a terminal resuming that session (--fork, --print)
 hodor scan            # discover + organize sessions, human-readable
 hodor scan --all      # include hidden sessions
 hodor scan --json     # the full structured snapshot
