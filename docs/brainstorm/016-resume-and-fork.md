@@ -87,6 +87,40 @@ to isolate the test), which means same-id transcripts in two buckets
 can exist in the wild; hodor currently merges them into one session —
 a known edge, revisit if it ever appears outside containers.
 
+## Double resume (same day, answering "what if two CLIs resume the
+## same session at once?")
+
+Also tested empirically: seeded a session, resumed it from two
+concurrent CLIs, then resumed a third time to see whose history won.
+
+1. **Plain `--resume` appends in place** — same file, same session id,
+   no copy. (Fork is the only verb that copies.)
+2. **There is no lock.** Both concurrent resumes succeeded, both saw
+   the shared history, and both appended to the same JSONL. Zero torn
+   lines — each line is one append write, so interleaving happens at
+   line granularity, not byte granularity.
+3. **The transcript becomes a tree.** Both new user turns claimed the
+   same parentUuid (the pre-existing leaf), creating two sibling
+   branches interleaved in the file. CC transcripts already support
+   trees (edits/retries), so nothing is corrupted.
+4. **The next resume follows one branch — last writer wins.** Each CLI
+   writes a `last-prompt` bookkeeping line with a `leafUuid` pointer
+   as it goes; a later resume continues from the newest one. In our
+   run the process that exited last (ALPHA) won even though the other
+   branch's turns landed later in the file. The losing branch stays in
+   the transcript as a dead branch: real, billed, but not part of the
+   continued conversation.
+
+hodor needs no changes for this: it's still one session (one id, one
+file), the tolerant parser passes the bookkeeping line types
+(`last-prompt`, `queue-operation`, `atis-latch`) through as other
+lines, no fork lineage fires (message-id sharing is cross-session
+evidence and this all stays in one session), and usage bills both
+branches once each — correct, since both were real API spends. One
+display nuance to remember: the conversation tail renders in
+timestamp order, so dead-branch turns appear interleaved with the
+surviving branch.
+
 ## Later
 
 - Electron/PTY milestone: same LaunchTarget, but the terminal is ours.
