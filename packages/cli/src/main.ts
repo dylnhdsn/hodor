@@ -218,6 +218,8 @@ export interface Stats {
     byModel: Record<string, UsageTotals & { usd: number }>
   }
   topCostSessions: Array<{ id: string; usd: number; hiddenBy?: string; title: string }>
+  /** tool_use blocks by tool name, across every session. */
+  tools: Record<string, number>
   entrypointsVisible: Record<string, number>
   entrypointsHidden: Record<string, number>
   hiddenByRule: Record<string, number>
@@ -238,6 +240,7 @@ export function computeStats(
     topSubagentSessions: [],
     usage: { totalUsd: 0, subagentUsd: 0, unpriced: [], byModel: {} },
     topCostSessions: [],
+    tools: {},
     entrypointsVisible: {},
     entrypointsHidden: {},
     hiddenByRule: {},
@@ -288,6 +291,9 @@ export function computeStats(
     for (const model of session.costUnpriced ?? []) {
       if (!stats.usage.unpriced.includes(model)) stats.usage.unpriced.push(model)
     }
+    for (const [tool, n] of Object.entries(session.toolCounts ?? {})) {
+      stats.tools[tool] = (stats.tools[tool] ?? 0) + n
+    }
     const target = isHidden ? stats.entrypointsHidden : stats.entrypointsVisible
     const keys = session.entrypoints.length > 0 ? session.entrypoints : ['(none)']
     for (const key of keys) bump(target, key)
@@ -335,8 +341,9 @@ export function formatStats(stats: Stats): string {
       lines.push('', 'by model:')
       const width = Math.max(...models.map(([m]) => m.length))
       for (const [model, u] of models) {
+        const think = u.thinking > 0 ? `  think ${formatTokens(u.thinking).padStart(7)}` : ''
         lines.push(
-          `  ${model.padEnd(width)}  in ${formatTokens(u.input).padStart(7)}  out ${formatTokens(u.output).padStart(7)}  cache r ${formatTokens(u.cacheRead).padStart(7)} w ${formatTokens(u.cacheWrite5m + u.cacheWrite1h).padStart(7)}  ${formatUsd(u.usd)}`,
+          `  ${model.padEnd(width)}  in ${formatTokens(u.input).padStart(7)}  out ${formatTokens(u.output).padStart(7)}  cache r ${formatTokens(u.cacheRead).padStart(7)} w ${formatTokens(u.cacheWrite5m + u.cacheWrite1h).padStart(7)}${think}  ${formatUsd(u.usd)}`,
         )
       }
     }
@@ -356,6 +363,7 @@ export function formatStats(stats: Stats): string {
     }
   }
   lines.push(
+    ...formatHistogram('tool calls', stats.tools),
     ...formatHistogram('entrypoints (visible sessions)', stats.entrypointsVisible),
     ...formatHistogram('entrypoints (hidden sessions)', stats.entrypointsHidden),
     ...formatHistogram('hidden by rule', stats.hiddenByRule),

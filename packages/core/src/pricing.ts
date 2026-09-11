@@ -20,6 +20,9 @@ export interface UsageTotals {
   cacheRead: number
   cacheWrite5m: number
   cacheWrite1h: number
+  /** Thinking tokens — a SUBSET of output (same price), tracked for insight.
+   * Never added to cost or totals separately, or it would double-count. */
+  thinking: number
 }
 
 export const emptyUsage = (): UsageTotals => ({
@@ -28,6 +31,7 @@ export const emptyUsage = (): UsageTotals => ({
   cacheRead: 0,
   cacheWrite5m: 0,
   cacheWrite1h: 0,
+  thinking: 0,
 })
 
 export function addUsage(into: UsageTotals, add: UsageTotals): void {
@@ -36,6 +40,7 @@ export function addUsage(into: UsageTotals, add: UsageTotals): void {
   into.cacheRead += add.cacheRead
   into.cacheWrite5m += add.cacheWrite5m
   into.cacheWrite1h += add.cacheWrite1h
+  into.thinking += add.thinking
 }
 
 export const totalTokens = (u: UsageTotals): number =>

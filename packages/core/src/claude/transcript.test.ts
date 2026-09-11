@@ -96,8 +96,8 @@ describe('parseTranscriptLine on real captured lines', () => {
     expect(line).toMatchObject({
       model: 'claude-opus-5',
       messageId: 'msg_01ABC',
-      usage: { input: 2, output: 770, cacheRead: 39066, cacheWrite5m: 0, cacheWrite1h: 19294 },
-      toolUses: 2,
+      usage: { input: 2, output: 770, cacheRead: 39066, cacheWrite5m: 0, cacheWrite1h: 19294, thinking: 0 },
+      toolNames: ['Bash', 'Read'],
     })
   })
 
@@ -117,14 +117,44 @@ describe('parseTranscriptLine on real captured lines', () => {
       }),
     )
     expect(line).toMatchObject({
-      usage: { input: 5, output: 9, cacheRead: 0, cacheWrite5m: 123, cacheWrite1h: 0 },
+      usage: { input: 5, output: 9, cacheRead: 0, cacheWrite5m: 123, cacheWrite1h: 0, thinking: 0 },
     })
-    expect(line).not.toHaveProperty('toolUses')
+    expect(line).not.toHaveProperty('toolNames')
   })
 
-  it('downgrades a uuid-less system line to operational noise', () => {
+  it('downgrades a uuid-less system line to operational noise, keeping its subtype', () => {
     const raw = REAL_LINES.find((l) => JSON.parse(l).type === 'system')!
-    expect(parseTranscriptLine(raw)).toEqual({ kind: 'other', type: 'system' })
+    expect(parseTranscriptLine(raw)).toEqual({ kind: 'other', type: 'system', subtype: 'stop_hook_summary' })
+  })
+
+  it('keeps the subtype on compaction boundary lines (uuid-less system)', () => {
+    const line = parseTranscriptLine(
+      JSON.stringify({
+        parentUuid: null,
+        isSidechain: false,
+        type: 'system',
+        subtype: 'compact_boundary',
+        content: 'Conversation compacted',
+        compactMetadata: { trigger: 'auto', preTokens: 785638 },
+      }),
+    )
+    expect(line).toEqual({ kind: 'other', type: 'system', subtype: 'compact_boundary' })
+  })
+
+  it('extracts slug, effort, and compact-summary flags; compact summaries never title', () => {
+    const line = parseTranscriptLine(
+      JSON.stringify({
+        type: 'user',
+        uuid: 'u1',
+        parentUuid: null,
+        slug: 'structured-munching-map',
+        effort: 'xhigh',
+        isCompactSummary: true,
+        message: { role: 'user', content: 'This session is being continued from a previous…' },
+      }),
+    )
+    expect(line).toMatchObject({ slug: 'structured-munching-map', effort: 'xhigh', isCompactSummary: true })
+    expect(line).not.toHaveProperty('promptText')
   })
 
   it('classifies operational line types as other', () => {

@@ -169,6 +169,7 @@ export function matchesQuery(session: Session, query: string): boolean {
         titleOf(session).toLowerCase().includes(q) ||
         (session.cwd ?? '').toLowerCase().includes(q) ||
         session.id.toLowerCase().includes(q) ||
+        (session.slug ?? '').toLowerCase().includes(q) ||
         (session.promptPreview ?? '').toLowerCase().includes(q)
       )
     })

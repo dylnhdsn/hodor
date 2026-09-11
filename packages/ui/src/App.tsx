@@ -638,9 +638,27 @@ function DetailPane(props: {
         {s.counts.toolCalls > 0 && <Fact label="tool calls" value={String(s.counts.toolCalls)} />}
         {s.gitBranch !== undefined && <Fact label="branch" value={s.gitBranch} />}
         <Fact label="entrypoint" value={s.entrypoints.join(', ') || '-'} />
+        {s.slug !== undefined && <Fact label="slug" value={s.slug} mono />}
+        {s.effort !== undefined && <Fact label="effort" value={s.effort} />}
+        {s.fastMode === true && <Fact label="speed" value="fast mode used" />}
+        {s.serviceTier !== undefined && s.serviceTier !== 'standard' && (
+          <Fact label="tier" value={s.serviceTier} />
+        )}
+        {s.inferenceGeo !== undefined && <Fact label="inference geo" value={s.inferenceGeo} />}
+        {s.compactions !== undefined && (
+          <Fact label="compactions" value={`${s.compactions}×`} />
+        )}
         {s.cliVersion !== undefined && <Fact label="cli" value={s.cliVersion} />}
         <Fact label="cwd" value={s.cwd ?? '-'} mono />
+        {s.apiErrors !== undefined && (
+          <div className="flex justify-between gap-3 py-0.5">
+            <span className="shrink-0 text-zinc-600">api errors</span>
+            <span className="text-amber-300">{s.apiErrors}</span>
+          </div>
+        )}
       </Section>
+
+      {s.toolCounts !== undefined && <ToolsSection toolCounts={s.toolCounts} />}
 
       {s.usage !== undefined && (
         <Section title="usage">
@@ -648,7 +666,8 @@ function DetailPane(props: {
             <div key={model} className="py-0.5">
               <div className="text-zinc-300">{model.replace(/^claude-/, '')}</div>
               <div className="pl-2 text-zinc-500">
-                in {formatTokens(u.input)} · out {formatTokens(u.output)} · cache read{' '}
+                in {formatTokens(u.input)} · out {formatTokens(u.output)}
+                {u.thinking > 0 && <> (think {formatTokens(u.thinking)})</>} · cache read{' '}
                 {formatTokens(u.cacheRead)} · cache write {formatTokens(u.cacheWrite5m + u.cacheWrite1h)}
               </div>
             </div>
@@ -757,6 +776,30 @@ function DetailPane(props: {
         ))}
       </Section>
     </div>
+  )
+}
+
+function ToolsSection(props: { toolCounts: Record<string, number> }) {
+  const entries = Object.entries(props.toolCounts).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+  const shown = entries.slice(0, 10)
+  const rest = entries.length - shown.length
+  const max = shown[0]?.[1] ?? 1
+  return (
+    <Section title="tools">
+      {shown.map(([name, n]) => (
+        <div key={name} className="flex items-center gap-2 py-0.5">
+          <span className="w-36 shrink-0 truncate text-zinc-400">{name}</span>
+          <div className="h-1.5 min-w-0 flex-1 rounded bg-zinc-900">
+            <div
+              className="h-1.5 rounded bg-indigo-900"
+              style={{ width: `${Math.max(3, Math.round((n / max) * 100))}%` }}
+            />
+          </div>
+          <span className="w-10 shrink-0 text-right text-zinc-500">{n}</span>
+        </div>
+      ))}
+      {rest > 0 && <p className="text-zinc-600">+{rest} more</p>}
+    </Section>
   )
 }
 

@@ -49,9 +49,27 @@ export interface SessionAccum {
   assistantCount: number
   /** tool_use blocks seen, main and sidechains alike. */
   toolCallCount: number
+  /** tool_use blocks by tool name — the session's tool fingerprint. */
+  toolCounts: Record<string, number>
   /** API message ids already billed — usage repeats on every content-block
    * line of one response, so each id counts exactly once. */
   billedMessageIds: Record<string, true>
+  /** The CLI's human-readable session slug (last observed). */
+  slug?: string
+  /** Effort level (last observed). */
+  effort?: string
+  /** From usage lines (last observed). */
+  serviceTier?: string
+  inferenceGeo?: string
+  /** True once any response ran at fast-mode speed. */
+  fastMode?: boolean
+  /** Synthetic assistant lines recording API errors. */
+  apiErrorCount: number
+  /** Compaction markers: uuid-less system boundary lines, and the summary
+   * user turns. One compaction usually writes both, so the snapshot takes
+   * the max rather than the sum. */
+  compactBoundaries: number
+  compactSummaries: number
   main: ThreadAccum
   sidechains: ThreadAccum[]
   /** message uuid → index into sidechains, for incremental chain-following. */
@@ -101,7 +119,11 @@ function newAccum(id: SessionId, storeId: StoreId, transcriptPath: string): Sess
     userCount: 0,
     assistantCount: 0,
     toolCallCount: 0,
+    toolCounts: {},
     billedMessageIds: {},
+    apiErrorCount: 0,
+    compactBoundaries: 0,
+    compactSummaries: 0,
     main: { messageCount: 0 },
     sidechains: [],
     uuidToSidechain: {},
@@ -119,7 +141,11 @@ function touchThread(thread: ThreadAccum, ts: string | undefined): void {
 
 /** Bill a line's usage into its thread — once per API message id. */
 function billUsage(accum: SessionAccum, thread: ThreadAccum, line: MessageLine): void {
-  if (line.toolUses !== undefined) accum.toolCallCount += line.toolUses
+  for (const name of line.toolNames ?? []) {
+    accum.toolCallCount += 1
+    accum.toolCounts[name] = (accum.toolCounts[name] ?? 0) + 1
+  }
+  if (line.isApiError === true) accum.apiErrorCount += 1
   if (line.usage === undefined || line.model === undefined) return
   // Lines without a message id can't be deduped; bill them individually
   // (observed only on synthetic lines, which carry no usage anyway).
@@ -150,6 +176,13 @@ function applyMessage(accum: SessionAccum, line: MessageLine): void {
   ) {
     accum.forkedFrom = line.sessionId
   }
+
+  if (line.slug !== undefined) accum.slug = line.slug
+  if (line.effort !== undefined) accum.effort = line.effort
+  if (line.serviceTier !== undefined) accum.serviceTier = line.serviceTier
+  if (line.inferenceGeo !== undefined) accum.inferenceGeo = line.inferenceGeo
+  if (line.speed === 'fast') accum.fastMode = true
+  if (line.isCompactSummary === true) accum.compactSummaries += 1
 
   if (line.isSidechain) {
     // Modern per-file subagent runs stamp every line with an agentId — one
@@ -212,6 +245,7 @@ function cloneAccum(accum: SessionAccum): SessionAccum {
     agentToSidechain: { ...accum.agentToSidechain },
     agentMeta: { ...accum.agentMeta },
     billedMessageIds: { ...accum.billedMessageIds },
+    toolCounts: { ...accum.toolCounts },
   }
 }
 
@@ -228,6 +262,9 @@ export function fold(state: CoreState, event: SourceEvent): CoreState {
       for (const line of event.lines) {
         if (line.kind === 'message') applyMessage(accum, line)
         else if (line.kind === 'summary') accum.summary = line.summary
+        else if (line.kind === 'other' && line.subtype === 'compact_boundary') {
+          accum.compactBoundaries += 1
+        }
       }
       return { ...state, sessions: { ...state.sessions, [event.sessionId]: accum } }
     }

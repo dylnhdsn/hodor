@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { MessageLine, SummaryLine } from './claude/transcript.js'
+import type { MessageLine, TranscriptLine } from './claude/transcript.js'
 import type { SourceEvent } from './events.js'
 import { emptyState, foldAll, gitKey } from './fold.js'
 
@@ -12,7 +12,7 @@ const msg = (over: Partial<MessageLine> & { uuid: string }): MessageLine => ({
   ...over,
 })
 
-const lines = (sessionId: string, ls: (MessageLine | SummaryLine)[]): SourceEvent => ({
+const lines = (sessionId: string, ls: TranscriptLine[]): SourceEvent => ({
   type: 'transcript-lines',
   storeId: 's1',
   transcriptPath: `/store/projects/-x/${sessionId}.jsonl`,
@@ -41,12 +41,12 @@ describe('fold', () => {
   })
 
   it('bills usage once per API message id, into the thread that produced it', () => {
-    const u = { input: 10, output: 100, cacheRead: 1000, cacheWrite5m: 50, cacheWrite1h: 0 }
+    const u = { input: 10, output: 100, cacheRead: 1000, cacheWrite5m: 50, cacheWrite1h: 0, thinking: 8 }
     const state = foldAll(emptyState, [
       lines('a', [
         // one API response written as three content-block lines: bill once
-        msg({ uuid: 'a1', type: 'assistant', model: 'claude-opus-5', messageId: 'm1', usage: u, toolUses: 1 }),
-        msg({ uuid: 'a2', type: 'assistant', model: 'claude-opus-5', messageId: 'm1', usage: u, toolUses: 1 }),
+        msg({ uuid: 'a1', type: 'assistant', model: 'claude-opus-5', messageId: 'm1', usage: u, toolNames: ['Bash'] }),
+        msg({ uuid: 'a2', type: 'assistant', model: 'claude-opus-5', messageId: 'm1', usage: u, toolNames: ['Bash'] }),
         msg({ uuid: 'a3', type: 'assistant', model: 'claude-opus-5', messageId: 'm1', usage: u }),
         // a sidechain response bills into its own thread
         msg({
@@ -56,20 +56,20 @@ describe('fold', () => {
           agentId: 'x1',
           model: 'claude-haiku-4-5',
           messageId: 'm2',
-          usage: { input: 5, output: 7, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0 },
+          usage: { input: 5, output: 7, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0, thinking: 0 },
         }),
       ]),
     ])
     const accum = state.sessions['a']!
     expect(accum.main.usageByModel).toEqual({ 'claude-opus-5': u })
     expect(accum.sidechains[0]!.usageByModel).toEqual({
-      'claude-haiku-4-5': { input: 5, output: 7, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0 },
+      'claude-haiku-4-5': { input: 5, output: 7, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0, thinking: 0 },
     })
     expect(accum.toolCallCount).toBe(2)
   })
 
   it('usage billing is incremental-safe: split appends equal one append', () => {
-    const u = { input: 1, output: 2, cacheRead: 3, cacheWrite5m: 4, cacheWrite1h: 5 }
+    const u = { input: 1, output: 2, cacheRead: 3, cacheWrite5m: 4, cacheWrite1h: 5, thinking: 1 }
     const l1 = msg({ uuid: 'a1', type: 'assistant', model: 'm', messageId: 'id1', usage: u })
     const l2 = msg({ uuid: 'a2', type: 'assistant', model: 'm', messageId: 'id1', usage: u })
     const split = foldAll(emptyState, [lines('a', [l1]), lines('a', [l2])])
@@ -115,6 +115,48 @@ describe('fold', () => {
     expect(before).toEqual(after)
     expect(before.sessions['a']!.agentMeta['x1']).toEqual({ agentType: 'Explore', description: 'probe' })
     expect(before.sessions['a']!.transcriptPath).toBe('/store/projects/-x/a.jsonl')
+  })
+
+  it('collects slug, effort, tier, geo, fast mode, errors, and compactions', () => {
+    const state = foldAll(emptyState, [
+      lines('a', [
+        msg({ uuid: 'u1', slug: 'brave-little-fold', effort: 'high' }),
+        msg({
+          uuid: 'a1',
+          type: 'assistant',
+          model: 'claude-opus-5',
+          messageId: 'm1',
+          usage: { input: 1, output: 2, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0, thinking: 0 },
+          serviceTier: 'standard',
+          speed: 'fast',
+          inferenceGeo: 'us',
+          effort: 'xhigh',
+        }),
+        msg({ uuid: 'a2', type: 'assistant', isApiError: true }),
+        msg({ uuid: 'u2', isCompactSummary: true }),
+        { kind: 'other', type: 'system', subtype: 'compact_boundary' },
+      ]),
+    ])
+    const accum = state.sessions['a']!
+    expect(accum).toMatchObject({
+      slug: 'brave-little-fold',
+      effort: 'xhigh',
+      serviceTier: 'standard',
+      inferenceGeo: 'us',
+      fastMode: true,
+      apiErrorCount: 1,
+      compactSummaries: 1,
+      compactBoundaries: 1,
+    })
+    // per-tool fingerprint
+    const tools = foldAll(emptyState, [
+      lines('b', [
+        msg({ uuid: 'b1', type: 'assistant', toolNames: ['Bash', 'Read'] }),
+        msg({ uuid: 'b2', type: 'assistant', toolNames: ['Bash'] }),
+      ]),
+    ]).sessions['b']!
+    expect(tools.toolCounts).toEqual({ Bash: 2, Read: 1 })
+    expect(tools.toolCallCount).toBe(3)
   })
 
   it('detects fork lineage from copied lines carrying the original session id', () => {

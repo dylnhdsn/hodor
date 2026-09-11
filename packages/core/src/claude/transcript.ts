@@ -22,7 +22,11 @@ const messageLineSchema = z
     version: z.string().optional(),
     isSidechain: z.boolean().optional(),
     isMeta: z.boolean().optional(),
+    isApiErrorMessage: z.boolean().optional(),
+    isCompactSummary: z.boolean().optional(),
     entrypoint: z.string().optional(),
+    slug: z.string().optional(),
+    effort: z.string().optional(),
     agentId: z.string().optional(),
     toolUseID: z.string().optional(),
     sourceToolAssistantUUID: z.string().optional(),
@@ -45,6 +49,13 @@ const messageLineSchema = z
               })
               .passthrough()
               .optional(),
+            output_tokens_details: z
+              .object({ thinking_tokens: z.number().optional() })
+              .passthrough()
+              .optional(),
+            service_tier: z.string().optional(),
+            speed: z.string().optional(),
+            inference_geo: z.string().optional(),
           })
           .passthrough()
           .optional(),
@@ -98,8 +109,20 @@ export interface MessageLine {
   messageId?: string
   /** Assistant lines: token usage for the whole API response. */
   usage?: UsageTotals
-  /** Number of tool_use blocks on this line (each block appears once). */
-  toolUses?: number
+  /** Names of tool_use blocks on this line (each block appears once). */
+  toolNames?: string[]
+  /** The CLI's human-readable session slug, e.g. "structured-munching-map". */
+  slug?: string
+  /** Effort level in force for this turn (low…max). */
+  effort?: string
+  /** From usage: service tier, speed (fast mode), inference geography. */
+  serviceTier?: string
+  speed?: string
+  inferenceGeo?: string
+  /** Synthetic assistant line recording an API error. */
+  isApiError?: boolean
+  /** The post-compaction summary turn — machine text, never a title. */
+  isCompactSummary?: boolean
 }
 
 export interface SummaryLine {
@@ -111,6 +134,9 @@ export interface SummaryLine {
 export interface OtherLine {
   kind: 'other'
   type: string
+  /** Operational system lines: e.g. "compact_boundary". Kept even for
+   * uuid-less lines, which is where compaction boundaries live. */
+  subtype?: string
 }
 
 export interface InvalidLine {
@@ -193,12 +219,19 @@ export function parseTranscriptLine(raw: string): TranscriptLine {
     return { kind: 'invalid', error: 'missing type' }
   }
 
+  const subtypeOf = (): string | undefined => {
+    const subtype = (json as { subtype?: unknown }).subtype
+    return typeof subtype === 'string' ? subtype : undefined
+  }
+
   if (MESSAGE_TYPES.has(type)) {
     const parsed = messageLineSchema.safeParse(json)
     if (!parsed.success) {
       // A message-typed line without a uuid (or otherwise malformed) is
-      // operational noise, not a message.
-      return { kind: 'other', type }
+      // operational noise, not a message — but its subtype can still carry
+      // signal (compaction boundaries are uuid-less system lines).
+      const subtype = subtypeOf()
+      return { kind: 'other', type, ...(subtype !== undefined ? { subtype } : {}) }
     }
     const d = parsed.data
     const line: MessageLine = {
@@ -216,7 +249,11 @@ export function parseTranscriptLine(raw: string): TranscriptLine {
     if (d.version !== undefined) line.version = d.version
     if (d.entrypoint !== undefined) line.entrypoint = d.entrypoint
     if (d.agentId !== undefined) line.agentId = d.agentId
-    if (type === 'user' && !line.isMeta) {
+    if (d.slug !== undefined) line.slug = d.slug
+    if (d.effort !== undefined) line.effort = d.effort
+    if (d.isApiErrorMessage === true) line.isApiError = true
+    if (d.isCompactSummary === true) line.isCompactSummary = true
+    if (type === 'user' && !line.isMeta && line.isCompactSummary !== true) {
       const content = classifyPromptContent(d.message?.content)
       if (content?.kind === 'prompt') line.promptText = content.text
       if (content?.kind === 'command') line.commandName = content.name
@@ -240,13 +277,20 @@ export function parseTranscriptLine(raw: string): TranscriptLine {
           cacheRead: u.cache_read_input_tokens ?? 0,
           cacheWrite5m: write5m ?? u.cache_creation_input_tokens ?? 0,
           cacheWrite1h: write1h ?? 0,
+          thinking: u.output_tokens_details?.thinking_tokens ?? 0,
+        }
+        if (u.service_tier !== undefined) line.serviceTier = u.service_tier
+        if (u.speed !== undefined) line.speed = u.speed
+        if (u.inference_geo !== undefined && u.inference_geo !== 'not_available') {
+          line.inferenceGeo = u.inference_geo
         }
       }
       if (Array.isArray(d.message?.content)) {
-        const toolUses = d.message.content.filter(
-          (block) => (block as { type?: unknown } | null)?.type === 'tool_use',
-        ).length
-        if (toolUses > 0) line.toolUses = toolUses
+        const names = d.message.content
+          .map((block) => (block as { type?: unknown; name?: unknown } | null) ?? {})
+          .filter((block) => block.type === 'tool_use' && typeof block.name === 'string')
+          .map((block) => block.name as string)
+        if (names.length > 0) line.toolNames = names
       }
     }
     if (d.toolUseID !== undefined && d.sourceToolAssistantUUID !== undefined) {
@@ -255,7 +299,8 @@ export function parseTranscriptLine(raw: string): TranscriptLine {
     return line
   }
 
-  return { kind: 'other', type }
+  const subtype = subtypeOf()
+  return { kind: 'other', type, ...(subtype !== undefined ? { subtype } : {}) }
 }
 
 /** Parse a whole transcript body; skips blank lines, never throws. */

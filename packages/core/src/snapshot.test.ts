@@ -466,8 +466,8 @@ describe('buildSnapshot', () => {
   })
 
   it('sums usage across threads and prices it, honoring config overrides', () => {
-    const mainUsage = { input: 100, output: 1_000_000, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0 }
-    const scUsage = { input: 0, output: 1_000_000, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0 }
+    const mainUsage = { input: 100, output: 1_000_000, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0, thinking: 250_000 }
+    const scUsage = { input: 0, output: 1_000_000, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0, thinking: 0 }
     const events: SourceEvent[] = [
       { type: 'store-discovered', store },
       {
@@ -488,7 +488,7 @@ describe('buildSnapshot', () => {
             model: 'claude-opus-5',
             messageId: 'm1',
             usage: mainUsage,
-            toolUses: 3,
+            toolNames: ['Bash', 'Read', 'Bash'],
           },
           {
             kind: 'message',

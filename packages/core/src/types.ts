@@ -58,6 +58,21 @@ export interface Session {
   lastActivityAt?: Timestamp
   cliVersion?: string
   counts: { user: number; assistant: number; sidechains: number; toolCalls: number }
+  /** tool_use blocks by tool name — the session's tool fingerprint. */
+  toolCounts?: Record<string, number>
+  /** The CLI's human-readable session slug, e.g. "structured-munching-map". */
+  slug?: string
+  /** Effort level last in force (low…max). */
+  effort?: string
+  /** Service tier / inference geography last observed on usage. */
+  serviceTier?: string
+  inferenceGeo?: string
+  /** True when any response ran at fast-mode speed (priced differently). */
+  fastMode?: boolean
+  /** Synthetic assistant lines recording API errors. */
+  apiErrors?: number
+  /** How many times this session's context was compacted. */
+  compactions?: number
   /** Token usage by model, summed across all threads. */
   usage?: Record<string, UsageTotals>
   /** Estimated USD from usage × the pricing table. */

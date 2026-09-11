@@ -123,6 +123,17 @@ function toSession(
   if (cwd !== undefined) session.cwd = cwd
   if (accum.forkedFrom !== undefined) session.forkedFrom = accum.forkedFrom
   if (accum.gitBranch !== undefined) session.gitBranch = accum.gitBranch
+  if (Object.keys(accum.toolCounts).length > 0) session.toolCounts = { ...accum.toolCounts }
+  if (accum.slug !== undefined) session.slug = accum.slug
+  if (accum.effort !== undefined) session.effort = accum.effort
+  if (accum.serviceTier !== undefined) session.serviceTier = accum.serviceTier
+  if (accum.inferenceGeo !== undefined) session.inferenceGeo = accum.inferenceGeo
+  if (accum.fastMode === true) session.fastMode = true
+  if (accum.apiErrorCount > 0) session.apiErrors = accum.apiErrorCount
+  // One compaction usually writes both a boundary line and a summary turn;
+  // max (not sum) also tolerates stores that only carry one marker kind.
+  const compactions = Math.max(accum.compactBoundaries, accum.compactSummaries)
+  if (compactions > 0) session.compactions = compactions
   if (accum.summary !== undefined) session.summary = accum.summary
   if (accum.promptPreview !== undefined) session.promptPreview = accum.promptPreview
   if (accum.firstCommand !== undefined) session.firstCommand = accum.firstCommand

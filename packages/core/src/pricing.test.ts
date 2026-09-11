@@ -73,7 +73,7 @@ describe('usage arithmetic', () => {
   it('adds and totals', () => {
     const into = usage({ input: 1, output: 2 })
     addUsage(into, usage({ input: 10, cacheRead: 5, cacheWrite5m: 3, cacheWrite1h: 4, output: 1 }))
-    expect(into).toEqual({ input: 11, output: 3, cacheRead: 5, cacheWrite5m: 3, cacheWrite1h: 4 })
+    expect(into).toEqual({ input: 11, output: 3, cacheRead: 5, cacheWrite5m: 3, cacheWrite1h: 4, thinking: 0 })
     expect(totalTokens(into)).toBe(26)
   })
 })

@@ -599,6 +599,7 @@ describe('stats', () => {
       topSubagentSessions: [],
       usage: { totalUsd: 0, subagentUsd: 0, unpriced: [], byModel: {} },
       topCostSessions: [],
+      tools: {},
       entrypointsVisible: { cli: 1, '(none)': 1 },
       entrypointsHidden: { sdk: 1, '(none)': 1 },
       hiddenByRule: { 'dot-segment:.peri': 1, 'prefix:/tmp': 1 },
