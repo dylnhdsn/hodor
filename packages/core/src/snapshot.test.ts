@@ -465,6 +465,48 @@ describe('buildSnapshot', () => {
     expect(all.sessions.find((s) => s.id === 'bbb')!.hiddenBy).toBeUndefined()
   })
 
+  it('carries subagent meta onto sidechain threads', () => {
+    const events: SourceEvent[] = [
+      ...baseEvents,
+      {
+        type: 'transcript-lines',
+        storeId: 's1',
+        transcriptPath: '/home/.claude/projects/-x/aaa.jsonl',
+        sessionId: 'aaa',
+        lines: [
+          {
+            kind: 'message',
+            type: 'user',
+            uuid: 'sc1',
+            parentUuid: null,
+            isSidechain: true,
+            isMeta: false,
+            agentId: 'x1',
+            timestamp: '2026-06-01T11:59:40Z',
+          },
+        ],
+      },
+      {
+        type: 'subagent-meta',
+        storeId: 's1',
+        sessionId: 'aaa',
+        transcriptPath: '/home/.claude/projects/-x/aaa.jsonl',
+        agentId: 'x1',
+        agentType: 'Explore',
+        description: 'find the flag handling',
+      },
+    ]
+    const snapshot = buildSnapshot(foldAll(emptyState, events), { now: NOW })
+    const session = snapshot.sessions.find((s) => s.id === 'aaa')!
+    expect(session.counts.sidechains).toBe(1)
+    expect(session.threads.find((t) => t.kind === 'sidechain')).toMatchObject({
+      agentId: 'x1',
+      agentType: 'Explore',
+      description: 'find the flag handling',
+      messageCount: 1,
+    })
+  })
+
   it('hides sessions whose every claim is from an archived project', () => {
     const noRules = {
       pathPrefixes: [],

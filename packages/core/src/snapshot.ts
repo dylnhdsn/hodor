@@ -33,7 +33,12 @@ export interface SnapshotOptions {
 
 const DEFAULT_ACTIVE_WINDOW_MS = 120_000
 
-function toThread(id: string, kind: Thread['kind'], accum: ThreadAccum): Thread {
+function toThread(
+  id: string,
+  kind: Thread['kind'],
+  accum: ThreadAccum,
+  agentMeta?: { agentType?: string; description?: string },
+): Thread {
   const thread: Thread = {
     id,
     kind,
@@ -42,6 +47,9 @@ function toThread(id: string, kind: Thread['kind'], accum: ThreadAccum): Thread 
     messageCount: accum.messageCount,
   }
   if (accum.spawnedBy !== undefined) thread.spawnedBy = accum.spawnedBy
+  if (accum.agentId !== undefined) thread.agentId = accum.agentId
+  if (agentMeta?.agentType !== undefined) thread.agentType = agentMeta.agentType
+  if (agentMeta?.description !== undefined) thread.description = agentMeta.description
   return thread
 }
 
@@ -58,7 +66,16 @@ function inferRuntime(accum: SessionAccum, now: Date, windowMs: number): Runtime
 function toSession(accum: SessionAccum, runtime: Runtime): Session {
   const threads: Thread[] = []
   if (accum.main.messageCount > 0) threads.push(toThread(`${accum.id}:main`, 'main', accum.main))
-  accum.sidechains.forEach((sc, i) => threads.push(toThread(`${accum.id}:sc${i}`, 'sidechain', sc)))
+  accum.sidechains.forEach((sc, i) =>
+    threads.push(
+      toThread(
+        `${accum.id}:sc${i}`,
+        'sidechain',
+        sc,
+        sc.agentId !== undefined ? accum.agentMeta[sc.agentId] : undefined,
+      ),
+    ),
+  )
 
   const session: Session = {
     id: accum.id,

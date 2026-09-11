@@ -241,6 +241,47 @@ describe('startServer', () => {
     expect((await fetch(`${server.url}/api/transcript?id=nope`)).status).toBe(404)
   })
 
+  it('merges modern subagent transcripts into the tail, in time order', async () => {
+    const { deps, fs } = serverDeps()
+    fs.writeFile('/home/u/.claude/projects/-r/aaaa.jsonl', line('u1', '2026-06-01T10:00:00Z', '/r', 'go'))
+    fs.writeFile(
+      '/home/u/.claude/projects/-r/aaaa/subagents/agent-x1.jsonl',
+      JSON.stringify({
+        type: 'user',
+        uuid: 's1',
+        parentUuid: null,
+        isSidechain: true,
+        agentId: 'x1',
+        timestamp: '2026-06-01T10:00:05Z',
+        message: { role: 'user', content: 'probe the thing' },
+      }) + '\n',
+    )
+    fs.writeFile(
+      '/home/u/.claude/projects/-r/aaaa/subagents/agent-x1.meta.json',
+      '{"agentType":"Explore","description":"probe"}',
+    )
+    const server = await start(fs, deps)
+
+    // the run shows up as a sidechain thread with its meta…
+    const snapshot = (await (await fetch(`${server.url}/api/snapshot`)).json()) as Snapshot
+    const session = snapshot.sessions.find((s) => s.id === 'aaaa')!
+    expect(session.counts.sidechains).toBe(1)
+    expect(session.threads.find((t) => t.kind === 'sidechain')).toMatchObject({
+      agentId: 'x1',
+      agentType: 'Explore',
+      description: 'probe',
+    })
+
+    // …and its turns merge into the conversation tail in time order
+    const { messages } = (await (await fetch(`${server.url}/api/transcript?id=aaaa`)).json()) as {
+      messages: Array<{ text: string; isSidechain: boolean }>
+    }
+    expect(messages.map((m) => [m.text, m.isSidechain])).toEqual([
+      ['go', false],
+      ['probe the thing', true],
+    ])
+  })
+
   it('previews which sessions a matcher would claim', async () => {
     const { deps, fs } = serverDeps()
     fs.writeFile('/home/u/.claude/projects/-r/aaaa.jsonl', line('u1', '2026-06-01T11:00:00Z', '/r/app'))

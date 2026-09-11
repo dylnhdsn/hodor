@@ -20,6 +20,17 @@ export type SourceEvent =
       lines: TranscriptLine[]
     }
   | { type: 'transcript-removed'; storeId: StoreId; transcriptPath: string }
+  | {
+      /** Sidecar metadata for one subagent run (agent-<id>.meta.json). */
+      type: 'subagent-meta'
+      storeId: StoreId
+      sessionId: SessionId
+      /** The parent session's MAIN transcript, for order-independent folds. */
+      transcriptPath: string
+      agentId: string
+      agentType?: string
+      description?: string
+    }
   | { type: 'git-context-resolved'; storeId: StoreId; cwd: string; context: GitContext | null }
   | { type: 'runtime-changed'; sessionId: SessionId; runtime: Runtime }
   | { type: 'meta-changed'; meta: SessionMeta }

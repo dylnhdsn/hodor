@@ -65,6 +65,12 @@ export interface Thread {
   kind: 'main' | 'sidechain'
   /** Sidechains only: the tool call in the parent that spawned this run. */
   spawnedBy?: { toolUseId: string; assistantUuid: string }
+  /** Modern subagent runs: id stamped on their lines / sidecar meta. */
+  agentId?: string
+  /** From agent-<id>.meta.json: e.g. "Explore", "general-purpose". */
+  agentType?: string
+  /** From agent-<id>.meta.json: the run's short task description. */
+  description?: string
   firstTs: Timestamp
   lastTs: Timestamp
   messageCount: number

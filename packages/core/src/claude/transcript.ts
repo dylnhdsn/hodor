@@ -22,6 +22,7 @@ const messageLineSchema = z
     isSidechain: z.boolean().optional(),
     isMeta: z.boolean().optional(),
     entrypoint: z.string().optional(),
+    agentId: z.string().optional(),
     toolUseID: z.string().optional(),
     sourceToolAssistantUUID: z.string().optional(),
     message: z
@@ -62,6 +63,8 @@ export interface MessageLine {
   commandName?: string
   /** For assistant messages: first text block, collapsed and truncated. */
   textPreview?: string
+  /** Modern subagent transcripts stamp every line with the run's agent id. */
+  agentId?: string
   spawnedBy?: { toolUseId: string; assistantUuid: string }
 }
 
@@ -178,6 +181,7 @@ export function parseTranscriptLine(raw: string): TranscriptLine {
     if (d.gitBranch !== undefined) line.gitBranch = d.gitBranch
     if (d.version !== undefined) line.version = d.version
     if (d.entrypoint !== undefined) line.entrypoint = d.entrypoint
+    if (d.agentId !== undefined) line.agentId = d.agentId
     if (type === 'user' && !line.isMeta) {
       const content = classifyPromptContent(d.message?.content)
       if (content?.kind === 'prompt') line.promptText = content.text

@@ -592,6 +592,8 @@ describe('stats', () => {
       total: 4,
       visible: 2,
       hidden: 2,
+      sessionsWithSubagents: 0,
+      subagentRuns: 0,
       entrypointsVisible: { cli: 1, '(none)': 1 },
       entrypointsHidden: { sdk: 1, '(none)': 1 },
       hiddenByRule: { 'dot-segment:.peri': 1, 'prefix:/tmp': 1 },

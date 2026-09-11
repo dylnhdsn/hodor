@@ -40,6 +40,45 @@ describe('fold', () => {
     expect(accum.main.messageCount).toBe(3)
   })
 
+  it('groups modern subagent lines into one thread per agentId', () => {
+    // Two agent files feed the same session; their line events can
+    // interleave across polls — agentId keeps each run one thread.
+    const state = foldAll(emptyState, [
+      lines('a', [
+        msg({ uuid: 's1', isSidechain: true, agentId: 'x1', timestamp: '2026-01-01T10:00:00Z' }),
+        msg({ uuid: 't1', isSidechain: true, agentId: 'x2', timestamp: '2026-01-01T10:00:01Z' }),
+      ]),
+      lines('a', [
+        msg({ uuid: 's2', parentUuid: 's1', isSidechain: true, agentId: 'x1', timestamp: '2026-01-01T10:00:02Z' }),
+        msg({ uuid: 't2', parentUuid: 't1', isSidechain: true, agentId: 'x2', timestamp: '2026-01-01T10:00:03Z' }),
+      ]),
+    ])
+    const accum = state.sessions['a']!
+    expect(accum.sidechains).toHaveLength(2)
+    expect(accum.sidechains.map((t) => ({ agentId: t.agentId, n: t.messageCount }))).toEqual([
+      { agentId: 'x1', n: 2 },
+      { agentId: 'x2', n: 2 },
+    ])
+  })
+
+  it('folds subagent meta whether it arrives before or after the lines', () => {
+    const metaEvent: SourceEvent = {
+      type: 'subagent-meta',
+      storeId: 's1',
+      sessionId: 'a',
+      transcriptPath: '/store/projects/-x/a.jsonl',
+      agentId: 'x1',
+      agentType: 'Explore',
+      description: 'probe',
+    }
+    const linesEvent = lines('a', [msg({ uuid: 's1', isSidechain: true, agentId: 'x1' })])
+    const before = foldAll(emptyState, [metaEvent, linesEvent])
+    const after = foldAll(emptyState, [linesEvent, metaEvent])
+    expect(before).toEqual(after)
+    expect(before.sessions['a']!.agentMeta['x1']).toEqual({ agentType: 'Explore', description: 'probe' })
+    expect(before.sessions['a']!.transcriptPath).toBe('/store/projects/-x/a.jsonl')
+  })
+
   it('detects fork lineage from copied lines carrying the original session id', () => {
     const state = foldAll(emptyState, [
       lines('fork', [

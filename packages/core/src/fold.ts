@@ -16,6 +16,8 @@ export interface ThreadAccum {
   lastTs?: string
   messageCount: number
   spawnedBy?: { toolUseId: string; assistantUuid: string }
+  /** Modern subagent runs: the agent id stamped on their lines. */
+  agentId?: string
 }
 
 export interface SessionAccum {
@@ -46,6 +48,10 @@ export interface SessionAccum {
   sidechains: ThreadAccum[]
   /** message uuid → index into sidechains, for incremental chain-following. */
   uuidToSidechain: Record<string, number>
+  /** agent id → index into sidechains (modern per-file subagent runs). */
+  agentToSidechain: Record<string, number>
+  /** agent id → sidecar metadata from agent-<id>.meta.json. */
+  agentMeta: Record<string, { agentType?: string; description?: string }>
 }
 
 export interface CoreState {
@@ -89,6 +95,8 @@ function newAccum(id: SessionId, storeId: StoreId, transcriptPath: string): Sess
     main: { messageCount: 0 },
     sidechains: [],
     uuidToSidechain: {},
+    agentToSidechain: {},
+    agentMeta: {},
   }
 }
 
@@ -119,13 +127,22 @@ function applyMessage(accum: SessionAccum, line: MessageLine): void {
   }
 
   if (line.isSidechain) {
-    let index = line.parentUuid !== null ? accum.uuidToSidechain[line.parentUuid] : undefined
+    // Modern per-file subagent runs stamp every line with an agentId — one
+    // run per id. Legacy in-file sidechains group by parent-uuid chains.
+    let index =
+      line.agentId !== undefined
+        ? accum.agentToSidechain[line.agentId]
+        : line.parentUuid !== null
+          ? accum.uuidToSidechain[line.parentUuid]
+          : undefined
     if (index === undefined) {
       const thread: ThreadAccum = { messageCount: 0 }
       if (line.spawnedBy !== undefined) thread.spawnedBy = line.spawnedBy
+      if (line.agentId !== undefined) thread.agentId = line.agentId
       accum.sidechains.push(thread)
       index = accum.sidechains.length - 1
     }
+    if (line.agentId !== undefined) accum.agentToSidechain[line.agentId] = index
     accum.uuidToSidechain[line.uuid] = index
     touchThread(accum.sidechains[index]!, ts)
     return
@@ -155,6 +172,8 @@ function cloneAccum(accum: SessionAccum): SessionAccum {
     main: { ...accum.main },
     sidechains: accum.sidechains.map((t) => ({ ...t })),
     uuidToSidechain: { ...accum.uuidToSidechain },
+    agentToSidechain: { ...accum.agentToSidechain },
+    agentMeta: { ...accum.agentMeta },
   }
 }
 
@@ -181,6 +200,18 @@ export function fold(state: CoreState, event: SourceEvent): CoreState {
         if (accum.transcriptPath !== event.transcriptPath) sessions[id] = accum
       }
       return { ...state, sessions }
+    }
+
+    case 'subagent-meta': {
+      const existing = state.sessions[event.sessionId]
+      const accum = existing
+        ? cloneAccum(existing)
+        : newAccum(event.sessionId, event.storeId, event.transcriptPath)
+      accum.agentMeta[event.agentId] = {
+        ...(event.agentType !== undefined ? { agentType: event.agentType } : {}),
+        ...(event.description !== undefined ? { description: event.description } : {}),
+      }
+      return { ...state, sessions: { ...state.sessions, [event.sessionId]: accum } }
     }
 
     case 'git-context-resolved':

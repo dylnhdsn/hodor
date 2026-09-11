@@ -189,6 +189,8 @@ export interface Stats {
   total: number
   visible: number
   hidden: number
+  sessionsWithSubagents: number
+  subagentRuns: number
   entrypointsVisible: Record<string, number>
   entrypointsHidden: Record<string, number>
   hiddenByRule: Record<string, number>
@@ -199,6 +201,8 @@ export function computeStats(snapshot: Snapshot): Stats {
     total: snapshot.sessions.length,
     visible: 0,
     hidden: 0,
+    sessionsWithSubagents: 0,
+    subagentRuns: 0,
     entrypointsVisible: {},
     entrypointsHidden: {},
     hiddenByRule: {},
@@ -213,6 +217,10 @@ export function computeStats(snapshot: Snapshot): Stats {
       bump(stats.hiddenByRule, session.hiddenBy!)
     } else {
       stats.visible += 1
+    }
+    if (session.counts.sidechains > 0) {
+      stats.sessionsWithSubagents += 1
+      stats.subagentRuns += session.counts.sidechains
     }
     const target = isHidden ? stats.entrypointsHidden : stats.entrypointsVisible
     const keys = session.entrypoints.length > 0 ? session.entrypoints : ['(none)']
@@ -231,6 +239,7 @@ function formatHistogram(title: string, record: Record<string, number>): string[
 export function formatStats(stats: Stats): string {
   return [
     `sessions: ${stats.total} (${stats.visible} visible, ${stats.hidden} hidden)`,
+    `subagent runs: ${stats.subagentRuns} across ${stats.sessionsWithSubagents} sessions`,
     ...formatHistogram('entrypoints (visible sessions)', stats.entrypointsVisible),
     ...formatHistogram('entrypoints (hidden sessions)', stats.entrypointsHidden),
     ...formatHistogram('hidden by rule', stats.hiddenByRule),

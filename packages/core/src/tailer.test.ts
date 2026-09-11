@@ -47,6 +47,57 @@ describe('StoreTailer', () => {
     expect(events[1]).toHaveProperty('lines.length', 2)
   })
 
+  it('discovers modern subagent transcripts into the parent session', async () => {
+    const fs = new MemFs()
+    fs.writeFile(`${bucket}/aaa.jsonl`, line('u1'))
+    fs.writeFile(
+      `${bucket}/aaa/subagents/agent-x1.jsonl`,
+      `{"type":"user","uuid":"s1","parentUuid":null,"isSidechain":true,"agentId":"x1"}\n`,
+    )
+    fs.writeFile(
+      `${bucket}/aaa/subagents/agent-x1.meta.json`,
+      `{"agentType":"Explore","description":"probe the fixture","toolUseId":"t1"}`,
+    )
+    // non-transcript clutter in the session dir is ignored
+    fs.writeFile(`${bucket}/aaa/ccr-tip.json`, `{}`)
+
+    const events = await scanStore(fs, store)
+    const meta = events.find((e) => e.type === 'subagent-meta')
+    expect(meta).toEqual({
+      type: 'subagent-meta',
+      storeId: 's1',
+      sessionId: 'aaa',
+      transcriptPath: `${bucket}/aaa.jsonl`,
+      agentId: 'x1',
+      agentType: 'Explore',
+      description: 'probe the fixture',
+    })
+    const lineEvents = events.filter((e) => e.type === 'transcript-lines')
+    // both files feed session 'aaa', both carrying the MAIN transcript path
+    expect(lineEvents).toHaveLength(2)
+    for (const e of lineEvents) {
+      expect(e).toMatchObject({ sessionId: 'aaa', transcriptPath: `${bucket}/aaa.jsonl` })
+    }
+  })
+
+  it('tails subagent files incrementally and never removes the parent on their removal', async () => {
+    const fs = new MemFs()
+    fs.writeFile(`${bucket}/aaa.jsonl`, line('u1'))
+    const agent = `${bucket}/aaa/subagents/agent-x1.jsonl`
+    fs.writeFile(agent, `{"type":"user","uuid":"s1","parentUuid":null,"isSidechain":true,"agentId":"x1"}\n`)
+    const tailer = new StoreTailer(fs, store)
+    await tailer.poll()
+
+    fs.appendFile(agent, `{"type":"assistant","uuid":"s2","parentUuid":"s1","isSidechain":true,"agentId":"x1"}\n`)
+    const appended = await tailer.poll()
+    expect(appended).toHaveLength(1)
+    expect(appended[0]).toMatchObject({ type: 'transcript-lines', sessionId: 'aaa', lines: [{ uuid: 's2' }] })
+
+    fs.removeFile(agent)
+    const afterRemoval = await tailer.poll()
+    expect(afterRemoval.filter((e) => e.type === 'transcript-removed')).toEqual([])
+  })
+
   it('subsequent polls emit only appended lines', async () => {
     const fs = new MemFs()
     fs.writeFile(`${bucket}/aaa.jsonl`, line('u1'))

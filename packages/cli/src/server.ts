@@ -20,6 +20,7 @@ import {
   type SessionOp,
   type Snapshot,
 } from '@hodor/core'
+import { flavorOfPath, pathOps } from '@hodor/core'
 import type { CliDeps } from './main.js'
 import { materializeTarget } from './materialize.js'
 import { resolveStores, storeFs } from './stores.js'
@@ -202,22 +203,38 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
     const session = snapshot?.sessions.find((s) => s.id === id)
     if (session === undefined) return sendJson(res, 404, { error: `no session "${id}"` })
 
-    let content: string | undefined
-    try {
-      content = await deps.fs.readFile(session.transcriptPath)
-    } catch {
-      content = undefined
+    // The main transcript plus any modern per-file subagent runs beside it
+    // (<bucket>/<sessionId>/subagents/agent-*.jsonl), merged by timestamp.
+    const paths = [session.transcriptPath]
+    if (session.transcriptPath.endsWith('.jsonl')) {
+      const sessionDir = session.transcriptPath.slice(0, -'.jsonl'.length)
+      const p = pathOps(flavorOfPath(sessionDir))
+      const subagentsDir = p.join(sessionDir, 'subagents')
+      const entries = await deps.fs.listDir(subagentsDir).catch(() => [])
+      for (const entry of entries) {
+        if (entry.startsWith('agent-') && entry.endsWith('.jsonl')) {
+          paths.push(p.join(subagentsDir, entry))
+        }
+      }
     }
-    if (content === undefined) return sendJson(res, 200, { messages: [] })
-    const messages = parseTranscript(content)
-      .filter((line): line is MessageLine => line.kind === 'message')
-      .map((line) => ({
-        type: line.type,
-        ...(line.timestamp !== undefined ? { timestamp: line.timestamp } : {}),
-        isSidechain: line.isSidechain,
-        text: line.promptText ?? line.commandName ?? line.textPreview,
-      }))
-      .filter((entry) => entry.text !== undefined)
+
+    const messages: Array<{ type: string; timestamp?: string; isSidechain: boolean; text?: string }> = []
+    for (const path of paths) {
+      const content = await deps.fs.readFile(path).catch(() => undefined)
+      if (content === undefined) continue
+      for (const line of parseTranscript(content)) {
+        if (line.kind !== 'message') continue
+        const text = line.promptText ?? line.commandName ?? line.textPreview
+        if (text === undefined) continue
+        messages.push({
+          type: line.type,
+          ...(line.timestamp !== undefined ? { timestamp: line.timestamp } : {}),
+          isSidechain: line.isSidechain,
+          text,
+        })
+      }
+    }
+    messages.sort((a, b) => (a.timestamp ?? '').localeCompare(b.timestamp ?? ''))
     return sendJson(res, 200, { messages: messages.slice(-limit) })
   }
 

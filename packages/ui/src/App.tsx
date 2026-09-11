@@ -660,9 +660,16 @@ function DetailPane(props: {
       {sidechains.length > 0 && (
         <Section title={`subagents (${sidechains.length})`}>
           {sidechains.map((t) => (
-            <div key={t.id} className="flex items-center justify-between py-0.5 text-zinc-400">
-              <span>⑂ {t.messageCount} messages</span>
-              <span className="text-zinc-600">{formatAge(nowMs, t.lastTs)}</span>
+            <div key={t.id} className="py-0.5">
+              <div className="flex items-center justify-between text-zinc-400">
+                <span>
+                  ⑂ {t.agentType ?? 'agent'} · {t.messageCount} message{t.messageCount === 1 ? '' : 's'}
+                </span>
+                <span className="text-zinc-600">{formatAge(nowMs, t.lastTs)}</span>
+              </div>
+              {t.description !== undefined && (
+                <div className="truncate pl-4 text-zinc-600">{t.description}</div>
+              )}
             </div>
           ))}
         </Section>
