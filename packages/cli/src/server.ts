@@ -8,6 +8,7 @@ import {
   defaultHideRules,
   emptyState,
   enrichGitContexts,
+  enrichMemoryFiles,
   foldAll,
   mergeHideRules,
   parseTranscript,
@@ -100,6 +101,7 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
       if (events.length > 0) baseState = foldAll(baseState, events)
     }
     baseState = foldAll(baseState, await enrichGitContexts(baseState, fsFor))
+    baseState = foldAll(baseState, await enrichMemoryFiles(baseState, fsFor))
     files = await loadUserFiles(deps)
 
     let presented = foldAll(baseState, configEventsOf(files))

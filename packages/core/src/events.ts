@@ -1,6 +1,7 @@
 import type { TranscriptLine } from './claude/transcript.js'
 import type { HodorConfig } from './config.js'
 import type { GitContext } from './git.js'
+import type { MemoryFileInfo } from './memory.js'
 import type { UserPlane } from './userplane.js'
 import type { Runtime, SessionId, SessionMeta, SessionStore, StoreId } from './types.js'
 
@@ -32,6 +33,14 @@ export type SourceEvent =
       description?: string
     }
   | { type: 'git-context-resolved'; storeId: StoreId; cwd: string; context: GitContext | null }
+  | {
+      /** Memory files probed at one root; empty files = scanned, none found. */
+      type: 'memory-scanned'
+      storeId: StoreId
+      root: string
+      userLevel: boolean
+      files: MemoryFileInfo[]
+    }
   | { type: 'runtime-changed'; sessionId: SessionId; runtime: Runtime }
   | { type: 'meta-changed'; meta: SessionMeta }
   | { type: 'config-changed'; config: HodorConfig }

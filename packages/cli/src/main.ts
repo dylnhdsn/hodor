@@ -9,6 +9,7 @@ import {
   emptyUsage,
   driveMountTranslator,
   enrichGitContexts,
+  enrichMemoryFiles,
   foldAll,
   mergeHideRules,
   mergePricing,
@@ -189,7 +190,9 @@ async function enrich(
   state: CoreState,
   fsFor: (storeId: StoreId) => FileSystem,
 ): Promise<CoreState> {
-  return foldAll(state, await enrichGitContexts(state, fsFor))
+  // Memory probing keys off resolved git roots, so it runs after git.
+  const withGit = foldAll(state, await enrichGitContexts(state, fsFor))
+  return foldAll(withGit, await enrichMemoryFiles(withGit, fsFor))
 }
 
 export interface Stats {
@@ -220,6 +223,8 @@ export interface Stats {
   topCostSessions: Array<{ id: string; usd: number; hiddenBy?: string; title: string }>
   /** tool_use blocks by tool name, across every session. */
   tools: Record<string, number>
+  /** Memory files found on disk (CLAUDE.md and friends). */
+  memory: { files: number; roots: number; totalBytes: number; userMemory: boolean }
   entrypointsVisible: Record<string, number>
   entrypointsHidden: Record<string, number>
   hiddenByRule: Record<string, number>
@@ -241,6 +246,7 @@ export function computeStats(
     usage: { totalUsd: 0, subagentUsd: 0, unpriced: [], byModel: {} },
     topCostSessions: [],
     tools: {},
+    memory: { files: 0, roots: 0, totalBytes: 0, userMemory: false },
     entrypointsVisible: {},
     entrypointsHidden: {},
     hiddenByRule: {},
@@ -298,6 +304,14 @@ export function computeStats(
     const keys = session.entrypoints.length > 0 ? session.entrypoints : ['(none)']
     for (const key of keys) bump(target, key)
   }
+  const memoryRoots = new Set<string>()
+  for (const file of snapshot.memoryFiles) {
+    stats.memory.files += 1
+    stats.memory.totalBytes += file.bytes
+    if (file.userLevel) stats.memory.userMemory = true
+    else memoryRoots.add(file.root)
+  }
+  stats.memory.roots = memoryRoots.size
   for (const [model, entry] of Object.entries(stats.usage.byModel)) {
     entry.usd = costOfUsage({ [model]: entry }, pricing).usd
   }
@@ -362,6 +376,11 @@ export function formatStats(stats: Stats): string {
       lines.push(`  ${s.id.slice(0, 8)}  ${String(s.runs).padStart(3)}  ${state}  ${s.title.slice(0, 60)}`)
     }
   }
+  if (stats.memory.files > 0) {
+    lines.push(
+      `memory files: ${stats.memory.files} across ${stats.memory.roots} project roots, ${(stats.memory.totalBytes / 1024).toFixed(1)}k total${stats.memory.userMemory ? ' (+ user memory)' : ''}`,
+    )
+  }
   lines.push(
     ...formatHistogram('tool calls', stats.tools),
     ...formatHistogram('entrypoints (visible sessions)', stats.entrypointsVisible),
@@ -393,12 +412,13 @@ async function scan(deps: CliDeps, flags: Flags): Promise<number> {
 async function statsCommand(deps: CliDeps, flags: Flags): Promise<number> {
   const files = await loadUserFiles(deps)
   const config = files.config
+  const stores = await resolveStores(deps, { roots: flags.roots, noDiscover: flags.noDiscover }, config)
   let state = foldAll(emptyState, configEvents(files))
-  for (const store of await resolveStores(deps, { roots: flags.roots, noDiscover: flags.noDiscover }, config)) {
+  for (const store of stores) {
     state = foldAll(state, await scanStore(deps.fs, store))
   }
-  // Stats never need the git enricher — visibility and entrypoints are
-  // transcript-derived, so skip the expensive part.
+  // Enrichment earns its keep here now: memory files hang off git roots.
+  state = await enrich(state, storeFs(deps, stores))
   const stats = computeStats(
     buildSnapshot(state, snapshotOptions(deps, flags, config)),
     mergePricing(config.pricing),

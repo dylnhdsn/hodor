@@ -28,6 +28,9 @@ export const formatTokens = (n: number): string =>
 export const formatUsd = (usd: number): string =>
   usd >= 100 ? `$${usd.toFixed(0)}` : `$${usd.toFixed(2)}`
 
+export const formatBytes = (n: number): string =>
+  n >= 1_048_576 ? `${(n / 1_048_576).toFixed(1)}M` : n >= 1024 ? `${(n / 1024).toFixed(1)}k` : `${n}B`
+
 /**
  * One rail, one kind of thing (docs/brainstorm/010): the user sees
  * "projects", never auto vs. custom. kind exists so edits know whether the

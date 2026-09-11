@@ -22,6 +22,16 @@ export interface Snapshot {
   customProjects: CustomProject[]
   /** Label-semantics claims: every (session, custom project) match. */
   placements: Placement[]
+  /** Memory files found on disk (CLAUDE.md and friends), per probed root. */
+  memoryFiles: Array<{
+    storeId: string
+    root: string
+    userLevel: boolean
+    name: string
+    path: string
+    bytes: number
+    mtimeMs: number
+  }>
 }
 
 export interface SnapshotOptions {
@@ -215,12 +225,24 @@ export function buildSnapshot(state: CoreState, options: SnapshotOptions): Snaps
     }
   }
 
+  const memoryFiles = Object.values(state.memoryFiles)
+    .flatMap((entry) =>
+      entry.files.map((file) => ({
+        storeId: entry.storeId,
+        root: entry.root,
+        userLevel: entry.userLevel,
+        ...file,
+      })),
+    )
+    .sort((a, b) => a.root.localeCompare(b.root) || a.name.localeCompare(b.name))
+
   return {
     generatedAt: options.now.toISOString(),
     stores: Object.values(state.stores).sort((a, b) => a.id.localeCompare(b.id)),
     sessions,
     projects,
     assignments,
+    memoryFiles,
     customProjects: [...customProjects].sort(
       (a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id),
     ),

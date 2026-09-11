@@ -2,6 +2,7 @@ import type { MessageLine } from './claude/transcript.js'
 import type { HodorConfig } from './config.js'
 import type { SourceEvent } from './events.js'
 import type { GitContext } from './git.js'
+import type { MemoryFileInfo } from './memory.js'
 import { addUsage, emptyUsage, type UsageTotals } from './pricing.js'
 import type { Runtime, SessionId, SessionMeta, SessionStore, StoreId } from './types.js'
 import { emptyUserPlane, type UserPlane } from './userplane.js'
@@ -96,6 +97,11 @@ export interface CoreState {
   sessions: Record<SessionId, SessionAccum>
   /** gitKey(storeId, cwd) → context; null = resolved as "not in a repo". */
   gitContexts: Record<string, GitContext | null>
+  /** gitKey(storeId, root) → memory files probed there ([] = none found). */
+  memoryFiles: Record<
+    string,
+    { storeId: StoreId; root: string; userLevel: boolean; files: MemoryFileInfo[] }
+  >
   metas: Record<SessionId, SessionMeta>
   /** Authoritative runtimes (e.g. hosted PTYs); absent = infer from activity. */
   runtimes: Record<SessionId, Runtime>
@@ -109,6 +115,7 @@ export const emptyState: CoreState = {
   stores: {},
   sessions: {},
   gitContexts: {},
+  memoryFiles: {},
   metas: {},
   runtimes: {},
   config: {},
@@ -337,6 +344,20 @@ export function fold(state: CoreState, event: SourceEvent): CoreState {
       return {
         ...state,
         gitContexts: { ...state.gitContexts, [gitKey(event.storeId, event.cwd)]: event.context },
+      }
+
+    case 'memory-scanned':
+      return {
+        ...state,
+        memoryFiles: {
+          ...state.memoryFiles,
+          [gitKey(event.storeId, event.root)]: {
+            storeId: event.storeId,
+            root: event.root,
+            userLevel: event.userLevel,
+            files: event.files,
+          },
+        },
       }
 
     case 'runtime-changed':

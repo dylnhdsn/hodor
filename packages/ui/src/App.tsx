@@ -6,6 +6,7 @@ import {
   deriveView,
   fetchTranscript,
   formatAge,
+  formatBytes,
   formatTokens,
   formatUsd,
   matchesQuery,
@@ -571,6 +572,8 @@ function DetailPane(props: {
   const sidechains = s.threads.filter((t) => t.kind === 'sidechain')
   const placements = view.placementsBySession.get(s.id) ?? []
   const derived = view.derivedOf.get(s.id)
+  const memoryRoots = new Set([...(derived?.roots.map((r) => r.path) ?? []), ...s.cwds])
+  const memoryFiles = snapshot.memoryFiles.filter((f) => !f.userLevel && memoryRoots.has(f.root))
   const ancestor = s.forkedFrom !== undefined ? view.byId.get(s.forkedFrom) : undefined
   const forks = view.forksOf.get(s.id) ?? []
   const projectName = (id: string) => snapshot.customProjects.find((p) => p.id === id)?.name ?? id
@@ -659,6 +662,12 @@ function DetailPane(props: {
           />
         )}
         {s.cliVersion !== undefined && <Fact label="cli" value={s.cliVersion} />}
+        {memoryFiles.length > 0 && (
+          <Fact
+            label="memory"
+            value={memoryFiles.map((f) => `${f.name} ${formatBytes(f.bytes)}`).join(' · ')}
+          />
+        )}
         <Fact label="cwd" value={s.cwd ?? '-'} mono />
         {s.apiErrors !== undefined && (
           <div className="flex justify-between gap-3 py-0.5">

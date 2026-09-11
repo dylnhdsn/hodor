@@ -35,9 +35,18 @@ them into the system prompt, which is never written to the store. An
 earlier grep that seemed to find memory markers was matching this
 session's own tool commands (searching a transcript for strings while
 working inside the session being transcribed is a hall of mirrors).
-Detecting memory files would be a filesystem enrichment instead —
-probe project roots and `~/.claude` for CLAUDE.md and report
-presence/size per project. Deferred; easy if wanted.
+
+So memory files are a **filesystem enrichment** (implemented same day,
+`core/memory.ts`): per resolved project root (and bare cwd when no
+repo), hodor stats `CLAUDE.md`, `CLAUDE.local.md`, and `AGENTS.md`;
+per store root, the user-level `~/.claude/CLAUDE.md` — reporting
+presence, size, and mtime, cached per root like git contexts.
+`Snapshot.memoryFiles` carries the flat list; the detail pane shows a
+`memory` fact for the session's project root; stats prints
+`memory files: N across M project roots, X.Xk total (+ user memory)`.
+Known approximation: the CLI walks cwd→up collecting memory at every
+level; hodor probes the project root and the cwd itself, which covers
+the common layouts. Content is never read — presence and size only.
 
 ## A parser lesson
 
