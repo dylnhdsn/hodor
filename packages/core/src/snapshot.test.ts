@@ -533,6 +533,63 @@ describe('buildSnapshot', () => {
     expect(pricedSession.costUnpriced).toBeUndefined()
   })
 
+  it('detects modern forks by shared API message ids and un-double-counts cost', () => {
+    const usageOf = (output: number) => ({
+      input: 10, output, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0, thinking: 0,
+    })
+    const assistant = (uuid: string, messageId: string, ts: string, output: number): MessageLine => ({
+      kind: 'message',
+      type: 'assistant',
+      uuid,
+      parentUuid: null,
+      isSidechain: false,
+      isMeta: false,
+      timestamp: ts,
+      model: 'claude-opus-5',
+      messageId,
+      usage: usageOf(output),
+    })
+    const events: SourceEvent[] = [
+      { type: 'store-discovered', store },
+      {
+        type: 'transcript-lines',
+        storeId: 's1',
+        transcriptPath: '/home/.claude/projects/-x/parent.jsonl',
+        sessionId: 'parent',
+        lines: [assistant('a1', 'm1', '2026-06-01T10:00:00Z', 1_000_000)],
+      },
+      {
+        // modern fork: copied line keeps message id + usage, session id
+        // rewritten (no embedded trace of the parent), plus one new turn
+        type: 'transcript-lines',
+        storeId: 's1',
+        transcriptPath: '/home/.claude/projects/-x/fork.jsonl',
+        sessionId: 'fork',
+        lines: [
+          assistant('a1', 'm1', '2026-06-01T10:00:00Z', 1_000_000),
+          assistant('a2', 'm2', '2026-06-01T11:00:00Z', 2_000_000),
+        ],
+      },
+    ]
+    const state = foldAll(emptyState, events)
+    const snapshot = buildSnapshot(state, { now: NOW })
+    const parent = snapshot.sessions.find((s) => s.id === 'parent')!
+    const fork = snapshot.sessions.find((s) => s.id === 'fork')!
+
+    expect(fork.forkedFrom).toBe('parent')
+    expect(parent.forkedFrom).toBeUndefined()
+    // inherited m1 subtracted: fork pays only its own m2 ($50 for 2M out)
+    expect(fork.usage!['claude-opus-5']!.output).toBe(2_000_000)
+    expect(fork.costUsd).toBeCloseTo(50.00005, 4)
+    // parent untouched
+    expect(parent.usage!['claude-opus-5']!.output).toBe(1_000_000)
+    expect(parent.costUsd).toBeCloseTo(25.00005, 4)
+    // and the fold's own state was not mutated by the subtraction: a second
+    // snapshot over the SAME state must not subtract twice
+    const again = buildSnapshot(state, { now: NOW })
+    expect(again.sessions.find((s) => s.id === 'fork')!.usage!['claude-opus-5']!.output).toBe(2_000_000)
+  })
+
   it('carries subagent meta onto sidechain threads', () => {
     const events: SourceEvent[] = [
       ...baseEvents,

@@ -52,9 +52,13 @@ export interface SessionAccum {
   toolCallCount: number
   /** tool_use blocks by tool name — the session's tool fingerprint. */
   toolCounts: Record<string, number>
-  /** API message ids already billed — usage repeats on every content-block
-   * line of one response, so each id counts exactly once. */
-  billedMessageIds: Record<string, true>
+  /** API message ids already billed, with what each cost — usage repeats on
+   * every content-block line of one response, so each id counts exactly
+   * once. Values are immutable once written (clone shares them). Keeping
+   * the per-id usage lets the snapshot detect forks (two sessions sharing
+   * an API message id can only mean copied history) and un-double-count
+   * the inherited turns. */
+  billedMessageIds: Record<string, { model: string } & UsageTotals>
   /** The CLI's human-readable session slug (last observed). */
   slug?: string
   /** Effort level (last observed). */
@@ -171,8 +175,8 @@ function billUsage(accum: SessionAccum, thread: ThreadAccum, line: MessageLine):
   // Lines without a message id can't be deduped; bill them individually
   // (observed only on synthetic lines, which carry no usage anyway).
   if (line.messageId !== undefined) {
-    if (accum.billedMessageIds[line.messageId] === true) return
-    accum.billedMessageIds[line.messageId] = true
+    if (accum.billedMessageIds[line.messageId] !== undefined) return
+    accum.billedMessageIds[line.messageId] = { model: line.model, ...line.usage }
   }
   thread.usageByModel ??= {}
   const totals = (thread.usageByModel[line.model] ??= emptyUsage())

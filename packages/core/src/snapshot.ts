@@ -1,5 +1,13 @@
 import type { CoreState, SessionAccum, ThreadAccum } from './fold.js'
-import { addUsage, costOfUsage, emptyUsage, mergePricing, type ModelPricing, type UsageTotals } from './pricing.js'
+import {
+  addUsage,
+  costOfUsage,
+  emptyUsage,
+  mergePricing,
+  totalTokens,
+  type ModelPricing,
+  type UsageTotals,
+} from './pricing.js'
 import { resolveProjects } from './resolver.js'
 import type { Assignment, Project, Runtime, Session, SessionStore, Thread } from './types.js'
 import { compileUserPlane, computePlacements, type CustomProject, type Placement } from './userplane.js'
@@ -63,8 +71,12 @@ function toThread(
   if (agentMeta?.agentType !== undefined) thread.agentType = agentMeta.agentType
   if (agentMeta?.description !== undefined) thread.description = agentMeta.description
   if (accum.usageByModel !== undefined) {
-    thread.usage = accum.usageByModel
-    thread.costUsd = costOfUsage(accum.usageByModel, pricing).usd
+    // Copies, never references: fork correlation subtracts inherited usage
+    // from these, and the fold's accums must stay untouched.
+    thread.usage = Object.fromEntries(
+      Object.entries(accum.usageByModel).map(([model, totals]) => [model, { ...totals }]),
+    )
+    thread.costUsd = costOfUsage(thread.usage, pricing).usd
   }
   return thread
 }
@@ -162,6 +174,106 @@ function toSession(
   return session
 }
 
+function subtractUsage(into: UsageTotals, sub: UsageTotals): void {
+  into.input = Math.max(0, into.input - sub.input)
+  into.output = Math.max(0, into.output - sub.output)
+  into.cacheRead = Math.max(0, into.cacheRead - sub.cacheRead)
+  into.cacheWrite5m = Math.max(0, into.cacheWrite5m - sub.cacheWrite5m)
+  into.cacheWrite1h = Math.max(0, into.cacheWrite1h - sub.cacheWrite1h)
+  into.thinking = Math.max(0, into.thinking - sub.thinking)
+}
+
+/**
+ * Fork correlation via shared API message ids: two sessions can only share
+ * one by copying history, so overlap IS lineage — the detection that works
+ * on modern `--fork-session` transcripts, which rewrite the session id on
+ * copied lines (verified empirically; docs/brainstorm/016). Two effects:
+ *
+ * - `forkedFrom` fallback when the embedded-id evidence is absent. The
+ *   fork's copied timestamps equal the parent's, so direction comes from
+ *   lastActivityAt (the continued lane) — a heuristic, stated in the docs.
+ * - The fork's inherited turns carry the parent's usage verbatim and were
+ *   paid for exactly once, so their usage is subtracted from the fork
+ *   (session and main thread) to keep store totals honest.
+ */
+function correlateForks(
+  state: CoreState,
+  sessions: Session[],
+  pricing: Record<string, ModelPricing>,
+): void {
+  const order = [...sessions].sort(
+    (a, b) => (a.lastActivityAt ?? '').localeCompare(b.lastActivityAt ?? '') || a.id.localeCompare(b.id),
+  )
+  const owners = new Map<string, string[]>()
+  const orderIndex = new Map<string, number>()
+
+  order.forEach((session, index) => {
+    orderIndex.set(session.id, index)
+    const accum = state.sessions[session.id]
+    if (accum === undefined) return
+    const billed = Object.entries(accum.billedMessageIds)
+
+    // Best earlier sharer: most shared ids, nearest in order on ties —
+    // a fork-of-a-fork overlaps its direct parent more than its grandparent.
+    const overlap = new Map<string, number>()
+    for (const [msgId] of billed) {
+      for (const owner of owners.get(msgId) ?? []) {
+        overlap.set(owner, (overlap.get(owner) ?? 0) + 1)
+      }
+    }
+    let parentId: string | undefined
+    for (const [owner, count] of overlap) {
+      if (
+        parentId === undefined ||
+        count > overlap.get(parentId)! ||
+        (count === overlap.get(parentId)! && orderIndex.get(owner)! > orderIndex.get(parentId)!)
+      ) {
+        parentId = owner
+      }
+    }
+
+    if (parentId !== undefined) {
+      if (session.forkedFrom === undefined) session.forkedFrom = parentId
+      const parentBilled = state.sessions[parentId]?.billedMessageIds ?? {}
+      const main = session.threads.find((t) => t.kind === 'main')
+      for (const [msgId, entry] of billed) {
+        if (parentBilled[msgId] === undefined) continue
+        const modelUsage = session.usage?.[entry.model]
+        if (modelUsage !== undefined) subtractUsage(modelUsage, entry)
+        const threadUsage = main?.usage?.[entry.model]
+        if (threadUsage !== undefined) subtractUsage(threadUsage, entry)
+      }
+      // Fully-inherited model buckets subtract to zero — drop them.
+      for (const record of [session.usage, main?.usage]) {
+        if (record === undefined) continue
+        for (const [model, totals] of Object.entries(record)) {
+          if (totalTokens(totals) === 0 && totals.thinking === 0) delete record[model]
+        }
+      }
+      if (session.usage !== undefined) {
+        if (Object.keys(session.usage).length === 0) {
+          delete session.usage
+          delete session.costUsd
+        } else {
+          session.costUsd = costOfUsage(session.usage, pricing).usd
+        }
+      }
+      if (main?.usage !== undefined) {
+        if (Object.keys(main.usage).length === 0) {
+          delete main.usage
+          delete main.costUsd
+        } else {
+          main.costUsd = costOfUsage(main.usage, pricing).usd
+        }
+      }
+    }
+
+    for (const [msgId] of billed) {
+      owners.set(msgId, [...(owners.get(msgId) ?? []), session.id])
+    }
+  })
+}
+
 export function buildSnapshot(state: CoreState, options: SnapshotOptions): Snapshot {
   const windowMs = options.activeWindowMs ?? DEFAULT_ACTIVE_WINDOW_MS
   const pricing = mergePricing(state.config.pricing)
@@ -197,6 +309,8 @@ export function buildSnapshot(state: CoreState, options: SnapshotOptions): Snaps
       (a, b) =>
         (b.lastActivityAt ?? '').localeCompare(a.lastActivityAt ?? '') || a.id.localeCompare(b.id),
     )
+
+  correlateForks(state, sessions, pricing)
 
   const { projects, assignments } = resolveProjects(state, sessions)
 
