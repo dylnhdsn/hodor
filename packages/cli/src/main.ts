@@ -191,6 +191,16 @@ export interface Stats {
   hidden: number
   sessionsWithSubagents: number
   subagentRuns: number
+  /** Runs split by whether their session is visible — the UI's default
+   * list only shows visible sessions, so this answers "where are they". */
+  subagentRunsVisible: number
+  subagentRunsHidden: number
+  topSubagentSessions: Array<{
+    id: string
+    runs: number
+    hiddenBy?: string
+    title: string
+  }>
   entrypointsVisible: Record<string, number>
   entrypointsHidden: Record<string, number>
   hiddenByRule: Record<string, number>
@@ -203,6 +213,9 @@ export function computeStats(snapshot: Snapshot): Stats {
     hidden: 0,
     sessionsWithSubagents: 0,
     subagentRuns: 0,
+    subagentRunsVisible: 0,
+    subagentRunsHidden: 0,
+    topSubagentSessions: [],
     entrypointsVisible: {},
     entrypointsHidden: {},
     hiddenByRule: {},
@@ -221,11 +234,22 @@ export function computeStats(snapshot: Snapshot): Stats {
     if (session.counts.sidechains > 0) {
       stats.sessionsWithSubagents += 1
       stats.subagentRuns += session.counts.sidechains
+      if (isHidden) stats.subagentRunsHidden += session.counts.sidechains
+      else stats.subagentRunsVisible += session.counts.sidechains
+      stats.topSubagentSessions.push({
+        id: session.id,
+        runs: session.counts.sidechains,
+        ...(session.hiddenBy !== undefined ? { hiddenBy: session.hiddenBy } : {}),
+        title:
+          session.rename ?? session.summary ?? session.promptPreview ?? session.firstCommand ?? '(untitled)',
+      })
     }
     const target = isHidden ? stats.entrypointsHidden : stats.entrypointsVisible
     const keys = session.entrypoints.length > 0 ? session.entrypoints : ['(none)']
     for (const key of keys) bump(target, key)
   }
+  stats.topSubagentSessions.sort((a, b) => b.runs - a.runs || a.id.localeCompare(b.id))
+  stats.topSubagentSessions = stats.topSubagentSessions.slice(0, 8)
   return stats
 }
 
@@ -237,13 +261,26 @@ function formatHistogram(title: string, record: Record<string, number>): string[
 }
 
 export function formatStats(stats: Stats): string {
-  return [
+  const lines = [
     `sessions: ${stats.total} (${stats.visible} visible, ${stats.hidden} hidden)`,
-    `subagent runs: ${stats.subagentRuns} across ${stats.sessionsWithSubagents} sessions`,
+    `subagent runs: ${stats.subagentRuns} across ${stats.sessionsWithSubagents} sessions` +
+      (stats.subagentRuns > 0
+        ? ` (${stats.subagentRunsVisible} on visible sessions, ${stats.subagentRunsHidden} on hidden)`
+        : ''),
+  ]
+  if (stats.topSubagentSessions.length > 0) {
+    lines.push('', 'top sessions by subagent runs:')
+    for (const s of stats.topSubagentSessions) {
+      const state = s.hiddenBy !== undefined ? `hidden (${s.hiddenBy})` : 'visible'
+      lines.push(`  ${s.id.slice(0, 8)}  ${String(s.runs).padStart(3)}  ${state}  ${s.title.slice(0, 60)}`)
+    }
+  }
+  lines.push(
     ...formatHistogram('entrypoints (visible sessions)', stats.entrypointsVisible),
     ...formatHistogram('entrypoints (hidden sessions)', stats.entrypointsHidden),
     ...formatHistogram('hidden by rule', stats.hiddenByRule),
-  ].join('\n')
+  )
+  return lines.join('\n')
 }
 
 function printSnapshot(deps: CliDeps, snapshot: Snapshot, json: boolean): void {

@@ -309,12 +309,24 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
         const asset = uiAssets[assetPath]
         if (asset !== undefined) {
           const bytes = Buffer.from(asset.base64, 'base64')
-          res.writeHead(200, { 'content-type': asset.type, 'content-length': bytes.length })
+          // index.html must always revalidate or a browser keeps running a
+          // stale app after hodor update; Vite's hashed assets are immutable.
+          const cache = assetPath.startsWith('/assets/')
+            ? 'public, max-age=31536000, immutable'
+            : 'no-cache'
+          res.writeHead(200, {
+            'content-type': asset.type,
+            'content-length': bytes.length,
+            'cache-control': cache,
+          })
           res.end(isHead ? undefined : bytes)
           return
         }
         if (path === '/') {
-          res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+          res.writeHead(200, {
+            'content-type': 'text/html; charset=utf-8',
+            'cache-control': 'no-cache',
+          })
           res.end(isHead ? undefined : FALLBACK_PAGE)
           return
         }

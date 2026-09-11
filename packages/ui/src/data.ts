@@ -150,13 +150,22 @@ export const byRecency = (sessions: Session[]): Session[] =>
   )
 
 export function matchesQuery(session: Session, query: string): boolean {
-  const q = query.toLowerCase()
-  return (
-    titleOf(session).toLowerCase().includes(q) ||
-    (session.cwd ?? '').toLowerCase().includes(q) ||
-    session.id.toLowerCase().includes(q) ||
-    (session.promptPreview ?? '').toLowerCase().includes(q)
-  )
+  // Every whitespace-separated token must match. `has:agents` and `is:fork`
+  // are filters; anything else is a substring over title/cwd/id/prompt.
+  return query
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((t) => t.length > 0)
+    .every((q) => {
+      if (q === 'has:agents') return session.counts.sidechains > 0
+      if (q === 'is:fork') return session.forkedFrom !== undefined
+      return (
+        titleOf(session).toLowerCase().includes(q) ||
+        (session.cwd ?? '').toLowerCase().includes(q) ||
+        session.id.toLowerCase().includes(q) ||
+        (session.promptPreview ?? '').toLowerCase().includes(q)
+      )
+    })
 }
 
 /** Distinct cwds across a project's sessions — split targets, stats. */

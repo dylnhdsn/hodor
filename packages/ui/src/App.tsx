@@ -178,7 +178,7 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
                 <input
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
-                  placeholder="search titles, prompts, paths, ids…"
+                  placeholder="search titles, prompts, paths, ids… (has:agents, is:fork)"
                   className="w-full max-w-md rounded border border-zinc-800 bg-zinc-900 px-3 py-1.5 text-sm outline-none placeholder:text-zinc-600 focus:border-zinc-600"
                 />
                 <span className="ml-auto whitespace-nowrap text-xs text-zinc-500">
