@@ -34,6 +34,8 @@ function memDeps(fs = new MemFs()): {
       output.push('selfUpdate-stub\n')
       return 0
     },
+    httpGetJson: async () => ({ status: 404 }),
+    runCapture: async () => ({ code: 0, output: '' }),
   }
   return { deps, output, errors, spawns, fs }
 }

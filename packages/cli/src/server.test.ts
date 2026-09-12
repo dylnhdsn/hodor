@@ -8,9 +8,13 @@ function serverDeps(fs = new MemFs()): {
   fs: MemFs
   errors: string[]
   spawns: Array<{ file: string; args: string[] }>
+  captures: Array<{ file: string; args: string[] }>
+  http: { responses: Map<string, { status: number; json?: unknown }>; calls: string[] }
 } {
   const errors: string[] = []
   const spawns: Array<{ file: string; args: string[] }> = []
+  const captures: Array<{ file: string; args: string[] }> = []
+  const http = { responses: new Map<string, { status: number; json?: unknown }>(), calls: [] as string[] }
   const deps: CliDeps = {
     fs,
     homedir: () => '/home/u',
@@ -30,8 +34,16 @@ function serverDeps(fs = new MemFs()): {
       if (file !== 'x-terminal-emulator') throw new Error(`spawn ${file}: not stubbed`)
     },
     selfUpdate: async () => 0,
+    httpGetJson: async (url) => {
+      http.calls.push(url)
+      return http.responses.get(url) ?? { status: 404 }
+    },
+    runCapture: async (file, args) => {
+      captures.push({ file, args })
+      return { code: 0, output: 'queued\n' }
+    },
   }
-  return { deps, fs, errors, spawns }
+  return { deps, fs, errors, spawns, captures, http }
 }
 
 const line = (uuid: string, ts: string, cwd: string, prompt?: string) =>
@@ -386,5 +398,86 @@ describe('startServer', () => {
       body: JSON.stringify({ matcher: { kind: 'nope' } }),
     })
     expect(bad.status).toBe(400)
+  })
+})
+
+describe('cloud sessions', () => {
+  const cloudRecord = {
+    id: 'session_01CLOUD',
+    title: 'Cloud work',
+    session_status: 'SESSION_STATUS_IDLE',
+    status_bucket: 'SESSION_STATUS_BUCKET_BLOCKED',
+    updated_at: '2026-06-01T11:30:00Z',
+    session_context: {
+      sources: [{ git_repository: { url: 'https://github.com/acme/app.git' } }],
+    },
+    post_turn_summary: { needs_action: 'answer the question' },
+  }
+
+  it('lists cloud sessions when credentials exist, degrades on failure', async () => {
+    const { deps, fs, http, captures } = serverDeps()
+    fs.writeFile(
+      '/home/u/.claude/.credentials.json',
+      JSON.stringify({ claudeAiOauth: { accessToken: 'tok_test' } }),
+    )
+    http.responses.set('https://api.anthropic.com/v1/code/sessions?limit=50', {
+      status: 200,
+      json: { data: [cloudRecord] },
+    })
+    fs.writeFile('/home/u/.claude/projects/-r/aaaa.jsonl', line('u1', '2026-06-01T11:00:00Z', '/r/app'))
+    const server = await start(fs, deps)
+
+    const snapshot = (await (await fetch(`${server.url}/api/snapshot`)).json()) as {
+      cloudSessions: Array<{ id: string; bucket?: string; needsAction?: string; remoteUrl?: string }>
+    }
+    expect(snapshot.cloudSessions).toHaveLength(1)
+    expect(snapshot.cloudSessions[0]).toMatchObject({
+      id: 'session_01CLOUD',
+      bucket: 'blocked',
+      needsAction: 'answer the question',
+      remoteUrl: 'github.com/acme/app',
+    })
+
+    // messaging queues claude -p … --cloud <id> through a login shell
+    const message = await fetch(`${server.url}/api/cloud/message`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId: 'session_01CLOUD', text: 'ship it' }),
+    })
+    expect(message.status).toBe(200)
+    expect(captures).toHaveLength(1)
+    expect(captures[0]!.args[captures[0]!.args.length - 1]).toContain('--cloud')
+    expect(captures[0]!.args[captures[0]!.args.length - 1]).toContain("'ship it'")
+
+    // teleport composes a pty spec targeting the host
+    const teleport = await fetch(`${server.url}/api/launch`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ kind: 'teleport', sessionId: 'session_01CLOUD', mode: 'pty' }),
+    })
+    expect(teleport.status).toBe(200)
+    const body = (await teleport.json()) as { spec: { args: string[] } | null; title: string }
+    expect(body.title).toContain('Cloud work')
+    expect(body.spec?.args.join(' ')).toContain('--teleport session_01CLOUD')
+
+    // unknown cloud session 404s
+    const missing = await fetch(`${server.url}/api/cloud/message`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId: 'session_nope', text: 'x' }),
+    })
+    expect(missing.status).toBe(404)
+  })
+
+  it('is absent without credentials and reports listing failures', async () => {
+    const { deps, fs } = serverDeps()
+    fs.writeFile('/home/u/.claude/projects/-r/aaaa.jsonl', line('u1', '2026-06-01T11:00:00Z', '/r/app'))
+    const server = await start(fs, deps)
+    const snapshot = (await (await fetch(`${server.url}/api/snapshot`)).json()) as {
+      cloudSessions: unknown[]
+      cloudError?: string
+    }
+    expect(snapshot.cloudSessions).toEqual([])
+    expect(snapshot.cloudError).toBeUndefined()
   })
 })

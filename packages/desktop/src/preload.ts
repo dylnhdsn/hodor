@@ -5,7 +5,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
 export interface OpenTarget {
-  kind: 'resume' | 'fork' | 'new'
+  kind: 'resume' | 'fork' | 'new' | 'teleport'
   sessionId?: string
   storeId?: string
   root?: string

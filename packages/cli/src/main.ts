@@ -33,6 +33,7 @@ import {
   type Snapshot,
   type SnapshotOptions,
 } from '@hodor/core'
+import { scanCloudSessions } from './cloud.js'
 import { projectCommand, sessionCommand } from './curate.js'
 import { composeLaunch, runLaunch } from './launch.js'
 import { resolveStores, storeFs } from './stores.js'
@@ -70,6 +71,17 @@ export interface CliDeps {
   osPlatform: 'win32' | 'darwin' | 'linux'
   /** Fire-and-forget spawn; rejects when the executable can't start. */
   spawnDetached(file: string, args: string[]): Promise<void>
+  /** Authenticated-by-caller JSON GET (cloud session listing). */
+  httpGetJson(
+    url: string,
+    headers: Record<string, string>,
+  ): Promise<{ status: number; json?: unknown }>
+  /** Run a command to completion, capturing combined output. */
+  runCapture(
+    file: string,
+    args: string[],
+    options?: { cwd?: string; timeoutMs?: number },
+  ): Promise<{ code: number; output: string }>
 }
 
 const USAGE = `hodor — session manager (data core, early days)
@@ -79,6 +91,7 @@ Usage:
   hodor watch [--json] [--interval <ms>] [--root <path>]...
                                             Scan, then live-update on changes
   hodor stats [--json] [--root <path>]...   Entrypoint and visibility histograms
+  hodor cloud                               List this account's cloud sessions
   hodor resume <sessionId> [--fork] [--print]
                                             Open a terminal resuming that session
                                             (--fork: new session id; --print:
@@ -439,6 +452,50 @@ async function scan(deps: CliDeps, flags: Flags): Promise<number> {
   return 0
 }
 
+/** hodor cloud — list this account's cloud sessions (claude.ai/code). */
+async function cloudCommand(deps: CliDeps): Promise<number> {
+  const event = await scanCloudSessions(deps)
+  if (event === undefined) {
+    deps.write('no claude.ai login found (~/.claude/.credentials.json) — cloud sessions unavailable\n')
+    return 1
+  }
+  if (event.type !== 'cloud-sessions-scanned') return 1
+  if (event.error !== undefined) {
+    deps.write(`${event.error}\n`)
+    return 1
+  }
+  if (event.sessions.length === 0) {
+    deps.write('no cloud sessions\n')
+    return 0
+  }
+  const nowMs = deps.now().getTime()
+  for (const s of [...event.sessions].sort((a, b) =>
+    (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''),
+  )) {
+    const age = s.updatedAt !== undefined ? formatAgeMs(nowMs - Date.parse(s.updatedAt)) : '-'
+    const bucket = s.bucket ?? s.status
+    const line = [
+      s.id.slice(0, 20).padEnd(20),
+      age.padStart(4),
+      bucket.padEnd(12),
+      (s.repo ?? '').padEnd(28),
+      s.title ?? '',
+    ].join('  ')
+    deps.write(`${line.trimEnd()}\n`)
+    if (s.needsAction !== undefined) deps.write(`${' '.repeat(28)}needs you: ${s.needsAction}\n`)
+  }
+  deps.write(`\n${event.sessions.length} cloud sessions · teleport: claude --teleport <id>\n`)
+  return 0
+}
+
+function formatAgeMs(ms: number): string {
+  const minutes = Math.max(0, Math.floor(ms / 60_000))
+  if (minutes < 60) return `${minutes}m`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 48) return `${hours}h`
+  return `${Math.floor(hours / 24)}d`
+}
+
 /** hodor resume <sessionId> [--fork] [--print] — open a terminal on it. */
 async function resumeCommand(deps: CliDeps, flags: Flags): Promise<number> {
   const idArg = flags.rest[0]
@@ -607,6 +664,9 @@ export async function run(argv: string[], deps: CliDeps): Promise<number> {
 
     case 'stats':
       return statsCommand(deps, flags)
+
+    case 'cloud':
+      return cloudCommand(deps)
 
     case 'watch':
       return watch(deps, flags)

@@ -1,4 +1,5 @@
 import type { MessageLine } from './claude/transcript.js'
+import type { CloudSession } from './cloud.js'
 import type { HodorConfig } from './config.js'
 import type { SourceEvent } from './events.js'
 import type { GitContext } from './git.js'
@@ -117,6 +118,8 @@ export interface CoreState {
   /** gitKey(storeId, sessionId) → backup files found in the store's
    * file-history dir (0 = probed, none there — expired or restored). */
   checkpointBackups: Record<string, number>
+  /** Cloud sessions from the last listing (full replacement each scan). */
+  cloud: { sessions: CloudSession[]; scannedAt?: string; error?: string }
   metas: Record<SessionId, SessionMeta>
   /** Authoritative runtimes (e.g. hosted PTYs); absent = infer from activity. */
   runtimes: Record<SessionId, Runtime>
@@ -132,6 +135,7 @@ export const emptyState: CoreState = {
   gitContexts: {},
   memoryFiles: {},
   checkpointBackups: {},
+  cloud: { sessions: [] },
   metas: {},
   runtimes: {},
   config: {},
@@ -399,6 +403,16 @@ export function fold(state: CoreState, event: SourceEvent): CoreState {
             userLevel: event.userLevel,
             files: event.files,
           },
+        },
+      }
+
+    case 'cloud-sessions-scanned':
+      return {
+        ...state,
+        cloud: {
+          sessions: event.sessions,
+          scannedAt: event.scannedAt,
+          ...(event.error !== undefined ? { error: event.error } : {}),
         },
       }
 

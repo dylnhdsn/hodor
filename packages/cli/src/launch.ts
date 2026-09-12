@@ -162,6 +162,19 @@ export function composePtySpec(env: LaunchEnv, target: LaunchTarget): PtySpec | 
   return { file: env.shell ?? 'bash', args: ['-lic', command], cwd: target.cwd }
 }
 
+/**
+ * An argv for running `claude …` on the HOST itself (no store routing):
+ * used for capture-style runs like messaging a cloud session. Posix goes
+ * through a login+interactive shell for the same PATH reason as PTYs.
+ */
+export function composeHostClaude(env: LaunchEnv, claudeArgs: string[]): PtySpec {
+  if (env.os === 'win32') {
+    return { file: 'cmd.exe', args: ['/c', 'claude', ...claudeArgs] }
+  }
+  const command = ['claude', ...claudeArgs].map(shellQuote).join(' ')
+  return { file: env.shell ?? 'bash', args: ['-lic', command] }
+}
+
 export interface LaunchResult {
   ok: boolean
   /** The terminal that took the spawn, when ok. */

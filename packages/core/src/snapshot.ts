@@ -1,3 +1,4 @@
+import type { CloudSession } from './cloud.js'
 import { gitKey, type CoreState, type SessionAccum, type ThreadAccum } from './fold.js'
 import {
   addUsage,
@@ -30,6 +31,10 @@ export interface Snapshot {
   customProjects: CustomProject[]
   /** Label-semantics claims: every (session, custom project) match. */
   placements: Placement[]
+  /** Cloud sessions from the last listing; empty when not signed in or
+   * the listing is unavailable (cloudError explains a failed scan). */
+  cloudSessions: CloudSession[]
+  cloudError?: string
   /** Memory files found on disk (CLAUDE.md and friends), per probed root. */
   memoryFiles: Array<{
     storeId: string
@@ -362,12 +367,18 @@ export function buildSnapshot(state: CoreState, options: SnapshotOptions): Snaps
     )
     .sort((a, b) => a.root.localeCompare(b.root) || a.name.localeCompare(b.name))
 
+  const cloudSessions = [...state.cloud.sessions].sort((a, b) =>
+    (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''),
+  )
+
   return {
     generatedAt: options.now.toISOString(),
     stores: Object.values(state.stores).sort((a, b) => a.id.localeCompare(b.id)),
     sessions,
     projects,
     assignments,
+    cloudSessions,
+    ...(state.cloud.error !== undefined ? { cloudError: state.cloud.error } : {}),
     memoryFiles,
     customProjects: [...customProjects].sort(
       (a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id),

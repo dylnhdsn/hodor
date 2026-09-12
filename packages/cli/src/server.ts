@@ -23,7 +23,8 @@ import {
   type Snapshot,
 } from '@hodor/core'
 import { flavorOfPath, pathOps } from '@hodor/core'
-import { composeLaunch, composePtySpec, runLaunch, type LaunchTarget } from './launch.js'
+import { scanCloudSessions } from './cloud.js'
+import { composeHostClaude, composeLaunch, composePtySpec, runLaunch, type LaunchTarget } from './launch.js'
 import type { CliDeps } from './main.js'
 import { materializeTarget } from './materialize.js'
 import { resolveStores, storeFs } from './stores.js'
@@ -97,6 +98,9 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
     return events
   }
 
+  let nextCloudScanAt = 0
+  const CLOUD_SCAN_INTERVAL_MS = 60_000
+
   async function refresh(): Promise<void> {
     for (const tailer of tailers) {
       const events = await tailer.poll()
@@ -105,6 +109,11 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
     baseState = foldAll(baseState, await enrichGitContexts(baseState, fsFor))
     baseState = foldAll(baseState, await enrichMemoryFiles(baseState, fsFor))
     baseState = foldAll(baseState, await enrichCheckpointBackups(baseState, fsFor))
+    if (Date.now() >= nextCloudScanAt) {
+      nextCloudScanAt = Date.now() + CLOUD_SCAN_INTERVAL_MS
+      const cloudEvent = await scanCloudSessions(deps).catch(() => undefined)
+      if (cloudEvent !== undefined) baseState = foldAll(baseState, [cloudEvent])
+    }
     files = await loadUserFiles(deps)
 
     let presented = foldAll(baseState, configEventsOf(files))
@@ -268,7 +277,30 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
 
     let title: string
     let target: LaunchTarget
-    if (payload.kind === 'resume' || payload.kind === 'fork') {
+    if (payload.kind === 'teleport') {
+      const cloud = snapshot?.cloudSessions.find((s) => s.id === payload.sessionId)
+      if (cloud === undefined) return sendJson(res, 404, { error: `no cloud session "${payload.sessionId}"` })
+      // Teleport checks out the session's branch, so land in a local
+      // checkout of the same repo when one is known; otherwise home.
+      const localProject =
+        cloud.remoteUrl !== undefined
+          ? snapshot?.projects.find(
+              (p) => p.identity.kind === 'git-remote' && p.identity.url === cloud.remoteUrl,
+            )
+          : undefined
+      const root = localProject?.roots[0]
+      const store = root !== undefined ? snapshot?.stores.find((s) => s.id === root.storeId) : undefined
+      target =
+        root !== undefined && store !== undefined
+          ? { cwd: root.path, flavor: store.pathFlavor, origin: store.origin, claudeArgs: ['--teleport', cloud.id] }
+          : {
+              cwd: deps.homedir(),
+              flavor: deps.platformFlavor,
+              origin: { kind: 'native' },
+              claudeArgs: ['--teleport', cloud.id],
+            }
+      title = `☁ ${cloud.title ?? cloud.repo ?? cloud.id.slice(0, 12)}`
+    } else if (payload.kind === 'resume' || payload.kind === 'fork') {
       const session = snapshot?.sessions.find((s) => s.id === payload.sessionId)
       if (session === undefined) return sendJson(res, 404, { error: `no session "${payload.sessionId}"` })
       // Resume from the FIRST cwd: the store bucket is keyed by it, so
@@ -305,7 +337,7 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
       target = { cwd: payload.root, flavor: store.pathFlavor, origin: store.origin, claudeArgs: [] }
       title = payload.root.split(/[/\\]/).filter(Boolean).pop() ?? payload.root
     } else {
-      return sendJson(res, 400, { error: 'kind must be resume, fork, or new' })
+      return sendJson(res, 400, { error: 'kind must be resume, fork, new, or teleport' })
     }
 
     if (payload.mode === 'pty') {
@@ -324,6 +356,36 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
 
     const result = await runLaunch(deps, target)
     return sendJson(res, result.ok ? 200 : 500, result)
+  }
+
+  /** Send one message into a cloud session without taking it over:
+   * `claude -p <text> --cloud <id>` queues the message and exits. */
+  async function handleCloudMessage(res: ServerResponse, body: string): Promise<void> {
+    let payload: { sessionId?: string; text?: string }
+    try {
+      payload = JSON.parse(body) as typeof payload
+    } catch {
+      return sendJson(res, 400, { error: 'body must be JSON' })
+    }
+    if (typeof payload.sessionId !== 'string' || payload.sessionId.length === 0) {
+      return sendJson(res, 400, { error: 'sessionId required' })
+    }
+    if (typeof payload.text !== 'string' || payload.text.trim().length === 0) {
+      return sendJson(res, 400, { error: 'text required' })
+    }
+    if (snapshot === undefined) await refresh()
+    if (!snapshot?.cloudSessions.some((s) => s.id === payload.sessionId)) {
+      return sendJson(res, 404, { error: `no cloud session "${payload.sessionId}"` })
+    }
+    const spec = composeHostClaude(
+      { os: deps.osPlatform, wslDistro: deps.wslDistro(), shell: deps.env('SHELL') },
+      ['-p', payload.text, '--cloud', payload.sessionId],
+    )
+    const run = await deps.runCapture(spec.file, spec.args, { timeoutMs: 60_000 })
+    return sendJson(res, run.code === 0 ? 200 : 500, {
+      ok: run.code === 0,
+      output: run.output.trim().slice(-2000),
+    })
   }
 
   function handlePreview(res: ServerResponse, body: string): void {
@@ -388,6 +450,11 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
 
       if (req.method === 'POST' && path === '/api/launch') {
         await handleLaunch(res, await readBody(req))
+        return
+      }
+
+      if (req.method === 'POST' && path === '/api/cloud/message') {
+        await handleCloudMessage(res, await readBody(req))
         return
       }
 

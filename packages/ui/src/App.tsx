@@ -17,6 +17,7 @@ import {
   type TranscriptEntry,
   type View,
 } from './data.js'
+import { CloudSessionList } from './CloudSessions.js'
 import { TerminalDock } from './TerminalDock.js'
 import { useSnapshot } from './useSnapshot.js'
 
@@ -235,7 +236,23 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
             )}
 
             <div className="flex min-h-0 flex-1">
-              <ul className="min-w-0 flex-1 divide-y divide-zinc-900 overflow-y-auto">
+              <div className="flex min-w-0 flex-1 flex-col overflow-y-auto">
+              {filter.kind === 'all' || filter.kind === 'project' ? (
+                <CloudSessionList
+                  sessions={(filter.kind === 'all'
+                    ? view.cloud
+                    : (view.cloudByProject.get(filter.id) ?? [])
+                  ).filter(
+                    (c) =>
+                      query.trim().length === 0 ||
+                      `${c.title ?? ''} ${c.repo ?? ''} ${c.branches.join(' ')} ${c.id}`
+                        .toLowerCase()
+                        .includes(query.trim().toLowerCase()),
+                  )}
+                  nowMs={nowMs}
+                />
+              ) : null}
+              <ul className="min-w-0 flex-1 divide-y divide-zinc-900">
                 {sessions.map((s) => (
                   <SessionRow
                     key={s.id}
@@ -260,6 +277,7 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
                   <li className="px-4 py-8 text-center text-zinc-600">nothing here</li>
                 )}
               </ul>
+              </div>
               {detailId !== undefined && view.byId.has(detailId) ? (
                 <DetailPane
                   key={detailId}

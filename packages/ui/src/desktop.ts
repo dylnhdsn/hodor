@@ -21,7 +21,7 @@ export interface OpenResult {
 
 export interface HodorDesktop {
   openTerminal(target: {
-    kind: 'resume' | 'fork' | 'new'
+    kind: 'resume' | 'fork' | 'new' | 'teleport'
     sessionId?: string
     storeId?: string
     root?: string

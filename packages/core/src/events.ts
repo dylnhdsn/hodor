@@ -1,4 +1,5 @@
 import type { TranscriptLine } from './claude/transcript.js'
+import type { CloudSession } from './cloud.js'
 import type { HodorConfig } from './config.js'
 import type { GitContext } from './git.js'
 import type { MemoryFileInfo } from './memory.js'
@@ -48,6 +49,15 @@ export type SourceEvent =
       storeId: StoreId
       sessionId: SessionId
       backupFiles: number
+    }
+  | {
+      /** A cloud-session listing completed: full replacement, not a delta.
+       * error carries the reason when the listing failed (auth, network),
+       * so the UI can hint instead of silently showing nothing. */
+      type: 'cloud-sessions-scanned'
+      sessions: CloudSession[]
+      scannedAt: string
+      error?: string
     }
   | { type: 'runtime-changed'; sessionId: SessionId; runtime: Runtime }
   | { type: 'meta-changed'; meta: SessionMeta }

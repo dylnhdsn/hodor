@@ -1,4 +1,6 @@
-import type { CustomProject, Placement, Project, Session, Snapshot } from '@hodor/core'
+// Deep import: the barrel drags node-only modules into the browser build.
+import { normalizeGitUrl } from '@hodor/core/urls'
+import type { CloudSession, CustomProject, Placement, Project, Session, Snapshot } from '@hodor/core'
 import { desktop } from './desktop.js'
 
 /** Client-side derivations over a Snapshot — mirrors the CLI formatter. */
@@ -61,6 +63,10 @@ export interface View {
   derivedOf: Map<string, Project>
   /** Fork lineage: ancestor session id → its forks. */
   forksOf: Map<string, Session[]>
+  /** Cloud sessions (claude.ai/code), newest first. */
+  cloud: CloudSession[]
+  /** Cloud sessions joined to rail projects by git-remote evidence. */
+  cloudByProject: Map<string, CloudSession[]>
 }
 
 const latestOf = (sessions: Session[]): string =>
@@ -140,6 +146,24 @@ export function deriveView(snapshot: Snapshot): View {
     forksOf.set(session.forkedFrom, [...(forksOf.get(session.forkedFrom) ?? []), session])
   }
 
+  // Cloud sessions join projects by git-remote evidence: the same signal
+  // the matcher engine uses, applied to the listing's source repository.
+  const railByRemote = new Map<string, string>()
+  for (const p of rail) {
+    if (p.auto?.identity.kind === 'git-remote') {
+      railByRemote.set(normalizeGitUrl(p.auto.identity.url), p.id)
+    }
+    for (const matcher of p.custom?.matchers ?? []) {
+      if (matcher.kind === 'remote') railByRemote.set(normalizeGitUrl(matcher.url), p.id)
+    }
+  }
+  const cloudByProject = new Map<string, CloudSession[]>()
+  for (const cloud of snapshot.cloudSessions) {
+    const projectId = cloud.remoteUrl !== undefined ? railByRemote.get(cloud.remoteUrl) : undefined
+    if (projectId === undefined) continue
+    cloudByProject.set(projectId, [...(cloudByProject.get(projectId) ?? []), cloud])
+  }
+
   return {
     visible,
     hidden,
@@ -151,6 +175,8 @@ export function deriveView(snapshot: Snapshot): View {
     sessionsOfArchived,
     derivedOf,
     forksOf,
+    cloud: snapshot.cloudSessions,
+    cloudByProject,
   }
 }
 
@@ -218,7 +244,7 @@ export interface LaunchResponse {
 
 export async function requestLaunch(
   body:
-    | { kind: 'resume' | 'fork'; sessionId: string }
+    | { kind: 'resume' | 'fork' | 'teleport'; sessionId: string }
     | { kind: 'new'; storeId: string; root: string },
 ): Promise<LaunchResponse> {
   try {
@@ -237,6 +263,23 @@ export async function requestLaunch(
  * Launch, falling back to the clipboard: when no terminal could be opened
  * (headless server, exotic setup), copy the exact command instead.
  */
+/** Queue one message into a cloud session (claude -p … --cloud <id>). */
+export async function sendCloudMessage(
+  sessionId: string,
+  text: string,
+): Promise<{ ok: boolean; output?: string; error?: string }> {
+  try {
+    const res = await fetch('/api/cloud/message', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId, text }),
+    })
+    return (await res.json()) as { ok: boolean; output?: string; error?: string }
+  } catch (error) {
+    return { ok: false, error: String(error) }
+  }
+}
+
 export async function launchOrCopy(
   body: Parameters<typeof requestLaunch>[0],
 ): Promise<void> {

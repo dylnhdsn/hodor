@@ -37,6 +37,7 @@ hodor scan --all      # include hidden sessions
 hodor scan --json     # the full structured snapshot
 hodor watch           # scan, then live-update as transcripts change
 hodor stats           # entrypoints, subagent runs, token usage + est. cost
+hodor cloud           # list this account's cloud sessions (claude.ai/code)
 hodor bucket <cwd>    # the ~/.claude/projects bucket name for a cwd
 hodor update          # self-update to the newest published build
 ```
