@@ -73,6 +73,18 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
     return byRecency(list)
   }, [view, filter, project, query])
 
+  // Cloud sessions shown alongside the local list — counted with it, so the
+  // rail and header numbers match what's actually on the page.
+  const cloudShown = useMemo(() => {
+    if (filter.kind !== 'all' && filter.kind !== 'project') return []
+    const base = filter.kind === 'all' ? view.cloud : (view.cloudByProject.get(filter.id) ?? [])
+    const q = query.trim().toLowerCase()
+    if (q.length === 0) return base
+    return base.filter((c) =>
+      `${c.title ?? ''} ${c.repo ?? ''} ${c.branches.join(' ')} ${c.id}`.toLowerCase().includes(q),
+    )
+  }, [view, filter, query])
+
   const customNames = new Map(
     snapshot.customProjects.filter((p) => p.archived !== true).map((p) => [p.id, p.name]),
   )
@@ -142,7 +154,7 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
         <nav className="flex-1 overflow-y-auto px-2 pb-2">
           <RailItem
             label="All sessions"
-            count={view.visible.length}
+            count={view.visible.length + view.cloud.length}
             active={filter.kind === 'all'}
             onClick={() => setFilter({ kind: 'all' })}
           />
@@ -221,7 +233,8 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
                   className="w-full max-w-md rounded border border-zinc-800 bg-zinc-900 px-3 py-1.5 text-sm outline-none placeholder:text-zinc-600 focus:border-zinc-600"
                 />
                 <span className="ml-auto whitespace-nowrap text-xs text-zinc-500">
-                  {sessions.length} session{sessions.length === 1 ? '' : 's'}
+                  {sessions.length + cloudShown.length} session
+                  {sessions.length + cloudShown.length === 1 ? '' : 's'}
                 </span>
                 {project !== undefined && (
                   <button
@@ -258,16 +271,7 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
               <div className="flex min-w-0 flex-1 flex-col overflow-y-auto">
               {filter.kind === 'all' || filter.kind === 'project' ? (
                 <CloudSessionList
-                  sessions={(filter.kind === 'all'
-                    ? view.cloud
-                    : (view.cloudByProject.get(filter.id) ?? [])
-                  ).filter(
-                    (c) =>
-                      query.trim().length === 0 ||
-                      `${c.title ?? ''} ${c.repo ?? ''} ${c.branches.join(' ')} ${c.id}`
-                        .toLowerCase()
-                        .includes(query.trim().toLowerCase()),
-                  )}
+                  sessions={cloudShown}
                   nowMs={nowMs}
                   projectOf={filter.kind === 'all' ? view.cloudProjectOf : undefined}
                   openProject={(id) => {
@@ -297,11 +301,9 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
                     mutateProject={mutateProject}
                   />
                 ))}
-                {sessions.length === 0 &&
-                  (filter.kind !== 'project' ||
-                    (view.cloudByProject.get(filter.id) ?? []).length === 0) && (
-                    <li className="px-4 py-8 text-center text-zinc-600">nothing here</li>
-                  )}
+                {sessions.length === 0 && cloudShown.length === 0 && (
+                  <li className="px-4 py-8 text-center text-zinc-600">nothing here</li>
+                )}
               </ul>
               </div>
               {detailId !== undefined && view.byId.has(detailId) ? (
