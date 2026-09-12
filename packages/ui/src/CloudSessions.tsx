@@ -41,8 +41,14 @@ async function messageCloud(s: CloudSession): Promise<void> {
   }
 }
 
-export function CloudSessionList(props: { sessions: CloudSession[]; nowMs: number }) {
-  const { sessions, nowMs } = props
+export function CloudSessionList(props: {
+  sessions: CloudSession[]
+  nowMs: number
+  /** All-view only: which rail project each session joined, for chips. */
+  projectOf?: Map<string, { id: string; name: string }> | undefined
+  openProject?: (id: string) => void
+}) {
+  const { sessions, nowMs, projectOf, openProject } = props
   const [open, setOpen] = useState<string | undefined>(undefined)
   if (sessions.length === 0) return null
   return (
@@ -63,7 +69,20 @@ export function CloudSessionList(props: { sessions: CloudSession[]; nowMs: numbe
                   <span className="min-w-0 truncate text-zinc-200">
                     {s.title ?? s.id.slice(0, 12)}
                   </span>
-                  <span className="shrink-0 text-xs text-zinc-600">{s.repo ?? ''}</span>
+                  {projectOf?.get(s.id) !== undefined ? (
+                    <span
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        openProject?.(projectOf.get(s.id)!.id)
+                      }}
+                      className="shrink-0 cursor-pointer rounded bg-zinc-800 px-1.5 text-[11px] text-zinc-400 hover:text-zinc-200"
+                      title="open project"
+                    >
+                      {projectOf.get(s.id)!.name}
+                    </span>
+                  ) : (
+                    <span className="shrink-0 text-xs text-zinc-600">{s.repo ?? ''}</span>
+                  )}
                   <span className="shrink-0 text-xs text-zinc-600">
                     {formatAge(nowMs, s.updatedAt)}
                   </span>

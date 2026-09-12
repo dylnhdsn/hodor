@@ -28,11 +28,21 @@ and the session's own post-turn words — status detail and a literal
 
 ## The join
 
-Cloud sessions join projects by the same evidence the matcher engine
-uses: the source repository's git remote, normalized like local
-remotes. A cloud session on `github.com/acme/app` lands in whatever
-rail project owns that remote (custom remote matcher or auto
-git-remote identity); unmatched ones appear only in All sessions.
+Cloud sessions join projects by the source repository's git remote,
+normalized like local remotes, resolved in two passes:
+
+1. Direct evidence: a rail project's remote matcher or auto git-remote
+   identity.
+2. Session placement: any rail project HOLDING local sessions of that
+   repo claims its cloud sessions too — this is what makes curated
+   projects with folder-based matchers work, and survives the absorb
+   rule hiding the auto project. (First shipped with only pass 1;
+   Dylan's real data landed everything in All because his cloud repos
+   had no direct-remote rail entry.)
+
+Repos that exist only in the cloud — never cloned locally — get their
+own "cloud only" groups in the rail, named by repo. In All sessions,
+joined rows carry a clickable project chip.
 
 ## Surfaces
 

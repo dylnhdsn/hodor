@@ -67,6 +67,10 @@ export interface View {
   cloud: CloudSession[]
   /** Cloud sessions joined to rail projects by git-remote evidence. */
   cloudByProject: Map<string, CloudSession[]>
+  /** cloud session id → the rail project it joined (for chips in All). */
+  cloudProjectOf: Map<string, { id: string; name: string }>
+  /** Cloud-only repos: rail groups for sessions with no local project. */
+  cloudGroups: Array<{ key: string; name: string; sessions: CloudSession[] }>
 }
 
 const latestOf = (sessions: Session[]): string =>
@@ -146,8 +150,8 @@ export function deriveView(snapshot: Snapshot): View {
     forksOf.set(session.forkedFrom, [...(forksOf.get(session.forkedFrom) ?? []), session])
   }
 
-  // Cloud sessions join projects by git-remote evidence: the same signal
-  // the matcher engine uses, applied to the listing's source repository.
+  // Cloud sessions join projects by git-remote evidence. Direct evidence
+  // first (auto git-remote identities, explicit remote matchers)…
   const railByRemote = new Map<string, string>()
   for (const p of rail) {
     if (p.auto?.identity.kind === 'git-remote') {
@@ -157,12 +161,50 @@ export function deriveView(snapshot: Snapshot): View {
       if (matcher.kind === 'remote') railByRemote.set(normalizeGitUrl(matcher.url), p.id)
     }
   }
+  // …then through session placement: a project holding local sessions of
+  // repo X claims X's cloud sessions even when its own matchers are
+  // folder-based, and even when the auto project was absorbed off the
+  // rail. Direct evidence wins on conflict.
+  const railIds = new Set(rail.map((p) => p.id))
+  for (const [sessionId, autoProject] of derivedOf) {
+    if (autoProject.identity.kind !== 'git-remote') continue
+    const railId = claimsBySession.get(sessionId)?.[0] ?? (railIds.has(autoProject.id) ? autoProject.id : undefined)
+    if (railId === undefined) continue
+    const key = normalizeGitUrl(autoProject.identity.url)
+    if (!railByRemote.has(key)) railByRemote.set(key, railId)
+  }
+
+  const railById = new Map(rail.map((p) => [p.id, p]))
   const cloudByProject = new Map<string, CloudSession[]>()
+  const cloudProjectOf = new Map<string, { id: string; name: string }>()
+  const unmatched: CloudSession[] = []
   for (const cloud of snapshot.cloudSessions) {
     const projectId = cloud.remoteUrl !== undefined ? railByRemote.get(cloud.remoteUrl) : undefined
-    if (projectId === undefined) continue
-    cloudByProject.set(projectId, [...(cloudByProject.get(projectId) ?? []), cloud])
+    const project = projectId !== undefined ? railById.get(projectId) : undefined
+    if (project === undefined) {
+      unmatched.push(cloud)
+      continue
+    }
+    cloudByProject.set(project.id, [...(cloudByProject.get(project.id) ?? []), cloud])
+    cloudProjectOf.set(cloud.id, { id: project.id, name: project.name })
   }
+
+  // Repos that exist ONLY in the cloud (never cloned locally) get their
+  // own rail groups, so cloud work is organized even with no local twin.
+  const groupsByKey = new Map<string, { key: string; name: string; sessions: CloudSession[] }>()
+  for (const cloud of unmatched) {
+    const key = cloud.remoteUrl ?? 'cloud-other'
+    const group = groupsByKey.get(key) ?? {
+      key,
+      name: cloud.repo ?? 'other cloud sessions',
+      sessions: [],
+    }
+    group.sessions.push(cloud)
+    groupsByKey.set(key, group)
+  }
+  const cloudGroups = [...groupsByKey.values()].sort((a, b) =>
+    (b.sessions[0]?.updatedAt ?? '').localeCompare(a.sessions[0]?.updatedAt ?? ''),
+  )
 
   return {
     visible,
@@ -177,6 +219,8 @@ export function deriveView(snapshot: Snapshot): View {
     forksOf,
     cloud: snapshot.cloudSessions,
     cloudByProject,
+    cloudProjectOf,
+    cloudGroups,
   }
 }
 
