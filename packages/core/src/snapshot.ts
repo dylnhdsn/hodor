@@ -11,7 +11,7 @@ import {
 } from './pricing.js'
 import { resolveProjects } from './resolver.js'
 import type { Assignment, Project, Runtime, Session, SessionStore, Thread } from './types.js'
-import { normalizeGitUrl } from './urls.js'
+import { normalizeGitUrl, repoNameOf } from './urls.js'
 import { compileUserPlane, computePlacements, type CustomProject, type Placement } from './userplane.js'
 import { hiddenBy, type HideRules } from './visibility.js'
 
@@ -460,6 +460,27 @@ export function buildSnapshot(state: CoreState, options: SnapshotOptions): Snaps
     .map((s) => ({ ...s }))
     .sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''))
   correlateCloudSessions(state, cloudSessions, placements, assignments, customProjects)
+
+  // One rail, one kind of thing (010): a repo that exists only in the
+  // cloud still IS a project — synthesize the same auto project the
+  // resolver would have built had local sessions existed, id scheme and
+  // all, so rename-materialization and matchers work unchanged.
+  const projectIds = new Set(projects.map((p) => p.id))
+  for (const cloud of cloudSessions) {
+    if (cloud.autoProjectId !== undefined || (cloud.claimedBy?.length ?? 0) > 0) continue
+    if (cloud.remoteUrl === undefined) continue
+    const id = `git-remote:${cloud.remoteUrl}`
+    if (!projectIds.has(id)) {
+      projectIds.add(id)
+      projects.push({
+        id,
+        name: repoNameOf(cloud.remoteUrl),
+        identity: { kind: 'git-remote', url: cloud.remoteUrl },
+        roots: [],
+      })
+    }
+    cloud.autoProjectId = id
+  }
 
   return {
     generatedAt: options.now.toISOString(),

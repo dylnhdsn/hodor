@@ -197,7 +197,10 @@ describe('cloud↔project correlation (Dylan case: shared repo with local sessio
     const snapshot = buildSnapshot(state, { now: new Date('2026-09-12T12:00:00Z') })
     const hit = snapshot.cloudSessions.find((s) => s.id === 'session_hit')!
     expect(hit.autoProjectId).toBe(snapshot.assignments.find((a) => a.sessionId === 'local1')!.projectId)
-    expect(snapshot.cloudSessions.find((s) => s.id === 'session_miss')!.autoProjectId).toBeUndefined()
+    // no local sessions share other/thing → it becomes a cloud-only project
+    expect(snapshot.cloudSessions.find((s) => s.id === 'session_miss')!.autoProjectId).toBe(
+      'git-remote:github.com/other/thing',
+    )
   })
 
   it('lends the local session s custom claims to the cloud session', () => {
@@ -274,5 +277,35 @@ describe('cloud↔project correlation (Dylan case: shared repo with local sessio
     buildSnapshot(state, { now: new Date('2026-09-12T12:00:00Z') })
     expect(state.cloud.sessions[0]!.claimedBy).toBeUndefined()
     expect(state.cloud.sessions[0]!.autoProjectId).toBeUndefined()
+  })
+})
+
+describe('cloud-only repos become ordinary projects', () => {
+  it('synthesizes a resolver-style auto project and attaches the session', () => {
+    const cloud = normalizeCloudSession({
+      id: 'cse_solo',
+      title: 'Hodor',
+      config: { sources: [{ git_repository: { url: 'https://github.com/dylnhdsn/hodor' } }] },
+      last_event_at: '2026-09-12T19:00:00Z',
+    })!
+    const state = foldAll(emptyState, [
+      { type: 'cloud-sessions-scanned', sessions: [cloud], scannedAt: '2026-09-12T19:30:00Z' },
+    ])
+    const snapshot = buildSnapshot(state, { now: new Date('2026-09-12T20:00:00Z') })
+    const project = snapshot.projects.find((p) => p.id === 'git-remote:github.com/dylnhdsn/hodor')
+    expect(project).toMatchObject({
+      name: 'hodor',
+      identity: { kind: 'git-remote', url: 'github.com/dylnhdsn/hodor' },
+      roots: [],
+    })
+    expect(snapshot.cloudSessions[0]!.autoProjectId).toBe('git-remote:github.com/dylnhdsn/hodor')
+    // no repo → nothing to synthesize
+    const bare = normalizeCloudSession({ id: 'cse_norepo', title: 'chat' })!
+    const state2 = foldAll(emptyState, [
+      { type: 'cloud-sessions-scanned', sessions: [bare], scannedAt: '2026-09-12T19:30:00Z' },
+    ])
+    const snapshot2 = buildSnapshot(state2, { now: new Date('2026-09-12T20:00:00Z') })
+    expect(snapshot2.projects).toEqual([])
+    expect(snapshot2.cloudSessions[0]!.autoProjectId).toBeUndefined()
   })
 })

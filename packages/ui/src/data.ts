@@ -67,8 +67,6 @@ export interface View {
   cloudByProject: Map<string, CloudSession[]>
   /** cloud session id → the rail project it joined (for chips in All). */
   cloudProjectOf: Map<string, { id: string; name: string }>
-  /** Cloud-only repos: rail groups for sessions with no local project. */
-  cloudGroups: Array<{ key: string; name: string; sessions: CloudSession[] }>
 }
 
 const latestOf = (sessions: Session[]): string =>
@@ -120,6 +118,20 @@ export function deriveView(snapshot: Snapshot): View {
     sessionsByAuto.set(a.projectId, [...(sessionsByAuto.get(a.projectId) ?? []), session])
   }
 
+  // Cloud sessions bucket by the correlation the snapshot computed:
+  // first live custom claim, else the (possibly synthesized) auto
+  // project. One rail, one kind of thing — a cloud-only repo project
+  // sits in the same list as everything else.
+  const cloudByProject = new Map<string, CloudSession[]>()
+  for (const cloud of snapshot.cloudSessions) {
+    const target = cloud.claimedBy?.find((id) => liveIds.has(id)) ?? cloud.autoProjectId
+    if (target === undefined) continue
+    cloudByProject.set(target, [...(cloudByProject.get(target) ?? []), cloud])
+  }
+
+  const latestCloudOf = (id: string): string =>
+    cloudByProject.get(id)?.reduce((max, c) => ((c.updatedAt ?? '') > max ? (c.updatedAt ?? '') : max), '') ?? ''
+
   const rail: RailProject[] = [
     ...liveCustom.map((p) => ({
       kind: 'custom' as const,
@@ -129,7 +141,9 @@ export function deriveView(snapshot: Snapshot): View {
       custom: p,
     })),
     ...snapshot.projects
-      .filter((p) => (sessionsByAuto.get(p.id) ?? []).length > 0)
+      .filter(
+        (p) => (sessionsByAuto.get(p.id) ?? []).length > 0 || (cloudByProject.get(p.id) ?? []).length > 0,
+      )
       .map((p) => ({
         kind: 'auto' as const,
         id: p.id,
@@ -137,10 +151,11 @@ export function deriveView(snapshot: Snapshot): View {
         sessions: sessionsByAuto.get(p.id) ?? [],
         auto: p,
       })),
-  ].sort(
-    (a, b) =>
-      latestOf(b.sessions).localeCompare(latestOf(a.sessions)) || a.name.localeCompare(b.name),
-  )
+  ].sort((a, b) => {
+    const aLatest = [latestOf(a.sessions), latestCloudOf(a.id)].sort().pop() ?? ''
+    const bLatest = [latestOf(b.sessions), latestCloudOf(b.id)].sort().pop() ?? ''
+    return bLatest.localeCompare(aLatest) || a.name.localeCompare(b.name)
+  })
 
   const forksOf = new Map<string, Session[]>()
   for (const session of snapshot.sessions) {
@@ -148,45 +163,13 @@ export function deriveView(snapshot: Snapshot): View {
     forksOf.set(session.forkedFrom, [...(forksOf.get(session.forkedFrom) ?? []), session])
   }
 
-  // Cloud↔project correlation happens in the core snapshot (evidence:
-  // remote matchers + repos shared with local sessions, via git
-  // contexts). Here we only pick which RAIL entry represents that:
-  // the first live custom claim on the rail, else the auto project.
   const railById = new Map(rail.map((p) => [p.id, p]))
-  const cloudByProject = new Map<string, CloudSession[]>()
   const cloudProjectOf = new Map<string, { id: string; name: string }>()
-  const unmatched: CloudSession[] = []
-  for (const cloud of snapshot.cloudSessions) {
-    const railId =
-      cloud.claimedBy?.find((id) => railById.has(id)) ??
-      (cloud.autoProjectId !== undefined && railById.has(cloud.autoProjectId)
-        ? cloud.autoProjectId
-        : undefined)
-    const project = railId !== undefined ? railById.get(railId) : undefined
-    if (project === undefined) {
-      unmatched.push(cloud)
-      continue
-    }
-    cloudByProject.set(project.id, [...(cloudByProject.get(project.id) ?? []), cloud])
-    cloudProjectOf.set(cloud.id, { id: project.id, name: project.name })
+  for (const [projectId, clouds] of cloudByProject) {
+    const project = railById.get(projectId)
+    if (project === undefined) continue
+    for (const cloud of clouds) cloudProjectOf.set(cloud.id, { id: project.id, name: project.name })
   }
-
-  // Repos that exist ONLY in the cloud (never cloned locally) get their
-  // own rail groups, so cloud work is organized even with no local twin.
-  const groupsByKey = new Map<string, { key: string; name: string; sessions: CloudSession[] }>()
-  for (const cloud of unmatched) {
-    const key = cloud.remoteUrl ?? 'cloud-other'
-    const group = groupsByKey.get(key) ?? {
-      key,
-      name: cloud.repo ?? 'other cloud sessions',
-      sessions: [],
-    }
-    group.sessions.push(cloud)
-    groupsByKey.set(key, group)
-  }
-  const cloudGroups = [...groupsByKey.values()].sort((a, b) =>
-    (b.sessions[0]?.updatedAt ?? '').localeCompare(a.sessions[0]?.updatedAt ?? ''),
-  )
 
   return {
     visible,
@@ -202,7 +185,6 @@ export function deriveView(snapshot: Snapshot): View {
     cloud: snapshot.cloudSessions,
     cloudByProject,
     cloudProjectOf,
-    cloudGroups,
   }
 }
 

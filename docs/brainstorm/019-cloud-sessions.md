@@ -46,9 +46,15 @@ normalized like local remotes, resolved in two passes:
    identity keyed too narrowly, then project-identity walking broke on
    path-identity projects.)
 
-Repos that exist only in the cloud — never cloned locally — get their
-own "cloud only" groups in the rail, named by repo. In All sessions,
-joined rows carry a clickable project chip.
+One rail, one kind of thing (Dylan's direction, matching 010): a
+project may hold local sessions, cloud sessions, or both — never a
+separate category. A repo that exists only in the cloud synthesizes
+the SAME auto project the resolver would have built locally (same
+`git-remote:` id, same identity), so renaming it materializes with a
+remote matcher like any auto project, and local sessions flow into it
+the day the repo is cloned. Sessions with no repo at all stay in All
+sessions until manual assignment exists. Joined rows in All carry a
+clickable project chip.
 
 ## Surfaces
 

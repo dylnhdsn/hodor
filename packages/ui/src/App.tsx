@@ -25,7 +25,6 @@ import { useSnapshot } from './useSnapshot.js'
 type Filter =
   | { kind: 'all' }
   | { kind: 'project'; id: string }
-  | { kind: 'cloud'; key: string }
   | { kind: 'archived' }
   | { kind: 'hidden' }
 
@@ -63,9 +62,8 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
       case 'project':
         list = project?.sessions ?? []
         break
-      case 'cloud':
       case 'hidden':
-        list = filter.kind === 'hidden' ? view.hidden : []
+        list = view.hidden
         break
       case 'archived':
         list = []
@@ -155,7 +153,7 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
             <RailItem
               key={p.id}
               label={p.name}
-              count={p.sessions.length}
+              count={p.sessions.length + (view.cloudByProject.get(p.id)?.length ?? 0)}
               active={filter.kind === 'project' && filter.id === p.id}
               onClick={() => {
                 setFilter({ kind: 'project', id: p.id })
@@ -167,23 +165,6 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
             <p className="px-3 py-1 text-xs text-zinc-600">none yet — press +</p>
           )}
 
-          {view.cloudGroups.length > 0 && (
-            <>
-              <RailHeading>cloud only</RailHeading>
-              {view.cloudGroups.map((g) => (
-                <RailItem
-                  key={g.key}
-                  label={`☁ ${g.name}`}
-                  count={g.sessions.length}
-                  active={filter.kind === 'cloud' && filter.key === g.key}
-                  onClick={() => {
-                    setFilter({ kind: 'cloud', key: g.key })
-                    setSelected(new Set())
-                  }}
-                />
-              ))}
-            </>
-          )}
         </nav>
 
         <UpdatePill />
@@ -259,13 +240,11 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
 
             <div className="flex min-h-0 flex-1">
               <div className="flex min-w-0 flex-1 flex-col overflow-y-auto">
-              {filter.kind === 'all' || filter.kind === 'project' || filter.kind === 'cloud' ? (
+              {filter.kind === 'all' || filter.kind === 'project' ? (
                 <CloudSessionList
                   sessions={(filter.kind === 'all'
                     ? view.cloud
-                    : filter.kind === 'project'
-                      ? (view.cloudByProject.get(filter.id) ?? [])
-                      : (view.cloudGroups.find((g) => g.key === filter.key)?.sessions ?? [])
+                    : (view.cloudByProject.get(filter.id) ?? [])
                   ).filter(
                     (c) =>
                       query.trim().length === 0 ||
@@ -302,9 +281,11 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
                     mutateProject={mutateProject}
                   />
                 ))}
-                {sessions.length === 0 && filter.kind !== 'cloud' && (
-                  <li className="px-4 py-8 text-center text-zinc-600">nothing here</li>
-                )}
+                {sessions.length === 0 &&
+                  (filter.kind !== 'project' ||
+                    (view.cloudByProject.get(filter.id) ?? []).length === 0) && (
+                    <li className="px-4 py-8 text-center text-zinc-600">nothing here</li>
+                  )}
               </ul>
               </div>
               {detailId !== undefined && view.byId.has(detailId) ? (
