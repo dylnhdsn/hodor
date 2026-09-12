@@ -32,6 +32,12 @@ import { resolveStores, storeFs } from './stores.js'
 import { uiAssets } from './ui-assets.js'
 import { loadUserFiles, saveConfig, saveUserPlane, type UserFiles } from './userdata.js'
 import { cliVersion } from './version.js'
+import {
+  WORKSPACE_DOC_LIMIT,
+  loadWorkspaces,
+  parseWorkspaceDoc,
+  saveWorkspaces,
+} from './workspace.js'
 
 /**
  * The local UI/API server: the same pipeline the CLI runs, kept warm and
@@ -504,6 +510,36 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
 
       if (req.method === 'POST' && path === '/api/cloud/message') {
         await handleCloudMessage(res, await readBody(req))
+        return
+      }
+
+      // Workspace document (desktop window arrangements, docs/brainstorm/022).
+      // Not part of the snapshot: layouts are UI state, not session data.
+      if (reads && path === '/api/workspace') {
+        sendJson(res, 200, await loadWorkspaces(deps, files.home))
+        return
+      }
+
+      if (req.method === 'POST' && path === '/api/workspace') {
+        const body = await readBody(req)
+        if (body.length > WORKSPACE_DOC_LIMIT) {
+          sendJson(res, 400, { error: 'workspace document too large' })
+          return
+        }
+        let parsed: unknown
+        try {
+          parsed = JSON.parse(body)
+        } catch {
+          sendJson(res, 400, { error: 'body must be JSON' })
+          return
+        }
+        const doc = parseWorkspaceDoc(parsed)
+        if (doc === undefined) {
+          sendJson(res, 400, { error: 'not a workspace document' })
+          return
+        }
+        await saveWorkspaces(deps, files.home, doc)
+        sendJson(res, 200, { ok: true })
         return
       }
 

@@ -4,9 +4,18 @@
  * plain browser behavior when absent.
  */
 
+/** How a terminal was opened — doubles as the workspace slot rule. */
+export interface OpenTarget {
+  kind: 'resume' | 'fork' | 'new' | 'teleport'
+  sessionId?: string
+  storeId?: string
+  root?: string
+}
+
 export interface TermInfo {
   id: string
   title: string
+  target?: OpenTarget
   exited?: number
 }
 
@@ -24,12 +33,7 @@ export type UpdateState =
   | { state: 'available-manual'; version: string; url: string }
 
 export interface HodorDesktop {
-  openTerminal(target: {
-    kind: 'resume' | 'fork' | 'new' | 'teleport'
-    sessionId?: string
-    storeId?: string
-    root?: string
-  }): Promise<OpenResult>
+  openTerminal(target: OpenTarget): Promise<OpenResult>
   attach(id: string): Promise<{ backlog?: string; title?: string; exited?: number; error?: string }>
   detach(id: string): void
   write(id: string, data: string): void
@@ -43,7 +47,13 @@ export interface HodorDesktop {
   onUpdateEvent(handler: (payload: UpdateState) => void): () => void
   onData(handler: (payload: { id: string; data: string }) => void): () => void
   onEvent(
-    handler: (payload: { type: string; id: string; title?: string; code?: number }) => void,
+    handler: (payload: {
+      type: string
+      id: string
+      title?: string
+      code?: number
+      target?: OpenTarget
+    }) => void,
   ): () => void
 }
 

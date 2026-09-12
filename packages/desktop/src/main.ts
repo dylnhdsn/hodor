@@ -18,9 +18,18 @@ import { startServer, type RunningServer } from '../../cli/src/server.js'
 
 const BACKLOG_LIMIT = 512 * 1024
 
+interface OpenTarget {
+  kind: string
+  sessionId?: string
+  storeId?: string
+  root?: string
+}
+
 interface Term {
   id: string
   title: string
+  /** How this terminal was opened — the workspace slot rule (doc 022). */
+  target: OpenTarget
   pty: IPty
   /** Bounded scrollback for re-attach; chunks trimmed from the front. */
   backlog: Buffer[]
@@ -33,6 +42,9 @@ interface Term {
 }
 
 const terms = new Map<string, Term>()
+// Ids are unique across app restarts: saved workspace layouts carry the ids
+// of dead PTYs, and a fresh boot must never mint one that matches.
+const bootTag = Date.now().toString(36)
 let nextTermId = 1
 let server: RunningServer | undefined
 let mainWindow: BrowserWindow | undefined
@@ -66,8 +78,13 @@ function broadcast(channel: string, payload: unknown): void {
   }
 }
 
-function termSummary(term: Term): { id: string; title: string; exited?: number } {
-  return { id: term.id, title: term.title, ...(term.exited !== undefined ? { exited: term.exited } : {}) }
+function termSummary(term: Term): { id: string; title: string; target: OpenTarget; exited?: number } {
+  return {
+    id: term.id,
+    title: term.title,
+    target: term.target,
+    ...(term.exited !== undefined ? { exited: term.exited } : {}),
+  }
 }
 
 interface PtySpec {
@@ -76,12 +93,9 @@ interface PtySpec {
   cwd?: string
 }
 
-async function openTerminal(target: {
-  kind: string
-  sessionId?: string
-  storeId?: string
-  root?: string
-}): Promise<{ id?: string; title?: string; error?: string; command?: string; cwd?: string }> {
+async function openTerminal(
+  target: OpenTarget,
+): Promise<{ id?: string; title?: string; error?: string; command?: string; cwd?: string }> {
   if (server === undefined) return { error: 'server not ready' }
   const res = await fetch(`${server.url}/api/launch`, {
     method: 'POST',
@@ -103,7 +117,7 @@ async function openTerminal(target: {
     }
   }
 
-  const id = `t${nextTermId++}`
+  const id = `t${bootTag}-${nextTermId++}`
   const title = body.title ?? id
   const pty = ptySpawn(body.spec.file, body.spec.args, {
     name: 'xterm-256color',
@@ -112,7 +126,7 @@ async function openTerminal(target: {
     cwd: body.spec.cwd ?? app.getPath('home'),
     env: { ...process.env, TERM: 'xterm-256color' } as Record<string, string>,
   })
-  const term: Term = { id, title, pty, backlog: [], backlogBytes: 0, subscribers: new Set() }
+  const term: Term = { id, title, target, pty, backlog: [], backlogBytes: 0, subscribers: new Set() }
   terms.set(id, term)
 
   pty.onData((data) => {
@@ -132,7 +146,7 @@ async function openTerminal(target: {
     broadcast('pty:event', { type: 'exit', id, code: exitCode })
   })
 
-  broadcast('pty:event', { type: 'opened', id, title })
+  broadcast('pty:event', { type: 'opened', id, title, target })
   return { id, title }
 }
 
@@ -163,7 +177,9 @@ function popOut(id: string): void {
     delete term.popout
     // The PTY survives its window: hand the terminal back to the dock,
     // unless it already exited and nobody is watching.
-    if (terms.has(id)) broadcast('pty:event', { type: 'returned', id, title: term.title })
+    if (terms.has(id)) {
+      broadcast('pty:event', { type: 'returned', id, title: term.title, target: term.target })
+    }
   })
 }
 

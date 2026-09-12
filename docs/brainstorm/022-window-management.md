@@ -1,8 +1,11 @@
 # 022 — Window management: workspaces, templates, saved arrangements
 
 Date: 2026-09-12
-Status: research + proposed design. Nothing built yet; graduates the
-backlog's "window management spec" item.
+Status: v1 implemented (see Phasing) — the main-window dock is a dockview
+region of tab groups and splits, terminals only, autosaved to
+`~/.hodor/workspaces.json` (one implicit workspace) via `/api/workspace`,
+with dead slots degrading to a resume affordance on restore. v2+ (named
+workspaces, templates, multi-window documents) remain design.
 
 The ask: beyond the project/session viewer, **workspace views** —
 persistent window, tab, and split arrangements that can be (a) templated

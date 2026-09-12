@@ -213,7 +213,7 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
               className="px-4 pb-2 font-mono text-[10px] text-zinc-700"
               title="the build serving this UI"
             >
-              {snapshot.hodorVersion.replace(/^\d+\.\d+\.\d+-/, '')}
+              {snapshot.hodorVersion}
             </p>
           )}
         </div>

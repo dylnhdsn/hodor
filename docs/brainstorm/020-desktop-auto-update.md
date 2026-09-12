@@ -20,8 +20,12 @@ check 15s after launch).
 
 Versioning: the updater compares semver, and the old stamping
 flattened everything to 0.0.1 — no update would ever fire. The desktop
-package now stamps 0.0.<CI run number>; the full build string stays in
-__HODOR_VERSION__ for display.
+package originally stamped 0.0.<CI run number>; since the 0.1.0
+graduation it stamps MAJOR.MINOR.<run> from the cli package's base
+version — plain release semver (no prerelease tags), so every install
+ever shipped still sees each new build as greater, and it stays
+monotonic as long as the base minor only goes up. The full build string
+stays in __HODOR_VERSION__ for display.
 
 ## Per-platform reality
 

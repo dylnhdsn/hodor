@@ -40,12 +40,16 @@ await build({
 })
 
 // Stamp an INCREASING semver from the CI run number: the auto-updater
-// compares versions, so 0.0.1 forever would mean no update ever fires.
-// 0.0.<run> per rolling build; dev checkouts stay at 0.0.0.
+// compares versions, so a fixed version would mean no update ever fires.
+// MAJOR.MINOR come from the cli package (the project's base version) and
+// the PATCH is the run number — plain release semver, no prerelease tags,
+// so every install ever shipped (0.0.<run> included) sees each new build
+// as greater. Monotonic as long as the base minor only ever goes up.
 const desktopPkgPath = new URL('../packages/desktop/package.json', import.meta.url)
 const desktopPkg = JSON.parse(readFileSync(desktopPkgPath, 'utf8'))
 const run = /-build\.(\d+)\./.exec(version)?.[1]
-desktopPkg.version = run !== undefined ? `0.0.${run}` : '0.0.0'
+const [major = '0', minor = '0'] = version.split('-')[0].split('.')
+desktopPkg.version = run !== undefined ? `${major}.${minor}.${run}` : '0.0.0'
 writeFileSync(desktopPkgPath, JSON.stringify(desktopPkg, null, 2) + '\n')
 
 console.log(`bundled hodor desktop ${version}`)

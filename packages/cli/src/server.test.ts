@@ -497,3 +497,54 @@ describe('cloud sessions', () => {
     expect(snapshot.cloudError).toBeUndefined()
   })
 })
+
+describe('workspace document', () => {
+  it('round-trips through /api/workspace and starts empty', async () => {
+    const { deps, fs } = serverDeps()
+    const server = await start(fs, deps)
+
+    const empty = (await (await fetch(`${server.url}/api/workspace`)).json()) as {
+      workspaces: unknown[]
+    }
+    expect(empty.workspaces).toEqual([])
+
+    const doc = {
+      v: 1,
+      dockHeight: 300,
+      workspaces: [
+        {
+          id: 'default',
+          name: 'Workspace',
+          windows: [{ layout: { grid: { root: {} } }, extra: 'kept' }],
+        },
+      ],
+    }
+    const post = await fetch(`${server.url}/api/workspace`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(doc),
+    })
+    expect(post.status).toBe(200)
+
+    const read = (await (await fetch(`${server.url}/api/workspace`)).json()) as typeof doc
+    expect(read.dockHeight).toBe(300)
+    expect(read.workspaces[0]!.windows[0]!.layout).toEqual({ grid: { root: {} } })
+    // persisted where the rest of the user plane lives
+    expect(await fs.readFile('/home/u/.hodor/workspaces.json')).toContain('"default"')
+  })
+
+  it('rejects bodies that are not workspace documents', async () => {
+    const { deps, fs } = serverDeps()
+    const server = await start(fs, deps)
+    for (const body of ['not json', '{"workspaces":"nope"}', '{"workspaces":[{"id":1}]}']) {
+      const res = await fetch(`${server.url}/api/workspace`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body,
+      })
+      expect(res.status).toBe(400)
+    }
+    // nothing was written
+    expect(await fs.readFile('/home/u/.hodor/workspaces.json')).toBeUndefined()
+  })
+})

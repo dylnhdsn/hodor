@@ -32,9 +32,10 @@ brainstorm doc when they get built. Living file — prune on completion.
 
 ## Platform & distribution
 
-- **Window management build** — research + design done in
-  [022](brainstorm/022-window-management.md) (workspaces as slot
-  documents, dockview engine, four phases); awaiting go-ahead.
+- **Window management v2–v4** — v1 (dockview splits/tabs, autosaved
+  implicit workspace, restore-by-resume) shipped; named workspaces,
+  templates + slot rules, and multi-window documents remain
+  ([022](brainstorm/022-window-management.md)).
 - **Desktop polish** — app icon, keyboard shortcuts (next/prev
   terminal), signing, multiple manager windows.
 - **WSL-native install** — installer assumes shared Windows home;

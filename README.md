@@ -147,10 +147,13 @@ hodor update    # alias: hodor upgrade
 ### Desktop app
 
 The same UI as a desktop app with EMBEDDED terminals: resume, fork, and
-new-session open real `claude` PTYs in a dock (tabs, drag-to-resize,
-pop-out windows), routed into the right place — a WSL store's session
-opens inside its distro even from the Windows app. Unsigned builds on
-the same rolling release (expect a SmartScreen/Gatekeeper warning):
+new-session open real `claude` PTYs in a workspace region — tab groups,
+drag-to-split layouts, pop-out windows — routed into the right place (a
+WSL store's session opens inside its distro even from the Windows app).
+The arrangement persists across restarts: reopening the app rebuilds
+your layout, and each dead tile offers to `claude --resume` its session
+right back into place. Unsigned builds on the same rolling release
+(expect a SmartScreen/Gatekeeper warning):
 
 - [Windows installer](https://github.com/dylnhdsn/hodor/releases/download/latest/hodor-desktop-win-x64.exe)
 - [Linux AppImage](https://github.com/dylnhdsn/hodor/releases/download/latest/hodor-desktop-linux-x86_64.AppImage)

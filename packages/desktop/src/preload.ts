@@ -36,11 +36,17 @@ const api = {
     return () => ipcRenderer.removeListener('pty:data', listener)
   },
   onEvent: (
-    handler: (payload: { type: string; id: string; title?: string; code?: number }) => void,
+    handler: (payload: {
+      type: string
+      id: string
+      title?: string
+      code?: number
+      target?: OpenTarget
+    }) => void,
   ) => {
     const listener = (
       _event: unknown,
-      payload: { type: string; id: string; title?: string; code?: number },
+      payload: { type: string; id: string; title?: string; code?: number; target?: OpenTarget },
     ): void => handler(payload)
     ipcRenderer.on('pty:event', listener)
     return () => ipcRenderer.removeListener('pty:event', listener)
