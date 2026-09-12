@@ -32,9 +32,9 @@ brainstorm doc when they get built. Living file — prune on completion.
 
 ## Platform & distribution
 
-- **Window management spec** — Dylan wants this specced properly:
-  layouts/splits, what lives in which window, focus model, shortcuts.
-  Today's dock+popout is the v1 to design against.
+- **Window management build** — research + design done in
+  [022](brainstorm/022-window-management.md) (workspaces as slot
+  documents, dockview engine, four phases); awaiting go-ahead.
 - **Desktop polish** — app icon, keyboard shortcuts (next/prev
   terminal), signing, multiple manager windows.
 - **WSL-native install** — installer assumes shared Windows home;
