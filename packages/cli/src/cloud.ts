@@ -39,6 +39,9 @@ export async function scanCloudSessions(deps: CliDeps): Promise<SourceEvent | un
     const res = await deps.httpGetJson(LIST_URL, {
       authorization: `Bearer ${token}`,
       'anthropic-beta': 'oauth-2025-04-20',
+      // Required on every api.anthropic.com call — the CLI always sends
+      // it; omitting it is a 400 even with valid auth.
+      'anthropic-version': '2023-06-01',
       accept: 'application/json',
     })
     if (res.status === 401 || res.status === 403) {
@@ -50,11 +53,14 @@ export async function scanCloudSessions(deps: CliDeps): Promise<SourceEvent | un
       }
     }
     if (res.status !== 200) {
+      // Carry the server's own words: this endpoint is undocumented, so
+      // when it drifts, the error text is the diagnosis.
+      const detail = JSON.stringify(res.json ?? '').slice(0, 300)
       return {
         type: 'cloud-sessions-scanned',
         sessions: [],
         scannedAt,
-        error: `cloud listing failed (HTTP ${res.status})`,
+        error: `cloud listing failed (HTTP ${res.status})${detail !== '""' ? ` — ${detail}` : ''}`,
       }
     }
     return { type: 'cloud-sessions-scanned', sessions: normalizeCloudListing(res.json), scannedAt }

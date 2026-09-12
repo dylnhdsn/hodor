@@ -9,12 +9,20 @@ function serverDeps(fs = new MemFs()): {
   errors: string[]
   spawns: Array<{ file: string; args: string[] }>
   captures: Array<{ file: string; args: string[] }>
-  http: { responses: Map<string, { status: number; json?: unknown }>; calls: string[] }
+  http: {
+    responses: Map<string, { status: number; json?: unknown }>
+    calls: string[]
+    headers?: Record<string, string>
+  }
 } {
   const errors: string[] = []
   const spawns: Array<{ file: string; args: string[] }> = []
   const captures: Array<{ file: string; args: string[] }> = []
-  const http = { responses: new Map<string, { status: number; json?: unknown }>(), calls: [] as string[] }
+  const http: {
+    responses: Map<string, { status: number; json?: unknown }>
+    calls: string[]
+    headers?: Record<string, string>
+  } = { responses: new Map(), calls: [] }
   const deps: CliDeps = {
     fs,
     homedir: () => '/home/u',
@@ -34,8 +42,9 @@ function serverDeps(fs = new MemFs()): {
       if (file !== 'x-terminal-emulator') throw new Error(`spawn ${file}: not stubbed`)
     },
     selfUpdate: async () => 0,
-    httpGetJson: async (url) => {
+    httpGetJson: async (url, headers) => {
       http.calls.push(url)
+      http.headers = headers
       return http.responses.get(url) ?? { status: 404 }
     },
     runCapture: async (file, args) => {
@@ -436,6 +445,12 @@ describe('cloud sessions', () => {
       bucket: 'blocked',
       needsAction: 'answer the question',
       remoteUrl: 'github.com/acme/app',
+    })
+    // the API requires anthropic-version even with valid auth (400 without)
+    expect(http.headers).toMatchObject({
+      authorization: 'Bearer tok_test',
+      'anthropic-version': '2023-06-01',
+      'anthropic-beta': 'oauth-2025-04-20',
     })
 
     // messaging queues claude -p … --cloud <id> through a login shell
