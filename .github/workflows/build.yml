@@ -102,11 +102,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          for i in 1 2 3; do
-            gh release upload "latest" "packages/desktop/release/${{ matrix.artifact }}" --clobber && exit 0
-            sleep 10
-          done
-          exit 1
+          cd packages/desktop/release
+          # installer + blockmaps first, the update feed (latest*.yml)
+          # last — clients read the yml, then fetch what it names.
+          BIN="${{ matrix.artifact }} $(ls *.blockmap 2>/dev/null || true)"
+          YML="$(ls latest*.yml 2>/dev/null || true)"
+          upload() {
+            for i in 1 2 3; do
+              gh release upload "latest" $1 --clobber && return 0
+              sleep 10
+            done
+            return 1
+          }
+          upload "$BIN"
+          if [ -n "$YML" ]; then upload "$YML"; fi
 
   mutation:
     runs-on: ubuntu-latest

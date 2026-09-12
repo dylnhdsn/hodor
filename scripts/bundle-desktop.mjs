@@ -22,7 +22,7 @@ await build({
   target: 'node22',
   format: 'cjs',
   outfile: 'packages/desktop/dist/main.cjs',
-  external: ['electron', 'node-pty'],
+  external: ['electron', 'node-pty', 'electron-updater'],
   define: { __HODOR_VERSION__: JSON.stringify(version) },
   plugins: [embedUiAssetsPlugin(assets)],
   logLevel: 'info',
@@ -39,10 +39,13 @@ await build({
   logLevel: 'info',
 })
 
-// Stamp the desktop package version so electron-builder artifacts carry it.
+// Stamp an INCREASING semver from the CI run number: the auto-updater
+// compares versions, so 0.0.1 forever would mean no update ever fires.
+// 0.0.<run> per rolling build; dev checkouts stay at 0.0.0.
 const desktopPkgPath = new URL('../packages/desktop/package.json', import.meta.url)
 const desktopPkg = JSON.parse(readFileSync(desktopPkgPath, 'utf8'))
-desktopPkg.version = version.replace(/^(\d+\.\d+\.\d+).*$/, '$1')
+const run = /-build\.(\d+)\./.exec(version)?.[1]
+desktopPkg.version = run !== undefined ? `0.0.${run}` : '0.0.0'
 writeFileSync(desktopPkgPath, JSON.stringify(desktopPkg, null, 2) + '\n')
 
 console.log(`bundled hodor desktop ${version}`)

@@ -117,7 +117,7 @@ Windows PowerShell:
 irm https://github.com/dylnhdsn/hodor/releases/download/latest/install.ps1 | iex
 ```
 
-Both install to `~/.hodor/bin` (override with `HODOR_HOME`) and add it to
+The desktop app auto-updates itself from the same release (Windows/Linux; unsigned macOS shows a notice linking the fresh dmg). Both CLI installers install to `~/.hodor/bin` (override with `HODOR_HOME`) and add it to
 your PATH. After that, get the newest build any time with:
 
 ```sh

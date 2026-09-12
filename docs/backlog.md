@@ -32,8 +32,6 @@ brainstorm doc when they get built. Living file — prune on completion.
 
 ## Platform & distribution
 
-- **Desktop auto-update** — `hodor update` covers the CLI only; the
-  desktop app updates by re-downloading from the latest release.
 - **Window management spec** — Dylan wants this specced properly:
   layouts/splits, what lives in which window, focus model, shortcuts.
   Today's dock+popout is the v1 to design against.

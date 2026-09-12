@@ -22,6 +22,13 @@ const api = {
   list: () => ipcRenderer.invoke('pty:list'),
   popOut: (id: string) => ipcRenderer.invoke('pty:popout', { id }),
   info: () => ipcRenderer.invoke('desktop:info'),
+  updateState: () => ipcRenderer.invoke('update:state'),
+  installUpdate: () => ipcRenderer.invoke('update:install'),
+  onUpdateEvent: (handler: (payload: unknown) => void) => {
+    const listener = (_event: unknown, payload: unknown): void => handler(payload)
+    ipcRenderer.on('update:event', listener)
+    return () => ipcRenderer.removeListener('update:event', listener)
+  },
   onData: (handler: (payload: { id: string; data: string }) => void) => {
     const listener = (_event: unknown, payload: { id: string; data: string }): void =>
       handler(payload)

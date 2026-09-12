@@ -12,7 +12,8 @@
     "dist": "electron-builder --publish never"
   },
   "dependencies": {
-    "node-pty": "^1.0.0"
+    "node-pty": "^1.0.0",
+    "electron-updater": "^6.3.9"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
@@ -23,7 +24,10 @@
   "build": {
     "appId": "dev.dylnhdsn.hodor",
     "productName": "hodor",
-    "publish": null,
+    "publish": {
+      "provider": "generic",
+      "url": "https://github.com/dylnhdsn/hodor/releases/download/latest"
+    },
     "directories": {
       "output": "release"
     },

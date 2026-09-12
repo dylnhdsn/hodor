@@ -19,6 +19,10 @@ export interface OpenResult {
   cwd?: string
 }
 
+export type UpdateState =
+  | { state: 'ready'; version: string }
+  | { state: 'available-manual'; version: string; url: string }
+
 export interface HodorDesktop {
   openTerminal(target: {
     kind: 'resume' | 'fork' | 'new' | 'teleport'
@@ -34,6 +38,9 @@ export interface HodorDesktop {
   list(): Promise<TermInfo[]>
   popOut(id: string): Promise<void>
   info(): Promise<{ version: string; platform: string }>
+  updateState(): Promise<UpdateState | undefined>
+  installUpdate(): Promise<void>
+  onUpdateEvent(handler: (payload: UpdateState) => void): () => void
   onData(handler: (payload: { id: string; data: string }) => void): () => void
   onEvent(
     handler: (payload: { type: string; id: string; title?: string; code?: number }) => void,

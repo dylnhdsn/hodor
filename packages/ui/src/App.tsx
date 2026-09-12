@@ -19,6 +19,7 @@ import {
 } from './data.js'
 import { CloudSessionList } from './CloudSessions.js'
 import { TerminalDock } from './TerminalDock.js'
+import { UpdatePill } from './UpdatePill.js'
 import { useSnapshot } from './useSnapshot.js'
 
 type Filter =
@@ -165,6 +166,7 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
           )}
         </nav>
 
+        <UpdatePill />
         <div className="border-t border-zinc-800 text-xs">
           {view.archivedProjects.length > 0 && (
             <button

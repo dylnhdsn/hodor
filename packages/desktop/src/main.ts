@@ -10,6 +10,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { BrowserWindow, app, ipcMain, shell } from 'electron'
+import { autoUpdater } from 'electron-updater'
 import type { IPty } from 'node-pty'
 import { spawn as ptySpawn } from 'node-pty'
 import { baseNodeDeps } from '../../cli/src/node-deps.js'
@@ -220,9 +221,71 @@ function wireIpc(): void {
     version: typeof __HODOR_VERSION__ === 'string' ? __HODOR_VERSION__ : 'dev',
     platform: process.platform,
   }))
+
+  ipcMain.handle('update:state', () => updateState)
+  ipcMain.handle('update:install', () => {
+    if (updateState?.state === 'ready') autoUpdater.quitAndInstall()
+  })
 }
 
 declare const __HODOR_VERSION__: string | undefined
+
+/**
+ * Auto-update against the rolling release. Windows (NSIS) and Linux
+ * (AppImage) update silently via electron-updater's generic feed — CI
+ * publishes latest.yml / latest-linux.yml next to the installers.
+ * Unsigned macOS can't be auto-installed (Squirrel refuses), so darwin
+ * only compares build numbers against version.json and shows a notice.
+ * Every failure here is quiet: the rolling release replaces assets one
+ * by one, so a mid-upload check can mismatch — the next check heals it.
+ */
+type UpdateState =
+  | { state: 'ready'; version: string }
+  | { state: 'available-manual'; version: string; url: string }
+
+let updateState: UpdateState | undefined
+
+function announceUpdate(next: UpdateState): void {
+  updateState = next
+  broadcast('update:event', next)
+}
+
+const buildNumberOf = (version: string): number =>
+  Number(/-build\.(\d+)\./.exec(version)?.[1] ?? 0)
+
+async function checkMacUpdate(): Promise<void> {
+  const local = typeof __HODOR_VERSION__ === 'string' ? __HODOR_VERSION__ : ''
+  const res = await fetch('https://github.com/dylnhdsn/hodor/releases/download/latest/version.json')
+  if (!res.ok) return
+  const remote = ((await res.json()) as { version?: string }).version ?? ''
+  if (buildNumberOf(remote) > buildNumberOf(local)) {
+    announceUpdate({
+      state: 'available-manual',
+      version: remote,
+      url: 'https://github.com/dylnhdsn/hodor/releases/download/latest/hodor-desktop-mac-arm64.dmg',
+    })
+  }
+}
+
+function setupUpdater(): void {
+  if (!app.isPackaged) return
+  const check =
+    process.platform === 'darwin'
+      ? (): void => void checkMacUpdate().catch(() => {})
+      : (): void => void autoUpdater.checkForUpdates().catch(() => {})
+  if (process.platform !== 'darwin') {
+    autoUpdater.autoDownload = true
+    autoUpdater.autoInstallOnAppQuit = true
+    autoUpdater.on('update-downloaded', (info) => {
+      announceUpdate({ state: 'ready', version: info.version })
+    })
+    autoUpdater.on('error', () => {
+      // quiet by design; see the doc comment above
+    })
+  }
+  setTimeout(check, 15_000)
+  setInterval(check, 30 * 60_000)
+}
 
 function createMainWindow(): void {
   if (server === undefined) return
@@ -273,6 +336,7 @@ app.whenReady().then(async () => {
     { port: 0 },
   )
   wireIpc()
+  setupUpdater()
   createMainWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createMainWindow()
