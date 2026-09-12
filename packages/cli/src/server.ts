@@ -8,6 +8,7 @@ import {
   defaultHideRules,
   emptyState,
   enrichGitContexts,
+  enrichCheckpointBackups,
   enrichMemoryFiles,
   foldAll,
   mergeHideRules,
@@ -103,6 +104,7 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
     }
     baseState = foldAll(baseState, await enrichGitContexts(baseState, fsFor))
     baseState = foldAll(baseState, await enrichMemoryFiles(baseState, fsFor))
+    baseState = foldAll(baseState, await enrichCheckpointBackups(baseState, fsFor))
     files = await loadUserFiles(deps)
 
     let presented = foldAll(baseState, configEventsOf(files))

@@ -77,6 +77,21 @@ export interface Session {
   lastCompaction?: { preTokens?: number; postTokens?: number; droppedTokens?: number }
   /** Tokens in context at the latest response — how full the session is. */
   contextTokens?: number
+  /** Checkpoints (the CLI's /rewind feature), from file-history lines in
+   * the transcript. Absent when the session recorded none (checkpointing
+   * is off in print/SDK and remote sessions unless opted in). */
+  checkpoints?: {
+    /** Distinct checkpoints — one per prompt that started a turn. */
+    count: number
+    /** Tracked file-modification events (first touch per file per turn). */
+    edits: number
+    /** Every file path ever tracked, sorted. */
+    files: string[]
+    lastAt?: string
+    /** Backup files on disk under the store's file-history/<id> dir;
+     * absent = not probed, 0 = probed and gone (expired or restored). */
+    backupFiles?: number
+  }
   /** Hook executions by command (stop_hook_summary lines). */
   hooks?: Record<string, { runs: number; totalMs: number }>
   /** Hooks that errored / blocked continuation. */

@@ -1,4 +1,4 @@
-import type { CoreState, SessionAccum, ThreadAccum } from './fold.js'
+import { gitKey, type CoreState, type SessionAccum, type ThreadAccum } from './fold.js'
 import {
   addUsage,
   costOfUsage,
@@ -95,6 +95,7 @@ function toSession(
   accum: SessionAccum,
   runtime: Runtime,
   pricing: Record<string, ModelPricing>,
+  checkpointBackupFiles?: number,
 ): Session {
   const threads: Thread[] = []
   if (accum.main.messageCount > 0) {
@@ -158,6 +159,16 @@ function toSession(
   if (compactions > 0) session.compactions = compactions
   if (accum.lastCompaction !== undefined) session.lastCompaction = { ...accum.lastCompaction }
   if (accum.contextTokens !== undefined) session.contextTokens = accum.contextTokens
+  const checkpointCount = Object.keys(accum.checkpointIds).length
+  if (checkpointCount > 0 || accum.checkpointEdits > 0) {
+    session.checkpoints = {
+      count: checkpointCount,
+      edits: accum.checkpointEdits,
+      files: Object.keys(accum.checkpointFiles).sort(),
+      ...(accum.lastCheckpointAt !== undefined ? { lastAt: accum.lastCheckpointAt } : {}),
+      ...(checkpointBackupFiles !== undefined ? { backupFiles: checkpointBackupFiles } : {}),
+    }
+  }
   if (Object.keys(accum.hookStats).length > 0) {
     session.hooks = Object.fromEntries(
       Object.entries(accum.hookStats).map(([command, s]) => [command, { ...s }]),
@@ -285,6 +296,7 @@ export function buildSnapshot(state: CoreState, options: SnapshotOptions): Snaps
         accum,
         state.runtimes[accum.id] ?? inferRuntime(accum, options.now, windowMs),
         pricing,
+        state.checkpointBackups[gitKey(accum.storeId, accum.id)],
       )
       const meta = state.metas[accum.id]
       if (meta?.rename !== undefined) session.rename = meta.rename

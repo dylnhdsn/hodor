@@ -41,6 +41,14 @@ export type SourceEvent =
       userLevel: boolean
       files: MemoryFileInfo[]
     }
+  | {
+      /** Backup files counted in the store's file-history/<sessionId> dir
+       * (0 = probed, none found — expired, restored, or never written). */
+      type: 'checkpoint-backups-scanned'
+      storeId: StoreId
+      sessionId: SessionId
+      backupFiles: number
+    }
   | { type: 'runtime-changed'; sessionId: SessionId; runtime: Runtime }
   | { type: 'meta-changed'; meta: SessionMeta }
   | { type: 'config-changed'; config: HodorConfig }

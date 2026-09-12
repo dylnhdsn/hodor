@@ -88,6 +88,50 @@ const summaryLineSchema = z
   })
   .passthrough()
 
+/**
+ * Checkpoint lines (the CLI's /rewind feature; shapes verified against
+ * CLI 2.1.269 output). A file-history-snapshot marks one checkpoint —
+ * written per prompt that starts a turn; trackedFileBackups maps each
+ * tracked path (relative) to its backup record. A file-history-delta
+ * records one file's first modification under the current checkpoint;
+ * backupFileName null = the file did not exist at checkpoint time.
+ */
+const backupSchema = z
+  .object({ realParentDir: z.string().optional() })
+  .passthrough()
+  .nullish()
+
+const fileHistorySnapshotSchema = z
+  .object({
+    type: z.literal('file-history-snapshot'),
+    messageId: z.string(),
+    isSnapshotUpdate: z.boolean().optional(),
+    snapshot: z
+      .object({
+        timestamp: z.string().optional(),
+        trackedFileBackups: z.record(z.string(), backupSchema).optional(),
+      })
+      .passthrough()
+      .optional(),
+  })
+  .passthrough()
+
+const fileHistoryDeltaSchema = z
+  .object({
+    type: z.literal('file-history-delta'),
+    trackingPath: z.string().optional(),
+    backup: backupSchema,
+    timestamp: z.string().optional(),
+  })
+  .passthrough()
+
+/** Tracked paths are relative to the backup's realParentDir. */
+function resolveTrackedPath(path: string, parentDir: string | null | undefined): string {
+  if (parentDir === undefined || parentDir === null || parentDir.length === 0) return path
+  const sep = parentDir.includes('\\') && !parentDir.includes('/') ? '\\' : '/'
+  return parentDir.endsWith(sep) ? parentDir + path : parentDir + sep + path
+}
+
 const MESSAGE_TYPES = new Set(['user', 'assistant', 'system'])
 
 export interface MessageLine {
@@ -166,6 +210,12 @@ export interface OtherLine {
   subtype?: string
   /** compact_boundary lines: context size before/after the compaction. */
   compact?: { preTokens?: number; postTokens?: number; droppedTokens?: number }
+  /** file-history-snapshot lines: one checkpoint per prompt (the /rewind
+   * feature). Files are the paths tracked at snapshot time, resolved
+   * against each backup's realParentDir. */
+  checkpoint?: { id: string; isUpdate: boolean; ts?: string; files: string[] }
+  /** file-history-delta lines: one file first-modified under a checkpoint. */
+  checkpointDelta?: { file?: string; ts?: string }
 }
 
 export interface InvalidLine {
@@ -366,6 +416,46 @@ export function parseTranscriptLine(raw: string): TranscriptLine {
       line.spawnedBy = { toolUseId: d.toolUseID, assistantUuid: d.sourceToolAssistantUUID }
     }
     return line
+  }
+
+  if (type === 'file-history-snapshot') {
+    const parsed = fileHistorySnapshotSchema.safeParse(json)
+    if (parsed.success) {
+      const d = parsed.data
+      const files = Object.entries(d.snapshot?.trackedFileBackups ?? {}).map(([path, backup]) =>
+        resolveTrackedPath(path, backup?.realParentDir),
+      )
+      const ts = d.snapshot?.timestamp
+      return {
+        kind: 'other',
+        type,
+        checkpoint: {
+          id: d.messageId,
+          isUpdate: d.isSnapshotUpdate ?? false,
+          ...(ts !== undefined ? { ts } : {}),
+          files,
+        },
+      }
+    }
+  }
+
+  if (type === 'file-history-delta') {
+    const parsed = fileHistoryDeltaSchema.safeParse(json)
+    if (parsed.success) {
+      const d = parsed.data
+      const file =
+        d.trackingPath !== undefined
+          ? resolveTrackedPath(d.trackingPath, d.backup?.realParentDir)
+          : undefined
+      return {
+        kind: 'other',
+        type,
+        checkpointDelta: {
+          ...(file !== undefined ? { file } : {}),
+          ...(d.timestamp !== undefined ? { ts: d.timestamp } : {}),
+        },
+      }
+    }
   }
 
   const subtype = subtypeOf()

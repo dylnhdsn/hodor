@@ -729,6 +729,18 @@ function DetailPane(props: {
             }
           />
         )}
+        {s.checkpoints !== undefined && (
+          <Fact
+            label="checkpoints"
+            value={`${s.checkpoints.count} · ${s.checkpoints.files.length} files${
+              s.checkpoints.backupFiles === undefined
+                ? ''
+                : s.checkpoints.backupFiles > 0
+                  ? ' · restorable'
+                  : ' · backups gone'
+            }`}
+          />
+        )}
         {s.cliVersion !== undefined && <Fact label="cli" value={s.cliVersion} />}
         {memoryFiles.length > 0 && (
           <Fact

@@ -86,6 +86,14 @@ export interface SessionAccum {
    * event order never matters. */
   contextTokens?: number
   contextTs?: string
+  /** Checkpoints (/rewind): snapshot ids seen — one per prompt that starts
+   * a turn, deduped by id so snapshot updates never double-count. */
+  checkpointIds: Record<string, true>
+  /** Files ever tracked by checkpoints (resolved paths). */
+  checkpointFiles: Record<string, true>
+  /** file-history-delta lines: tracked file-modification events. */
+  checkpointEdits: number
+  lastCheckpointAt?: string
   main: ThreadAccum
   sidechains: ThreadAccum[]
   /** message uuid → index into sidechains, for incremental chain-following. */
@@ -106,6 +114,9 @@ export interface CoreState {
     string,
     { storeId: StoreId; root: string; userLevel: boolean; files: MemoryFileInfo[] }
   >
+  /** gitKey(storeId, sessionId) → backup files found in the store's
+   * file-history dir (0 = probed, none there — expired or restored). */
+  checkpointBackups: Record<string, number>
   metas: Record<SessionId, SessionMeta>
   /** Authoritative runtimes (e.g. hosted PTYs); absent = infer from activity. */
   runtimes: Record<SessionId, Runtime>
@@ -120,6 +131,7 @@ export const emptyState: CoreState = {
   sessions: {},
   gitContexts: {},
   memoryFiles: {},
+  checkpointBackups: {},
   metas: {},
   runtimes: {},
   config: {},
@@ -149,11 +161,21 @@ function newAccum(id: SessionId, storeId: StoreId, transcriptPath: string): Sess
     hookStats: {},
     hookErrorCount: 0,
     hookBlockCount: 0,
+    checkpointIds: {},
+    checkpointFiles: {},
+    checkpointEdits: 0,
     main: { messageCount: 0 },
     sidechains: [],
     uuidToSidechain: {},
     agentToSidechain: {},
     agentMeta: {},
+  }
+}
+
+function touchCheckpoint(accum: SessionAccum, ts: string | undefined): void {
+  if (ts === undefined) return
+  if (accum.lastCheckpointAt === undefined || ts > accum.lastCheckpointAt) {
+    accum.lastCheckpointAt = ts
   }
 }
 
@@ -299,6 +321,8 @@ function cloneAccum(accum: SessionAccum): SessionAccum {
     hookStats: Object.fromEntries(
       Object.entries(accum.hookStats).map(([command, s]) => [command, { ...s }]),
     ),
+    checkpointIds: { ...accum.checkpointIds },
+    checkpointFiles: { ...accum.checkpointFiles },
     ...(accum.lastCompaction !== undefined ? { lastCompaction: { ...accum.lastCompaction } } : {}),
   }
 }
@@ -316,9 +340,23 @@ export function fold(state: CoreState, event: SourceEvent): CoreState {
       for (const line of event.lines) {
         if (line.kind === 'message') applyMessage(accum, line)
         else if (line.kind === 'summary') accum.summary = line.summary
-        else if (line.kind === 'other' && line.subtype === 'compact_boundary') {
-          accum.compactBoundaries += 1
-          if (line.compact !== undefined) accum.lastCompaction = { ...line.compact }
+        else if (line.kind === 'other') {
+          if (line.subtype === 'compact_boundary') {
+            accum.compactBoundaries += 1
+            if (line.compact !== undefined) accum.lastCompaction = { ...line.compact }
+          }
+          if (line.checkpoint !== undefined) {
+            accum.checkpointIds[line.checkpoint.id] = true
+            for (const file of line.checkpoint.files) accum.checkpointFiles[file] = true
+            touchCheckpoint(accum, line.checkpoint.ts)
+          }
+          if (line.checkpointDelta !== undefined) {
+            accum.checkpointEdits += 1
+            if (line.checkpointDelta.file !== undefined) {
+              accum.checkpointFiles[line.checkpointDelta.file] = true
+            }
+            touchCheckpoint(accum, line.checkpointDelta.ts)
+          }
         }
       }
       return { ...state, sessions: { ...state.sessions, [event.sessionId]: accum } }
@@ -361,6 +399,15 @@ export function fold(state: CoreState, event: SourceEvent): CoreState {
             userLevel: event.userLevel,
             files: event.files,
           },
+        },
+      }
+
+    case 'checkpoint-backups-scanned':
+      return {
+        ...state,
+        checkpointBackups: {
+          ...state.checkpointBackups,
+          [gitKey(event.storeId, event.sessionId)]: event.backupFiles,
         },
       }
 

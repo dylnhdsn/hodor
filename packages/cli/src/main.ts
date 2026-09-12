@@ -9,6 +9,7 @@ import {
   emptyUsage,
   driveMountTranslator,
   enrichGitContexts,
+  enrichCheckpointBackups,
   enrichMemoryFiles,
   foldAll,
   mergeHideRules,
@@ -207,7 +208,8 @@ async function enrich(
 ): Promise<CoreState> {
   // Memory probing keys off resolved git roots, so it runs after git.
   const withGit = foldAll(state, await enrichGitContexts(state, fsFor))
-  return foldAll(withGit, await enrichMemoryFiles(withGit, fsFor))
+  const withMemory = foldAll(withGit, await enrichMemoryFiles(withGit, fsFor))
+  return foldAll(withMemory, await enrichCheckpointBackups(withMemory, fsFor))
 }
 
 export interface Stats {
@@ -240,6 +242,8 @@ export interface Stats {
   tools: Record<string, number>
   /** Memory files found on disk (CLAUDE.md and friends). */
   memory: { files: number; roots: number; totalBytes: number; userMemory: boolean }
+  /** Checkpoint (/rewind) coverage across sessions. */
+  checkpoints: { sessions: number; count: number; restorable: number }
   entrypointsVisible: Record<string, number>
   entrypointsHidden: Record<string, number>
   hiddenByRule: Record<string, number>
@@ -262,6 +266,7 @@ export function computeStats(
     topCostSessions: [],
     tools: {},
     memory: { files: 0, roots: 0, totalBytes: 0, userMemory: false },
+    checkpoints: { sessions: 0, count: 0, restorable: 0 },
     entrypointsVisible: {},
     entrypointsHidden: {},
     hiddenByRule: {},
@@ -314,6 +319,11 @@ export function computeStats(
     }
     for (const [tool, n] of Object.entries(session.toolCounts ?? {})) {
       stats.tools[tool] = (stats.tools[tool] ?? 0) + n
+    }
+    if (session.checkpoints !== undefined) {
+      stats.checkpoints.sessions += 1
+      stats.checkpoints.count += session.checkpoints.count
+      if ((session.checkpoints.backupFiles ?? 0) > 0) stats.checkpoints.restorable += 1
     }
     const target = isHidden ? stats.entrypointsHidden : stats.entrypointsVisible
     const keys = session.entrypoints.length > 0 ? session.entrypoints : ['(none)']
@@ -390,6 +400,11 @@ export function formatStats(stats: Stats): string {
       const state = s.hiddenBy !== undefined ? `hidden (${s.hiddenBy})` : 'visible'
       lines.push(`  ${s.id.slice(0, 8)}  ${String(s.runs).padStart(3)}  ${state}  ${s.title.slice(0, 60)}`)
     }
+  }
+  if (stats.checkpoints.sessions > 0) {
+    lines.push(
+      `checkpoints: ${stats.checkpoints.count} across ${stats.checkpoints.sessions} sessions, ${stats.checkpoints.restorable} still restorable`,
+    )
   }
   if (stats.memory.files > 0) {
     lines.push(

@@ -608,6 +608,7 @@ describe('stats', () => {
       topCostSessions: [],
       tools: {},
       memory: { files: 0, roots: 0, totalBytes: 0, userMemory: false },
+      checkpoints: { sessions: 0, count: 0, restorable: 0 },
       entrypointsVisible: { cli: 1, '(none)': 1 },
       entrypointsHidden: { sdk: 1, '(none)': 1 },
       hiddenByRule: { 'dot-segment:.peri': 1, 'prefix:/tmp': 1 },

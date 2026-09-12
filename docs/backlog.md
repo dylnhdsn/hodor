@@ -5,13 +5,6 @@ brainstorm doc when they get built. Living file — prune on completion.
 
 ## Metadata & data core
 
-- **Checkpoint metadata** — Claude Code checkpoints live as
-  `file-history-snapshot` lines in the transcripts we already parse
-  (local sessions only; remote/web sessions write none). Surface
-  checkpoint count per session, files covered, whether a rewind
-  happened, and restorable-vs-cleaned-up (snapshots expire ~30 days,
-  `cleanupPeriodDays`). Cheap fold extension; docs:
-  code.claude.com/docs/en/checkpointing.
 - **Nested subagents** — subagent transcripts that themselves spawn
   agents; today we only read one level.
 - **Memory walk-up completeness** — CLAUDE.md discovery walks roots
