@@ -57,6 +57,36 @@ describe('normalizeCloudSession', () => {
     })
   })
 
+  it('reads the raw REST dialect: config.*, last_event_at, worker_status, typed outcomes', () => {
+    // Shape confirmed against the CLI's own record normalizer and a real
+    // `hodor cloud` run: cse_ ids, sources under config, no updated_at.
+    const raw = normalizeCloudSession({
+      id: 'cse_01ABC',
+      title: 'Hodor',
+      worker_status: 'running',
+      status_bucket: 'SESSION_STATUS_BUCKET_BLOCKED',
+      created_at: '2026-09-12T18:00:00Z',
+      last_event_at: '2026-09-12T19:00:00Z',
+      config: {
+        sources: [{ git_repository: { url: 'https://github.com/dylnhdsn/hodor' } }],
+        outcomes: [{ type: 'git_repository', git_info: { repo: 'dylnhdsn/hodor', branches: ['claude/x-1'] } }],
+        model: 'claude-fable-5',
+      },
+      post_turn_summary: { needs_action: 'report back' },
+    })
+    expect(raw).toMatchObject({
+      id: 'cse_01ABC',
+      status: 'running',
+      bucket: 'blocked',
+      updatedAt: '2026-09-12T19:00:00Z',
+      remoteUrl: 'github.com/dylnhdsn/hodor',
+      repo: 'dylnhdsn/hodor',
+      branches: ['claude/x-1'],
+      model: 'claude-fable-5',
+      needsAction: 'report back',
+    })
+  })
+
   it('tolerates sparse records and rejects id-less ones', () => {
     expect(normalizeCloudSession({ id: 'session_x' })).toEqual({
       id: 'session_x',

@@ -66,16 +66,22 @@ export function normalizeCloudSession(raw: unknown): CloudSession | null {
   const id = str(r['id'])
   if (id === undefined) return null
 
-  const context = obj(r['session_context'])
+  // Two record dialects exist (verified against the CLI's own record
+  // normalizer): enriched records carry `session_context`, raw REST list
+  // records keep the same data under `config` — and nest differently:
+  // outcomes are {type:'git_repository', git_info} rather than
+  // {git_repository:{git_info}}. Read both.
+  const context = { ...obj(r['config']), ...obj(r['session_context']) }
   const sources = Array.isArray(context['sources']) ? context['sources'] : []
   const sourceUrls = sources
-    .map((s) => str(obj(obj(obj(s)['git_repository']))['url']))
+    .map((s) => str(obj(obj(obj(s)['git_repository']))['url']) ?? str(obj(s)['url']))
     .filter((u): u is string => u !== undefined)
   const firstSourceUrl = sourceUrls[0]
   const outcomes = Array.isArray(context['outcomes']) ? context['outcomes'] : []
   const branches: string[] = []
   for (const outcome of outcomes) {
-    const info = obj(obj(obj(outcome)['git_repository'])['git_info'])
+    const entry = obj(outcome)
+    const info = { ...obj(entry['git_info']), ...obj(obj(entry['git_repository'])['git_info']) }
     for (const branch of Array.isArray(info['branches']) ? info['branches'] : []) {
       const b = str(branch)
       if (b !== undefined && !branches.includes(b)) branches.push(b)
@@ -90,9 +96,12 @@ export function normalizeCloudSession(raw: unknown): CloudSession | null {
   const usage = obj(meta['usage'])
   const remoteUrl = firstSourceUrl !== undefined ? normalizeGitUrl(firstSourceUrl) : undefined
 
+  const running =
+    str(r['session_status']) === 'SESSION_STATUS_RUNNING' ||
+    str(r['worker_status']) === 'running'
   const session: CloudSession = {
     id,
-    status: str(r['session_status']) === 'SESSION_STATUS_RUNNING' ? 'running' : 'idle',
+    status: running ? 'running' : 'idle',
     branches,
     url: `https://claude.ai/code/${id}`,
   }
@@ -102,7 +111,8 @@ export function normalizeCloudSession(raw: unknown): CloudSession | null {
   if (bucket !== undefined) session.bucket = bucket
   const createdAt = str(r['created_at'])
   if (createdAt !== undefined) session.createdAt = createdAt
-  const updatedAt = str(r['updated_at'])
+  // Raw records often carry last_event_at instead of updated_at.
+  const updatedAt = str(r['updated_at']) ?? str(r['last_event_at'])
   if (updatedAt !== undefined) session.updatedAt = updatedAt
   if (remoteUrl !== undefined) {
     session.remoteUrl = remoteUrl
