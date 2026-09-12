@@ -20,8 +20,18 @@ export interface CloudSession {
   updatedAt?: string
   /** First source repository, normalized like local git remotes. */
   remoteUrl?: string
-  /** owner/name of that repository, for display. */
+  /** ALL source repositories, normalized — cloud sessions can clone
+   * several (e.g. an ideas repo plus the repo being built). */
+  remoteUrls?: string[]
+  /** owner/name of the first repository, for display. */
   repo?: string
+  /** Filled by the snapshot: custom projects this session belongs to —
+   * via a remote matcher, or by sharing a repo with a local session
+   * those projects claim. */
+  claimedBy?: string[]
+  /** Filled by the snapshot: the auto project of a shared repo, when
+   * local sessions on the same remote exist. */
+  autoProjectId?: string
   /** Outcome branches the session pushed. */
   branches: string[]
   model?: string
@@ -58,9 +68,10 @@ export function normalizeCloudSession(raw: unknown): CloudSession | null {
 
   const context = obj(r['session_context'])
   const sources = Array.isArray(context['sources']) ? context['sources'] : []
-  const firstSourceUrl = sources
+  const sourceUrls = sources
     .map((s) => str(obj(obj(obj(s)['git_repository']))['url']))
-    .find((u) => u !== undefined)
+    .filter((u): u is string => u !== undefined)
+  const firstSourceUrl = sourceUrls[0]
   const outcomes = Array.isArray(context['outcomes']) ? context['outcomes'] : []
   const branches: string[] = []
   for (const outcome of outcomes) {
@@ -95,6 +106,7 @@ export function normalizeCloudSession(raw: unknown): CloudSession | null {
   if (updatedAt !== undefined) session.updatedAt = updatedAt
   if (remoteUrl !== undefined) {
     session.remoteUrl = remoteUrl
+    session.remoteUrls = [...new Set(sourceUrls.map(normalizeGitUrl))]
     // owner/name for display: the last two path segments of the remote.
     const segments = remoteUrl.split('/').filter((s) => s.length > 0)
     session.repo = segments.slice(-2).join('/')

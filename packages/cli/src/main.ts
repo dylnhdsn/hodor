@@ -12,6 +12,7 @@ import {
   enrichCheckpointBackups,
   enrichMemoryFiles,
   foldAll,
+  localSessionsByRemote,
   mergeHideRules,
   mergePricing,
   mungeCwd,
@@ -452,8 +453,12 @@ async function scan(deps: CliDeps, flags: Flags): Promise<number> {
   return 0
 }
 
-/** hodor cloud — list this account's cloud sessions (claude.ai/code). */
-async function cloudCommand(deps: CliDeps): Promise<number> {
+/**
+ * hodor cloud — list cloud sessions WITH their project correlation, over
+ * the same full pipeline the UI uses. --json adds the local-remote
+ * evidence map, so "why didn't this join?" is answerable from one paste.
+ */
+async function cloudCommand(deps: CliDeps, flags: Flags): Promise<number> {
   const event = await scanCloudSessions(deps)
   if (event === undefined) {
     deps.write('no claude.ai login found (~/.claude/.credentials.json) — cloud sessions unavailable\n')
@@ -464,27 +469,55 @@ async function cloudCommand(deps: CliDeps): Promise<number> {
     deps.write(`${event.error}\n`)
     return 1
   }
-  if (event.sessions.length === 0) {
+
+  const files = await loadUserFiles(deps)
+  const config = files.config
+  const stores = await resolveStores(deps, { roots: flags.roots, noDiscover: flags.noDiscover }, config)
+  let state = foldAll(emptyState, configEvents(files))
+  for (const store of stores) {
+    state = foldAll(state, await scanStore(deps.fs, store))
+  }
+  state = await enrich(state, storeFs(deps, stores))
+  state = foldAll(state, [event])
+  const snapshot = buildSnapshot(state, snapshotOptions(deps, flags, config))
+  const projectNames = new Map<string, string>([
+    ...snapshot.projects.map((p) => [p.id, p.name] as const),
+    ...snapshot.customProjects.map((p) => [p.id, p.name] as const),
+  ])
+
+  if (flags.json) {
+    const localRemotes = Object.fromEntries(
+      [...localSessionsByRemote(state)].map(([remote, ids]) => [remote, ids.length]),
+    )
+    deps.write(JSON.stringify({ cloudSessions: snapshot.cloudSessions, localRemotes }, null, 2) + '\n')
+    return 0
+  }
+
+  if (snapshot.cloudSessions.length === 0) {
     deps.write('no cloud sessions\n')
     return 0
   }
   const nowMs = deps.now().getTime()
-  for (const s of [...event.sessions].sort((a, b) =>
-    (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''),
-  )) {
+  for (const s of snapshot.cloudSessions) {
     const age = s.updatedAt !== undefined ? formatAgeMs(nowMs - Date.parse(s.updatedAt)) : '-'
     const bucket = s.bucket ?? s.status
+    const projectId = s.claimedBy?.[0] ?? s.autoProjectId
+    const project =
+      projectId !== undefined ? `→ ${projectNames.get(projectId) ?? projectId}` : '(no project)'
     const line = [
       s.id.slice(0, 20).padEnd(20),
       age.padStart(4),
       bucket.padEnd(12),
       (s.repo ?? '').padEnd(28),
+      project.padEnd(22),
       s.title ?? '',
     ].join('  ')
     deps.write(`${line.trimEnd()}\n`)
     if (s.needsAction !== undefined) deps.write(`${' '.repeat(28)}needs you: ${s.needsAction}\n`)
   }
-  deps.write(`\n${event.sessions.length} cloud sessions · teleport: claude --teleport <id>\n`)
+  deps.write(
+    `\n${snapshot.cloudSessions.length} cloud sessions · unjoined ones: hodor cloud --json shows the evidence\n`,
+  )
   return 0
 }
 
@@ -666,7 +699,7 @@ export async function run(argv: string[], deps: CliDeps): Promise<number> {
       return statsCommand(deps, flags)
 
     case 'cloud':
-      return cloudCommand(deps)
+      return cloudCommand(deps, flags)
 
     case 'watch':
       return watch(deps, flags)

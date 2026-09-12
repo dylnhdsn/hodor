@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { normalizeCloudListing, normalizeCloudSession } from './cloud.js'
+import type { SourceEvent } from './events.js'
 import { emptyState, foldAll } from './fold.js'
 import { buildSnapshot } from './snapshot.js'
 
@@ -40,6 +41,7 @@ describe('normalizeCloudSession', () => {
       createdAt: '2026-09-10T02:16:54.841899Z',
       updatedAt: '2026-09-10T02:57:11.398113Z',
       remoteUrl: 'github.com/acme/flux',
+      remoteUrls: ['github.com/acme/flux'],
       repo: 'acme/flux',
       branches: ['claude/fix-flux-abc123'],
       model: 'claude-fable-5',
@@ -104,5 +106,143 @@ describe('cloud sessions in the fold and snapshot', () => {
     const failed = buildSnapshot(state, { now: new Date('2026-09-11T05:00:00Z') })
     expect(failed.cloudSessions).toEqual([])
     expect(failed.cloudError).toBe('HTTP 500')
+  })
+})
+
+describe('cloud↔project correlation (Dylan case: shared repo with local sessions)', () => {
+  const store = {
+    id: 's1',
+    rootPath: '/home/u/.claude',
+    pathFlavor: 'posix' as const,
+    origin: { kind: 'native' as const },
+    watchStrategy: 'poll' as const,
+  }
+  const localSession = (id: string, cwd: string): SourceEvent => ({
+    type: 'transcript-lines',
+    storeId: 's1',
+    transcriptPath: `/home/u/.claude/projects/-x/${id}.jsonl`,
+    sessionId: id,
+    lines: [
+      {
+        kind: 'message',
+        type: 'user',
+        uuid: `${id}-u1`,
+        parentUuid: null,
+        isSidechain: false,
+        isMeta: false,
+        timestamp: '2026-09-12T10:00:00Z',
+        cwd,
+        promptText: 'work',
+      },
+    ],
+  })
+  const cloudOn = (id: string, ...urls: string[]) =>
+    normalizeCloudSession({
+      id,
+      session_context: { sources: urls.map((u) => ({ git_repository: { url: u } })) },
+      updated_at: '2026-09-12T11:00:00Z',
+    })!
+
+  it('joins through git contexts, case-insensitively, across all sources', () => {
+    const state = foldAll(emptyState, [
+      { type: 'store-discovered', store },
+      localSession('local1', '/repo/app/src'),
+      {
+        type: 'git-context-resolved',
+        storeId: 's1',
+        cwd: '/repo/app/src',
+        // local remote drifts in case; the cwd is a subdir of the root
+        context: { repoRoot: '/repo/app', isWorktree: false, remoteUrl: 'git@github.com:Acme/App.git' },
+      },
+      {
+        type: 'cloud-sessions-scanned',
+        scannedAt: '2026-09-12T11:30:00Z',
+        sessions: [
+          // second source matches; first is an unrelated ideas repo
+          cloudOn('session_hit', 'https://github.com/acme/ideas', 'https://github.com/acme/app'),
+          cloudOn('session_miss', 'https://github.com/other/thing'),
+        ],
+      },
+    ])
+    const snapshot = buildSnapshot(state, { now: new Date('2026-09-12T12:00:00Z') })
+    const hit = snapshot.cloudSessions.find((s) => s.id === 'session_hit')!
+    expect(hit.autoProjectId).toBe(snapshot.assignments.find((a) => a.sessionId === 'local1')!.projectId)
+    expect(snapshot.cloudSessions.find((s) => s.id === 'session_miss')!.autoProjectId).toBeUndefined()
+  })
+
+  it('lends the local session s custom claims to the cloud session', () => {
+    const state = foldAll(emptyState, [
+      { type: 'store-discovered', store },
+      localSession('local1', '/repo/app'),
+      {
+        type: 'git-context-resolved',
+        storeId: 's1',
+        cwd: '/repo/app',
+        context: { repoRoot: '/repo/app', isWorktree: false, remoteUrl: 'https://github.com/acme/app' },
+      },
+      {
+        type: 'userplane-changed',
+        plane: {
+          projects: [
+            {
+              id: 'my-lane',
+              name: 'My Lane',
+              // folder-based matcher: no remote evidence of its own
+              matchers: [{ kind: 'root', path: '/repo/app' }],
+              excludeMatchers: [],
+              include: [],
+              exclude: [],
+            },
+          ],
+        },
+      },
+      {
+        type: 'cloud-sessions-scanned',
+        scannedAt: '2026-09-12T11:30:00Z',
+        sessions: [cloudOn('session_c', 'https://github.com/acme/app.git')],
+      },
+    ])
+    const snapshot = buildSnapshot(state, { now: new Date('2026-09-12T12:00:00Z') })
+    expect(snapshot.cloudSessions[0]!.claimedBy).toEqual(['my-lane'])
+  })
+
+  it('remote matchers claim cloud sessions even with zero local sessions', () => {
+    const state = foldAll(emptyState, [
+      {
+        type: 'userplane-changed',
+        plane: {
+          projects: [
+            {
+              id: 'ext',
+              name: 'Ext',
+              matchers: [{ kind: 'remote', url: 'https://github.com/Acme/Widget.git' }],
+              excludeMatchers: [],
+              include: [],
+              exclude: [],
+            },
+          ],
+        },
+      },
+      {
+        type: 'cloud-sessions-scanned',
+        scannedAt: '2026-09-12T11:30:00Z',
+        sessions: [cloudOn('session_w', 'https://github.com/acme/widget')],
+      },
+    ])
+    const snapshot = buildSnapshot(state, { now: new Date('2026-09-12T12:00:00Z') })
+    expect(snapshot.cloudSessions[0]!.claimedBy).toEqual(['ext'])
+  })
+
+  it('snapshot purity: correlation never touches fold state', () => {
+    const state = foldAll(emptyState, [
+      {
+        type: 'cloud-sessions-scanned',
+        scannedAt: '2026-09-12T11:30:00Z',
+        sessions: [cloudOn('session_p', 'https://github.com/acme/app')],
+      },
+    ])
+    buildSnapshot(state, { now: new Date('2026-09-12T12:00:00Z') })
+    expect(state.cloud.sessions[0]!.claimedBy).toBeUndefined()
+    expect(state.cloud.sessions[0]!.autoProjectId).toBeUndefined()
   })
 })

@@ -1,5 +1,3 @@
-// Deep import: the barrel drags node-only modules into the browser build.
-import { normalizeGitUrl } from '@hodor/core/urls'
 import type { CloudSession, CustomProject, Placement, Project, Session, Snapshot } from '@hodor/core'
 import { desktop } from './desktop.js'
 
@@ -150,37 +148,21 @@ export function deriveView(snapshot: Snapshot): View {
     forksOf.set(session.forkedFrom, [...(forksOf.get(session.forkedFrom) ?? []), session])
   }
 
-  // Cloud sessions join projects by git-remote evidence. Direct evidence
-  // first (auto git-remote identities, explicit remote matchers)…
-  const railByRemote = new Map<string, string>()
-  for (const p of rail) {
-    if (p.auto?.identity.kind === 'git-remote') {
-      railByRemote.set(normalizeGitUrl(p.auto.identity.url), p.id)
-    }
-    for (const matcher of p.custom?.matchers ?? []) {
-      if (matcher.kind === 'remote') railByRemote.set(normalizeGitUrl(matcher.url), p.id)
-    }
-  }
-  // …then through session placement: a project holding local sessions of
-  // repo X claims X's cloud sessions even when its own matchers are
-  // folder-based, and even when the auto project was absorbed off the
-  // rail. Direct evidence wins on conflict.
-  const railIds = new Set(rail.map((p) => p.id))
-  for (const [sessionId, autoProject] of derivedOf) {
-    if (autoProject.identity.kind !== 'git-remote') continue
-    const railId = claimsBySession.get(sessionId)?.[0] ?? (railIds.has(autoProject.id) ? autoProject.id : undefined)
-    if (railId === undefined) continue
-    const key = normalizeGitUrl(autoProject.identity.url)
-    if (!railByRemote.has(key)) railByRemote.set(key, railId)
-  }
-
+  // Cloud↔project correlation happens in the core snapshot (evidence:
+  // remote matchers + repos shared with local sessions, via git
+  // contexts). Here we only pick which RAIL entry represents that:
+  // the first live custom claim on the rail, else the auto project.
   const railById = new Map(rail.map((p) => [p.id, p]))
   const cloudByProject = new Map<string, CloudSession[]>()
   const cloudProjectOf = new Map<string, { id: string; name: string }>()
   const unmatched: CloudSession[] = []
   for (const cloud of snapshot.cloudSessions) {
-    const projectId = cloud.remoteUrl !== undefined ? railByRemote.get(cloud.remoteUrl) : undefined
-    const project = projectId !== undefined ? railById.get(projectId) : undefined
+    const railId =
+      cloud.claimedBy?.find((id) => railById.has(id)) ??
+      (cloud.autoProjectId !== undefined && railById.has(cloud.autoProjectId)
+        ? cloud.autoProjectId
+        : undefined)
+    const project = railId !== undefined ? railById.get(railId) : undefined
     if (project === undefined) {
       unmatched.push(cloud)
       continue

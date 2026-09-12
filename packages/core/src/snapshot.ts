@@ -11,6 +11,7 @@ import {
 } from './pricing.js'
 import { resolveProjects } from './resolver.js'
 import type { Assignment, Project, Runtime, Session, SessionStore, Thread } from './types.js'
+import { normalizeGitUrl } from './urls.js'
 import { compileUserPlane, computePlacements, type CustomProject, type Placement } from './userplane.js'
 import { hiddenBy, type HideRules } from './visibility.js'
 
@@ -290,6 +291,94 @@ function correlateForks(
   })
 }
 
+/**
+ * Case-insensitive join key for repository identities: normalizeGitUrl
+ * lowercases only the host, but GitHub treats owner/repo case-insensitively
+ * and Windows-side remotes drift in case.
+ */
+const remoteKeyOf = (url: string): string => normalizeGitUrl(url).toLowerCase()
+
+/**
+ * The GROUND-TRUTH map of which local sessions live on which remote:
+ * every resolved git context of every session cwd, after local-remote
+ * chasing — the same evidence that groups local sessions into repo
+ * projects. Exported so `hodor cloud --json` can print it when a join
+ * doesn't happen and the question is "what remotes does hodor think my
+ * local sessions have?".
+ */
+export function localSessionsByRemote(state: CoreState): Map<string, string[]> {
+  const byRemote = new Map<string, string[]>()
+  for (const accum of Object.values(state.sessions)) {
+    for (const cwd of accum.cwds) {
+      const context = state.gitContexts[gitKey(accum.storeId, cwd)]
+      if (context?.remoteUrl === undefined) continue
+      const key = remoteKeyOf(context.remoteUrl)
+      const list = byRemote.get(key) ?? []
+      if (!list.includes(accum.id)) list.push(accum.id)
+      byRemote.set(key, list)
+    }
+  }
+  return byRemote
+}
+
+/**
+ * Cloud↔project correlation, in evidence order:
+ *
+ * 1. A custom project's explicit remote matcher claims the repo.
+ * 2. Shared repo: local sessions on the same remote (per git contexts,
+ *    ALL cloud sources considered, case-insensitive) lend the cloud
+ *    session their own placements — custom claims and auto assignment.
+ *
+ * Mutates only the passed COPIES; fold state is never touched.
+ */
+function correlateCloudSessions(
+  state: CoreState,
+  cloudSessions: CloudSession[],
+  placements: Placement[],
+  assignments: Assignment[],
+  customProjects: CustomProject[],
+): void {
+  if (cloudSessions.length === 0) return
+  const byRemote = localSessionsByRemote(state)
+
+  const customByRemote = new Map<string, string[]>()
+  for (const project of customProjects) {
+    if (project.archived === true) continue
+    for (const matcher of project.matchers) {
+      if (matcher.kind !== 'remote') continue
+      const key = remoteKeyOf(matcher.url)
+      customByRemote.set(key, [...(customByRemote.get(key) ?? []), project.id])
+    }
+  }
+
+  const claimsOfLocal = new Map<string, string[]>()
+  for (const p of placements) {
+    claimsOfLocal.set(p.sessionId, [...(claimsOfLocal.get(p.sessionId) ?? []), p.customProjectId])
+  }
+  const autoOfLocal = new Map(assignments.map((a) => [a.sessionId, a.projectId]))
+
+  for (const cloud of cloudSessions) {
+    const remotes = (cloud.remoteUrls ?? (cloud.remoteUrl !== undefined ? [cloud.remoteUrl] : [])).map(
+      remoteKeyOf,
+    )
+    const claimed: string[] = []
+    let autoProjectId: string | undefined
+    for (const remote of remotes) {
+      for (const id of customByRemote.get(remote) ?? []) {
+        if (!claimed.includes(id)) claimed.push(id)
+      }
+      for (const sessionId of byRemote.get(remote) ?? []) {
+        for (const id of claimsOfLocal.get(sessionId) ?? []) {
+          if (!claimed.includes(id)) claimed.push(id)
+        }
+        autoProjectId ??= autoOfLocal.get(sessionId)
+      }
+    }
+    if (claimed.length > 0) cloud.claimedBy = claimed
+    if (autoProjectId !== undefined) cloud.autoProjectId = autoProjectId
+  }
+}
+
 export function buildSnapshot(state: CoreState, options: SnapshotOptions): Snapshot {
   const windowMs = options.activeWindowMs ?? DEFAULT_ACTIVE_WINDOW_MS
   const pricing = mergePricing(state.config.pricing)
@@ -367,9 +456,10 @@ export function buildSnapshot(state: CoreState, options: SnapshotOptions): Snaps
     )
     .sort((a, b) => a.root.localeCompare(b.root) || a.name.localeCompare(b.name))
 
-  const cloudSessions = [...state.cloud.sessions].sort((a, b) =>
-    (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''),
-  )
+  const cloudSessions = state.cloud.sessions
+    .map((s) => ({ ...s }))
+    .sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''))
+  correlateCloudSessions(state, cloudSessions, placements, assignments, customProjects)
 
   return {
     generatedAt: options.now.toISOString(),

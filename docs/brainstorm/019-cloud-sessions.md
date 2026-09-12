@@ -31,14 +31,20 @@ and the session's own post-turn words — status detail and a literal
 Cloud sessions join projects by the source repository's git remote,
 normalized like local remotes, resolved in two passes:
 
-1. Direct evidence: a rail project's remote matcher or auto git-remote
-   identity.
-2. Session placement: any rail project HOLDING local sessions of that
-   repo claims its cloud sessions too — this is what makes curated
-   projects with folder-based matchers work, and survives the absorb
-   rule hiding the auto project. (First shipped with only pass 1;
-   Dylan's real data landed everything in All because his cloud repos
-   had no direct-remote rail entry.)
+1. Direct evidence: a custom project's remote matcher.
+2. Shared repo, via GIT CONTEXTS — the ground truth that groups local
+   sessions: every resolved session cwd contributes its (chased)
+   remote, ALL cloud sources count (a session can clone several
+   repos), and keys compare case-insensitively (normalizeGitUrl only
+   lowercases the host; owners drift in case on Windows). Sharing
+   sessions lend the cloud session their custom claims and auto
+   assignment. Computed in the CORE snapshot (claimedBy /
+   autoProjectId on each cloud session), not in the UI — testable, and
+   `hodor cloud` prints the join per session while `--json` adds the
+   local-remote evidence map, so a failed join is one paste to
+   diagnose. (Two earlier UI-side attempts missed real data: repo
+   identity keyed too narrowly, then project-identity walking broke on
+   path-identity projects.)
 
 Repos that exist only in the cloud — never cloned locally — get their
 own "cloud only" groups in the rail, named by repo. In All sessions,
