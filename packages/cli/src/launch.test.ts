@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { composeLaunch, runLaunch, type LaunchTarget } from './launch.js'
+import { composeLaunch, composePtySpec, runLaunch, type LaunchTarget } from './launch.js'
 
 const target = (over: Partial<LaunchTarget>): LaunchTarget => ({
   cwd: '/home/d/code/app',
@@ -121,5 +121,52 @@ describe('runLaunch', () => {
     expect(result.ok).toBe(false)
     expect(result.command).toBe('claude --resume abc-123')
     expect(result.cwd).toBe('/home/d/code/app')
+  })
+})
+
+describe('composePtySpec', () => {
+  it('windows-native sessions on Windows: cmd /c claude with the cwd', () => {
+    expect(
+      composePtySpec({ os: 'win32' }, target({ cwd: 'C:\\code\\app', flavor: 'win32' })),
+    ).toEqual({
+      file: 'cmd.exe',
+      args: ['/c', 'claude', '--resume', 'abc-123'],
+      cwd: 'C:\\code\\app',
+    })
+  })
+
+  it('WSL-store sessions on Windows: wsl.exe --cd routes the cwd itself', () => {
+    expect(
+      composePtySpec({ os: 'win32' }, target({ origin: { kind: 'wsl', distro: 'Ubuntu' } })),
+    ).toEqual({
+      file: 'wsl.exe',
+      args: [
+        '-d', 'Ubuntu', '--cd', '/home/d/code/app',
+        '-e', 'bash', '-lic', 'claude --resume abc-123',
+      ],
+    })
+  })
+
+  it('posix hosts: login+interactive $SHELL so a GUI app finds claude', () => {
+    expect(composePtySpec({ os: 'darwin', shell: '/bin/zsh' }, target({}))).toEqual({
+      file: '/bin/zsh',
+      args: ['-lic', 'claude --resume abc-123'],
+      cwd: '/home/d/code/app',
+    })
+    expect(composePtySpec({ os: 'linux' }, target({}))?.file).toBe('bash')
+  })
+
+  it('cross-boundary combos with no PTY route return undefined', () => {
+    // Windows store from a mac/linux host: no way in.
+    expect(
+      composePtySpec(
+        { os: 'linux' },
+        target({ cwd: 'C:\\x', flavor: 'win32', origin: { kind: 'windows', mountRoot: '/mnt/c' } }),
+      ),
+    ).toBeUndefined()
+    // Foreign WSL distro from plain linux: no wsl.exe to call.
+    expect(
+      composePtySpec({ os: 'linux' }, target({ origin: { kind: 'wsl', distro: 'Ubuntu' } })),
+    ).toBeUndefined()
   })
 })

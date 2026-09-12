@@ -19,6 +19,8 @@ export interface LaunchEnv {
   os: 'win32' | 'darwin' | 'linux'
   /** Set when hodor itself runs inside WSL. */
   wslDistro?: string | undefined
+  /** The user's login shell ($SHELL), for PTY specs on posix hosts. */
+  shell?: string | undefined
 }
 
 export interface LaunchTarget {
@@ -105,6 +107,59 @@ export function composeLaunch(env: LaunchEnv, target: LaunchTarget): LaunchPlan 
   }
 
   return { candidates, command, cwd: target.cwd }
+}
+
+export interface PtySpec {
+  file: string
+  args: string[]
+  /** Working directory for the PTY; absent when the command routes its own
+   * (wsl.exe --cd takes a distro-native path a host spawn cwd can't). */
+  cwd?: string
+}
+
+/**
+ * The embedded-terminal variant of the launch matrix: instead of opening an
+ * external terminal window, compose ONE argv to run inside a PTY the caller
+ * owns (the desktop app). Same cross-boundary rules as composeLaunch; a
+ * combination with no sensible PTY route returns undefined and the caller
+ * falls back to the external-terminal path.
+ */
+export function composePtySpec(env: LaunchEnv, target: LaunchTarget): PtySpec | undefined {
+  const claudeCmd = ['claude', ...target.claudeArgs]
+  const command = claudeCmd.join(' ')
+  const wslSession =
+    target.origin.kind === 'wsl' || (env.wslDistro !== undefined && target.origin.kind === 'native')
+  const windowsSession =
+    target.origin.kind === 'windows' || (env.os === 'win32' && target.origin.kind === 'native')
+
+  if (env.os === 'win32') {
+    if (wslSession) {
+      const distro = target.origin.kind === 'wsl' ? target.origin.distro : env.wslDistro
+      return {
+        file: 'wsl.exe',
+        args: [
+          ...(distro !== undefined ? ['-d', distro] : []),
+          '--cd',
+          target.cwd,
+          '-e',
+          'bash',
+          '-lic',
+          command,
+        ],
+      }
+    }
+    if (windowsSession) {
+      return { file: 'cmd.exe', args: ['/c', ...claudeCmd], cwd: target.cwd }
+    }
+    return undefined
+  }
+
+  // Posix hosts can't enter a Windows store or a foreign WSL distro.
+  if (target.origin.kind === 'windows') return undefined
+  if (target.origin.kind === 'wsl' && env.wslDistro === undefined) return undefined
+  // Login+interactive shell: a GUI-launched app has no shell PATH, and
+  // claude usually lives in ~/.local/bin or a version-manager shim.
+  return { file: env.shell ?? 'bash', args: ['-lic', command], cwd: target.cwd }
 }
 
 export interface LaunchResult {

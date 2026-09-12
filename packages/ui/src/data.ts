@@ -1,4 +1,5 @@
 import type { CustomProject, Placement, Project, Session, Snapshot } from '@hodor/core'
+import { desktop } from './desktop.js'
 
 /** Client-side derivations over a Snapshot — mirrors the CLI formatter. */
 
@@ -239,6 +240,13 @@ export async function requestLaunch(
 export async function launchOrCopy(
   body: Parameters<typeof requestLaunch>[0],
 ): Promise<void> {
+  // Inside the desktop app, sessions open in an embedded terminal; the
+  // external-terminal path stays as the fallback for combinations with no
+  // PTY route (e.g. a Windows store viewed from a mac).
+  if (desktop !== undefined) {
+    const opened = await desktop.openTerminal(body)
+    if (opened.id !== undefined) return
+  }
   const result = await requestLaunch(body)
   if (result.ok) return
   const paste = result.command !== '' ? `cd ${JSON.stringify(result.cwd)} && ${result.command}` : ''

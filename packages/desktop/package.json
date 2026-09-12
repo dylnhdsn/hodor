@@ -1,0 +1,77 @@
+{
+  "name": "hodor-desktop",
+  "version": "0.0.1",
+  "private": true,
+  "description": "hodor — Claude Code session manager with embedded terminals",
+  "author": "dylnhdsn",
+  "license": "MIT",
+  "repository": "github:dylnhdsn/hodor",
+  "main": "dist/main.cjs",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "dist": "electron-builder --publish never"
+  },
+  "dependencies": {
+    "node-pty": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8",
+    "typescript": "^5.7.0"
+  },
+  "build": {
+    "appId": "dev.dylnhdsn.hodor",
+    "productName": "hodor",
+    "publish": null,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**"
+    ],
+    "asarUnpack": [
+      "**/node_modules/node-pty/**"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "hodor-desktop-win-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "deleteAppDataOnUninstall": false
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "hodor-desktop-linux-${arch}.${ext}",
+      "category": "Development"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "artifactName": "hodor-desktop-mac-${arch}.${ext}",
+      "identity": null
+    }
+  }
+}

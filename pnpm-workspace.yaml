@@ -1,2 +1,5 @@
 packages:
   - packages/*
+  # The desktop app is npm-managed on purpose: electron-builder wants a
+  # flat node_modules, and node-pty must rebuild against the Electron ABI.
+  - '!packages/desktop'

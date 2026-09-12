@@ -23,7 +23,7 @@ import {
   type Snapshot,
 } from '@hodor/core'
 import { flavorOfPath, pathOps } from '@hodor/core'
-import { runLaunch, type LaunchTarget } from './launch.js'
+import { composeLaunch, composePtySpec, runLaunch, type LaunchTarget } from './launch.js'
 import type { CliDeps } from './main.js'
 import { materializeTarget } from './materialize.js'
 import { resolveStores, storeFs } from './stores.js'
@@ -250,7 +250,15 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
    * exotic terminal) still leaves the user one paste away.
    */
   async function handleLaunch(res: ServerResponse, body: string): Promise<void> {
-    let payload: { kind?: string; sessionId?: string; storeId?: string; root?: string }
+    let payload: {
+      kind?: string
+      sessionId?: string
+      storeId?: string
+      root?: string
+      /** "pty": compose a spec for an embedded terminal instead of spawning
+       * an external one — the desktop app owns the PTY. */
+      mode?: string
+    }
     try {
       payload = JSON.parse(body) as typeof payload
     } catch {
@@ -258,6 +266,7 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
     }
     if (snapshot === undefined) await refresh()
 
+    let title: string
     let target: LaunchTarget
     if (payload.kind === 'resume' || payload.kind === 'fork') {
       const session = snapshot?.sessions.find((s) => s.id === payload.sessionId)
@@ -278,6 +287,9 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
           ...(payload.kind === 'fork' ? ['--fork-session'] : []),
         ],
       }
+      title =
+        session.rename ?? session.summary ?? session.promptPreview ?? session.id.slice(0, 8)
+      if (payload.kind === 'fork') title = `⑂ ${title}`
     } else if (payload.kind === 'new') {
       const store = snapshot?.stores.find((s) => s.id === payload.storeId)
       if (store === undefined) return sendJson(res, 400, { error: 'unknown store' })
@@ -291,8 +303,23 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
         return sendJson(res, 400, { error: 'root is not a known project root' })
       }
       target = { cwd: payload.root, flavor: store.pathFlavor, origin: store.origin, claudeArgs: [] }
+      title = payload.root.split(/[/\\]/).filter(Boolean).pop() ?? payload.root
     } else {
       return sendJson(res, 400, { error: 'kind must be resume, fork, or new' })
+    }
+
+    if (payload.mode === 'pty') {
+      const spec = composePtySpec(
+        { os: deps.osPlatform, wslDistro: deps.wslDistro(), shell: deps.env('SHELL') },
+        target,
+      )
+      const plan = composeLaunch({ os: deps.osPlatform, wslDistro: deps.wslDistro() }, target)
+      return sendJson(res, 200, {
+        spec: spec ?? null,
+        title,
+        command: plan.command,
+        cwd: plan.cwd,
+      })
     }
 
     const result = await runLaunch(deps, target)

@@ -50,6 +50,64 @@ jobs:
           gh release edit "latest" \
             --notes "Rolling build from ${GITHUB_SHA} (run ${{ github.run_number }}, $(date -u +'%Y-%m-%dT%H:%M:%SZ'))"
 
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            args: --linux
+            artifact: hodor-desktop-linux-x86_64.AppImage
+          - os: windows-latest
+            args: --win
+            artifact: hodor-desktop-win-x64.exe
+          - os: macos-latest
+            args: --mac
+            artifact: hodor-desktop-mac-arm64.dmg
+    runs-on: ${{ matrix.os }}
+    env:
+      # unsigned builds everywhere; mac must not go looking for identities
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r build
+
+      - name: Bundle desktop main
+        shell: bash
+        run: |
+          VERSION="$(node -p "require('./packages/cli/package.json').version")-build.${{ github.run_number }}.$(git rev-parse --short HEAD)"
+          HODOR_BUILD_VERSION="$VERSION" node scripts/bundle-desktop.mjs
+
+      # The desktop package is npm-managed on purpose: electron-builder
+      # wants a flat node_modules and rebuilds node-pty for Electron's ABI.
+      - run: npm install
+        working-directory: packages/desktop
+      - run: npx electron-builder ${{ matrix.args }} --publish never
+        working-directory: packages/desktop
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.os }}
+          path: packages/desktop/release/${{ matrix.artifact }}
+
+      - name: Attach to rolling release
+        if: github.ref_name == github.event.repository.default_branch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for i in 1 2 3; do
+            gh release upload "latest" "packages/desktop/release/${{ matrix.artifact }}" --clobber && exit 0
+            sleep 10
+          done
+          exit 1
+
   mutation:
     runs-on: ubuntu-latest
     steps:

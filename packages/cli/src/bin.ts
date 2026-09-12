@@ -3,12 +3,11 @@
  * is both what bin/hodor.js loads in a dev checkout (via dist/) and the
  * entry scripts/bundle.mjs bundles into the distributable hodor.mjs.
  */
-import { spawn, spawnSync } from 'node:child_process'
+import { spawnSync } from 'node:child_process'
 import { rename, writeFile } from 'node:fs/promises'
-import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
-import { NodeFs } from '@hodor/core'
 import { run } from './main.js'
+import { baseNodeDeps } from './node-deps.js'
 import { runUpdate } from './update.js'
 import { cliVersion } from './version.js'
 
@@ -35,63 +34,10 @@ const write = (text: string): void => {
 // Set exitCode rather than calling process.exit(): stdout writes to a pipe
 // are async, and exit() would truncate large output (e.g. scan --json | jq).
 process.exitCode = await run(process.argv.slice(2), {
-  fs: new NodeFs(),
-  homedir: () => homedir(),
-  platformFlavor: process.platform === 'win32' ? 'win32' : 'posix',
-  now: () => new Date(),
+  ...baseNodeDeps(),
   write,
   writeErr: (text) => {
     process.stderr.write(text)
-  },
-  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-  columns: () => process.stdout.columns ?? 120,
-  listWslDistros: async () => {
-    if (process.platform !== 'win32') return []
-    try {
-      // wsl.exe writes UTF-16LE to stdout; decode accordingly.
-      const result = spawnSync('wsl.exe', ['-l', '-q'], { encoding: 'buffer' })
-      if (result.status !== 0) return []
-      return result.stdout
-        .toString('utf16le')
-        .split(/\r?\n/)
-        .map((line) => line.replace(/[\u0000\uFEFF]/g, '').trim())
-        .filter((name) => name.length > 0 && !name.startsWith('docker-desktop'))
-    } catch {
-      return []
-    }
-  },
-  wslDistro: () => process.env['WSL_DISTRO_NAME'],
-  env: (name) => process.env[name],
-  osPlatform:
-    process.platform === 'win32' ? 'win32' : process.platform === 'darwin' ? 'darwin' : 'linux',
-  spawnDetached: (file, args) =>
-    new Promise<void>((resolve, reject) => {
-      try {
-        const child = spawn(file, args, { detached: true, stdio: 'ignore' })
-        child.once('spawn', () => {
-          child.unref()
-          resolve()
-        })
-        child.once('error', reject)
-      } catch (error) {
-        reject(error instanceof Error ? error : new Error(String(error)))
-      }
-    }),
-  openUrl: async (url) => {
-    // Best effort per platform; the printed URL is the fallback.
-    const attempts: Array<[string, string[]]> =
-      process.platform === 'win32'
-        ? [['cmd', ['/c', 'start', '', url]]]
-        : process.platform === 'darwin'
-          ? [['open', [url]]]
-          : [
-              ['xdg-open', [url]],
-              ['cmd.exe', ['/c', 'start', '', url]], // WSL with Windows interop
-            ]
-    for (const [command, cmdArgs] of attempts) {
-      const result = spawnSync(command, cmdArgs, { stdio: 'ignore' })
-      if (result.status === 0) return
-    }
   },
   selfUpdate: () => {
     const token = resolveToken()

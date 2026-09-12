@@ -17,6 +17,7 @@ import {
   type TranscriptEntry,
   type View,
 } from './data.js'
+import { TerminalDock } from './TerminalDock.js'
 import { useSnapshot } from './useSnapshot.js'
 
 type Filter =
@@ -117,7 +118,8 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
   }
 
   return (
-    <div className="flex h-full bg-zinc-950 font-sans text-sm text-zinc-200">
+    <div className="flex h-full flex-col bg-zinc-950 font-sans text-sm text-zinc-200">
+      <div className="flex min-h-0 flex-1">
       <aside className="flex w-64 shrink-0 flex-col border-r border-zinc-800">
         <div className="flex items-center gap-2 px-4 py-3">
           <span className="text-base font-semibold tracking-tight text-zinc-50">hodor</span>
@@ -280,6 +282,8 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
           </>
         )}
       </main>
+      </div>
+      <TerminalDock />
     </div>
   )
 }

@@ -32,7 +32,10 @@ brainstorm doc when they get built. Living file — prune on completion.
 
 ## Platform & distribution
 
-- **Electron + PTY milestone** — own the terminal; same LaunchTarget.
+- **Desktop auto-update** — `hodor update` covers the CLI only; the
+  desktop app updates by re-downloading from the latest release.
+- **Desktop polish** — app icon, keyboard shortcuts (next/prev
+  terminal), signing, multiple manager windows.
 - **WSL-native install** — installer assumes shared Windows home;
   support a WSL-only setup.
 

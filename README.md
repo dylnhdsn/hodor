@@ -125,6 +125,18 @@ hodor update    # alias: hodor upgrade
 
 `hodor update` updates the UI too — it's embedded in the same file.
 
+### Desktop app
+
+The same UI as a desktop app with EMBEDDED terminals: resume, fork, and
+new-session open real `claude` PTYs in a dock (tabs, drag-to-resize,
+pop-out windows), routed into the right place — a WSL store's session
+opens inside its distro even from the Windows app. Unsigned builds on
+the same rolling release (expect a SmartScreen/Gatekeeper warning):
+
+- [Windows installer](https://github.com/dylnhdsn/hodor/releases/download/latest/hodor-desktop-win-x64.exe)
+- [Linux AppImage](https://github.com/dylnhdsn/hodor/releases/download/latest/hodor-desktop-linux-x86_64.AppImage)
+- [macOS (Apple silicon) dmg](https://github.com/dylnhdsn/hodor/releases/download/latest/hodor-desktop-mac-arm64.dmg)
+
 ## Development
 
 Requires Node >= 22 and pnpm.

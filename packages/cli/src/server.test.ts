@@ -321,6 +321,24 @@ describe('startServer', () => {
       command: 'claude --resume aaaa --fork-session',
     })
 
+    // pty mode composes a spec for an embedded terminal, spawning nothing
+    const spawnsBefore = spawns.length
+    const pty = await fetch(`${server.url}/api/launch`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ kind: 'resume', sessionId: 'aaaa', mode: 'pty' }),
+    })
+    expect(pty.status).toBe(200)
+    const ptyBody = (await pty.json()) as {
+      spec: { file: string; args: string[]; cwd?: string } | null
+      title: string
+      command: string
+    }
+    expect(ptyBody.command).toBe('claude --resume aaaa')
+    expect(ptyBody.title.length).toBeGreaterThan(0)
+    expect(ptyBody.spec).toMatchObject({ args: ['-lic', 'claude --resume aaaa'], cwd: '/r/app' })
+    expect(spawns.length).toBe(spawnsBefore)
+
     // new sessions only launch into roots the data already knows
     const good = await fetch(`${server.url}/api/launch`, {
       method: 'POST',
