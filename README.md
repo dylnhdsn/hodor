@@ -86,6 +86,24 @@ Windows+WSL setups the Windows home is shared so both sides see one truth.
 Matchers reference durable evidence, never derived ids, so your curation
 survives any improvement to the automatic grouping.
 
+### Custom organizing logic
+
+Bring your own rules, three ways, all feeding the same placement
+channel (pins > organize > matchers > auto):
+
+- **Rule matchers** in projects.json: new leaves `branch=` (glob),
+  `title=` / `model=` (substring or /regex/i), `entrypoint=`, and
+  `all`/`any`/`not` combinator trees.
+- **`~/.hodor/organize.js`** — `export default (session, {glob}) =>
+  ['label', …]`; picked up by presence, reloads on edit, errors show
+  as a banner instead of breaking anything.
+- **Any language** via `{ "organize": { "command": "python3 my.py" } }`
+  in config.json: facts on stdin, `{"labels": {id: [..]}}` on stdout.
+
+Labels become custom projects automatically (created on first sight).
+`hodor organize` dry-runs your logic; `--explain <id>` shows exactly
+what your function sees for one session.
+
 ### Usage & cost
 
 Token usage (input, output, cache reads, cache writes by TTL) is read

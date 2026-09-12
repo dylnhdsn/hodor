@@ -27,6 +27,7 @@ import { scanCloudSessions } from './cloud.js'
 import { composeHostClaude, composeLaunch, composePtySpec, runLaunch, type LaunchTarget } from './launch.js'
 import type { CliDeps } from './main.js'
 import { materializeTarget } from './materialize.js'
+import { createOrganizer } from './organize.js'
 import { resolveStores, storeFs } from './stores.js'
 import { uiAssets } from './ui-assets.js'
 import { loadUserFiles, saveConfig, saveUserPlane, type UserFiles } from './userdata.js'
@@ -79,6 +80,7 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
 
 export async function startServer(deps: CliDeps, options: ServerOptions): Promise<RunningServer> {
   let files: UserFiles = await loadUserFiles(deps)
+  const organizer = createOrganizer(deps, files.home)
   const stores = await resolveStores(deps, { roots: [], noDiscover: false }, files.config)
   const fsFor = storeFs(deps, stores)
   const tailers = stores.map((store) => new StoreTailer(deps.fs, store))
@@ -102,7 +104,18 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
   let nextCloudScanAt = 0
   const CLOUD_SCAN_INTERVAL_MS = 60_000
 
-  async function refresh(): Promise<void> {
+  // Refreshes must not overlap: organize auto-create WRITES projects.json,
+  // and two in-flight refreshes over the same stale plane duplicate
+  // projects (seen live: "expensive" + "expensive-2").
+  let refreshing: Promise<void> | undefined
+  function refresh(): Promise<void> {
+    refreshing ??= refreshOnce().finally(() => {
+      refreshing = undefined
+    })
+    return refreshing
+  }
+
+  async function refreshOnce(): Promise<void> {
     for (const tailer of tailers) {
       const events = await tailer.poll()
       if (events.length > 0) baseState = foldAll(baseState, events)
@@ -132,6 +145,40 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
           },
         },
       ])
+    }
+
+    // Custom organizing logic: evaluate user hooks over a preliminary
+    // snapshot, silently create custom projects for labels that don't
+    // exist yet (the same move as materialization), then fold the labels
+    // so the final snapshot places sessions with 'organize' provenance.
+    const preliminary = buildSnapshot(presented, {
+      now: deps.now(),
+      hide: mergeHideRules(defaultHideRules, files.config.hide),
+    })
+    const organizeEvent = await organizer
+      .evaluate(files.config, presented, preliminary)
+      .catch(() => undefined)
+    if (organizeEvent !== undefined && organizeEvent.type === 'organize-results') {
+      const knownIds = new Set(preliminary.customProjects.map((p) => p.id))
+      const knownNames = new Set(preliminary.customProjects.map((p) => p.name.toLowerCase()))
+      const missing = [...new Set(Object.values(organizeEvent.labels).flat())].filter(
+        (label) => !knownIds.has(label) && !knownNames.has(label.toLowerCase()),
+      )
+      if (missing.length > 0) {
+        let plane = files.plane
+        for (const label of missing) {
+          // Suffix-free on purpose: a label maps to exactly one base slug,
+          // so re-creation is a visible no-op instead of "expensive-2".
+          const id = slugifyProjectId(label, new Set())
+          if (plane.projects.some((p) => p.id === id)) continue
+          const created = applyPlaneOp(plane, { op: 'create-project', id, name: label })
+          if (created.error === undefined) plane = created.plane
+        }
+        await saveUserPlane(deps, files.home, plane)
+        files = { ...files, plane }
+        presented = foldAll(presented, [{ type: 'userplane-changed', plane }])
+      }
+      presented = foldAll(presented, [organizeEvent])
     }
 
     presentedState = presented

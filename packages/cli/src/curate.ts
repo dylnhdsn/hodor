@@ -1,6 +1,7 @@
 import {
   applyPlaneOp,
   applySessionOp,
+  describeMatcher,
   parseMatcherArg,
   slugifyProjectId,
   type PlaneOp,
@@ -108,12 +109,10 @@ export async function projectCommand(deps: CliDeps, args: string[]): Promise<num
         ]
         deps.write(`${p.id}  ${p.name}  (${counts.join(', ')})\n`)
         for (const m of p.matchers) {
-          const value = 'url' in m ? m.url : 'path' in m ? m.path : 'prefix' in m ? m.prefix : m.id
-          deps.write(`  ${m.kind}=${value}\n`)
+          deps.write(`  ${describeMatcher(m)}\n`)
         }
         for (const m of p.excludeMatchers) {
-          const value = 'url' in m ? m.url : 'path' in m ? m.path : 'prefix' in m ? m.prefix : m.id
-          deps.write(`  not ${m.kind}=${value}\n`)
+          deps.write(`  not ${describeMatcher(m)}\n`)
         }
       }
       return 0

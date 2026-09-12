@@ -42,6 +42,7 @@ function serverDeps(fs = new MemFs()): {
       if (file !== 'x-terminal-emulator') throw new Error(`spawn ${file}: not stubbed`)
     },
     selfUpdate: async () => 0,
+    importModule: async () => ({}),
     httpGetJson: async (url, headers) => {
       http.calls.push(url)
       http.headers = headers

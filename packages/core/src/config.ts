@@ -47,6 +47,13 @@ export interface HodorConfig {
    * price drift here.
    */
   pricing?: Record<string, Partial<ModelPricing>>
+  /**
+   * Programmatic organizing via an external command (any language): the
+   * command gets {apiVersion, sessions:[facts]} as JSON on stdin and
+   * prints {labels: {"<sessionId>": ["label", …]}} on stdout.
+   * ~/.hodor/organize.js needs no config — it's picked up by presence.
+   */
+  organize?: { command?: string; timeoutMs?: number }
 }
 
 const hideSchema = z
@@ -88,6 +95,10 @@ const configSchema = z
     projectNames: z.record(z.string(), z.string()).optional(),
     sessions: z.record(z.string(), sessionOverrideSchema).optional(),
     pricing: z.record(z.string(), pricingSchema).optional(),
+    organize: z
+      .object({ command: z.string().optional(), timeoutMs: z.number().optional() })
+      .passthrough()
+      .optional(),
   })
   .passthrough()
 

@@ -35,6 +35,7 @@ function memDeps(fs = new MemFs()): {
       return 0
     },
     httpGetJson: async () => ({ status: 404 }),
+    importModule: async () => ({}),
     runCapture: async () => ({ code: 0, output: '' }),
   }
   return { deps, output, errors, spawns, fs }

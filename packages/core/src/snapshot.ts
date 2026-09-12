@@ -39,6 +39,10 @@ export interface Snapshot {
    * the listing is unavailable (cloudError explains a failed scan). */
   cloudSessions: CloudSession[]
   cloudError?: string
+  /** User organizing logic (organize.js / exec hook): evaluation errors
+   * and labels that resolved to no existing project (the server creates
+   * those as custom projects; a read-only scan just reports them). */
+  organize?: { errors: string[]; unresolved: Array<{ label: string; sessions: number }> }
   /** Memory files found on disk (CLAUDE.md and friends), per probed root. */
   memoryFiles: Array<{
     storeId: string
@@ -426,6 +430,31 @@ export function buildSnapshot(state: CoreState, options: SnapshotOptions): Snaps
   const customProjects = compileUserPlane(state.userPlane, state.config)
   const placements = computePlacements(state, sessions, customProjects)
 
+  // User organizing logic: labels resolve to custom projects (by id or
+  // case-insensitive name) and become placements with 'organize'
+  // provenance — the same channel matchers use, so precedence stays
+  // coherent: exclude pins still veto, includes are still strongest.
+  const resolveLabel = (label: string): CustomProject | undefined =>
+    customProjects.find((p) => p.id === label || p.name.toLowerCase() === label.toLowerCase())
+  const unresolvedLabels = new Map<string, number>()
+  const localIds = new Set(sessions.map((s) => s.id))
+  for (const [sessionId, labels] of Object.entries(state.organize.labels)) {
+    if (!localIds.has(sessionId)) continue
+    for (const label of labels) {
+      const project = resolveLabel(label)
+      if (project === undefined) {
+        unresolvedLabels.set(label, (unresolvedLabels.get(label) ?? 0) + 1)
+        continue
+      }
+      if (project.exclude.includes(sessionId)) continue
+      if (placements.some((p) => p.sessionId === sessionId && p.customProjectId === project.id)) continue
+      placements.push({ sessionId, customProjectId: project.id, via: 'organize' })
+    }
+  }
+  placements.sort(
+    (a, b) => a.sessionId.localeCompare(b.sessionId) || a.customProjectId.localeCompare(b.customProjectId),
+  )
+
   // Archived projects take their sessions with them — unless a live project
   // also claims the session. Provenance, revealable via --all like the rest.
   if (options.hide !== undefined) {
@@ -464,6 +493,23 @@ export function buildSnapshot(state: CoreState, options: SnapshotOptions): Snaps
     .sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''))
   correlateCloudSessions(state, cloudSessions, placements, assignments, customProjects)
 
+  // Organizing logic applies to cloud sessions too: labels append to
+  // claimedBy, so a labeled repo-less session lands in a project instead
+  // of nowhere.
+  for (const cloud of cloudSessions) {
+    for (const label of state.organize.labels[cloud.id] ?? []) {
+      const project = resolveLabel(label)
+      if (project === undefined) {
+        unresolvedLabels.set(label, (unresolvedLabels.get(label) ?? 0) + 1)
+        continue
+      }
+      if (project.archived === true || project.exclude.includes(cloud.id)) continue
+      if (!(cloud.claimedBy ?? []).includes(project.id)) {
+        cloud.claimedBy = [...(cloud.claimedBy ?? []), project.id]
+      }
+    }
+  }
+
   // One rail, one kind of thing (010): a repo that exists only in the
   // cloud still IS a project — synthesize the same auto project the
   // resolver would have built had local sessions existed, id scheme and
@@ -493,6 +539,16 @@ export function buildSnapshot(state: CoreState, options: SnapshotOptions): Snaps
     assignments,
     cloudSessions,
     ...(state.cloud.error !== undefined ? { cloudError: state.cloud.error } : {}),
+    ...(state.organize.evaluatedAt !== undefined
+      ? {
+          organize: {
+            errors: state.organize.errors,
+            unresolved: [...unresolvedLabels]
+              .map(([label, sessions]) => ({ label, sessions }))
+              .sort((a, b) => a.label.localeCompare(b.label)),
+          },
+        }
+      : {}),
     memoryFiles,
     customProjects: [...customProjects].sort(
       (a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id),

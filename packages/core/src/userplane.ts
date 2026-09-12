@@ -25,6 +25,18 @@ export type Matcher =
   /** Exact-folder claim: cwd equals this path — no subtree. */
   | { kind: 'dir'; path: string }
   | { kind: 'session'; id: SessionId }
+  /** Git branch glob, e.g. "claude/deadlock-*". */
+  | { kind: 'branch'; glob: string }
+  /** Title text: case-insensitive substring, or /regex/flags. */
+  | { kind: 'title'; match: string }
+  /** Any model the session used, substring or /regex/flags. */
+  | { kind: 'model'; match: string }
+  /** Exact entrypoint value (cli, sdk, remote, …). */
+  | { kind: 'entrypoint'; value: string }
+  /** Combinators: rules compose into trees. */
+  | { kind: 'all'; of: Matcher[] }
+  | { kind: 'any'; of: Matcher[] }
+  | { kind: 'not'; of: Matcher }
 
 export interface CustomProject {
   id: string
@@ -51,16 +63,29 @@ export const emptyUserPlane: UserPlane = { projects: [] }
 export interface Placement {
   sessionId: SessionId
   customProjectId: string
-  via: 'include' | Matcher
+  via: 'include' | 'organize' | Matcher
 }
 
-const matcherSchema = z.discriminatedUnion('kind', [
+const leafMatcherSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('remote'), url: z.string() }).passthrough(),
   z.object({ kind: z.literal('root'), path: z.string() }).passthrough(),
   z.object({ kind: z.literal('cwd'), prefix: z.string() }).passthrough(),
   z.object({ kind: z.literal('dir'), path: z.string() }).passthrough(),
   z.object({ kind: z.literal('session'), id: z.string() }).passthrough(),
+  z.object({ kind: z.literal('branch'), glob: z.string() }).passthrough(),
+  z.object({ kind: z.literal('title'), match: z.string() }).passthrough(),
+  z.object({ kind: z.literal('model'), match: z.string() }).passthrough(),
+  z.object({ kind: z.literal('entrypoint'), value: z.string() }).passthrough(),
 ])
+
+const matcherSchema: z.ZodType<Matcher> = z.lazy(() =>
+  z.union([
+    leafMatcherSchema,
+    z.object({ kind: z.literal('all'), of: z.array(matcherSchema) }),
+    z.object({ kind: z.literal('any'), of: z.array(matcherSchema) }),
+    z.object({ kind: z.literal('not'), of: matcherSchema }),
+  ]),
+) as z.ZodType<Matcher>
 
 const customProjectSchema = z
   .object({
@@ -171,6 +196,32 @@ function evidenceFor(state: CoreState, session: Session): SessionEvidence {
   return { cwds: session.cwds, roots, remotes }
 }
 
+/** "pattern" or "/regex/flags" against a value, case-insensitive default. */
+export function textMatches(value: string, pattern: string): boolean {
+  const re = pattern.match(/^\/(.+)\/([a-z]*)$/)
+  if (re !== null) {
+    try {
+      return new RegExp(re[1]!, re[2]).test(value)
+    } catch {
+      return false
+    }
+  }
+  return value.toLowerCase().includes(pattern.toLowerCase())
+}
+
+/** Minimal glob: * and ? only, case-insensitive. */
+export function globMatches(value: string, glob: string): boolean {
+  const source = glob.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.')
+  try {
+    return new RegExp(`^${source}$`, 'i').test(value)
+  } catch {
+    return false
+  }
+}
+
+const titleTextOf = (session: Session): string | undefined =>
+  session.rename ?? session.summary ?? session.promptPreview ?? session.firstCommand
+
 function matches(matcher: Matcher, session: Session, evidence: SessionEvidence): boolean {
   switch (matcher.kind) {
     case 'remote':
@@ -183,6 +234,52 @@ function matches(matcher: Matcher, session: Session, evidence: SessionEvidence):
       return evidence.cwds.includes(matcher.path)
     case 'session':
       return matcher.id === session.id
+    case 'branch':
+      return session.gitBranch !== undefined && globMatches(session.gitBranch, matcher.glob)
+    case 'title': {
+      const title = titleTextOf(session)
+      return title !== undefined && textMatches(title, matcher.match)
+    }
+    case 'model':
+      return Object.keys(session.usage ?? {}).some((model) => textMatches(model, matcher.match))
+    case 'entrypoint':
+      return session.entrypoints.includes(matcher.value)
+    case 'all':
+      return matcher.of.every((m) => matches(m, session, evidence))
+    case 'any':
+      return matcher.of.some((m) => matches(m, session, evidence))
+    case 'not':
+      return !matches(matcher.of, session, evidence)
+  }
+}
+
+/** One-line rendering for any matcher, combinators included. */
+export function describeMatcher(m: Matcher): string {
+  switch (m.kind) {
+    case 'remote':
+      return `remote=${m.url}`
+    case 'root':
+      return `root=${m.path}`
+    case 'cwd':
+      return `cwd=${m.prefix}`
+    case 'dir':
+      return `dir=${m.path}`
+    case 'session':
+      return `session=${m.id}`
+    case 'branch':
+      return `branch=${m.glob}`
+    case 'title':
+      return `title=${m.match}`
+    case 'model':
+      return `model=${m.match}`
+    case 'entrypoint':
+      return `entrypoint=${m.value}`
+    case 'all':
+      return `all(${m.of.map(describeMatcher).join(', ')})`
+    case 'any':
+      return `any(${m.of.map(describeMatcher).join(', ')})`
+    case 'not':
+      return `not(${describeMatcher(m.of)})`
   }
 }
 

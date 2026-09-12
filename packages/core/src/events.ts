@@ -59,6 +59,14 @@ export type SourceEvent =
       scannedAt: string
       error?: string
     }
+  | {
+      /** Output of the user's organizing logic (organize.js / exec hook):
+       * session id → project labels. Full replacement per evaluation. */
+      type: 'organize-results'
+      labels: Record<string, string[]>
+      errors: string[]
+      evaluatedAt: string
+    }
   | { type: 'runtime-changed'; sessionId: SessionId; runtime: Runtime }
   | { type: 'meta-changed'; meta: SessionMeta }
   | { type: 'config-changed'; config: HodorConfig }

@@ -36,6 +36,7 @@ import {
 } from '@hodor/core'
 import { scanCloudSessions } from './cloud.js'
 import { projectCommand, sessionCommand } from './curate.js'
+import { buildOrganizeFacts, createOrganizer } from './organize.js'
 import { composeLaunch, runLaunch } from './launch.js'
 import { resolveStores, storeFs } from './stores.js'
 import { formatSnapshot } from './format.js'
@@ -81,8 +82,11 @@ export interface CliDeps {
   runCapture(
     file: string,
     args: string[],
-    options?: { cwd?: string; timeoutMs?: number },
+    options?: { cwd?: string; timeoutMs?: number; stdin?: string },
   ): Promise<{ code: number; output: string }>
+  /** Dynamic ES-module import with a cache-busting token (organize.js
+   * reloads when its mtime changes). */
+  importModule(path: string, cacheBust: string): Promise<unknown>
 }
 
 const USAGE = `hodor — session manager (data core, early days)
@@ -93,6 +97,9 @@ Usage:
                                             Scan, then live-update on changes
   hodor stats [--json] [--root <path>]...   Entrypoint and visibility histograms
   hodor cloud                               List this account's cloud sessions
+  hodor organize [--json] [--explain <id>]  Dry-run your custom organizing logic
+                                            (~/.hodor/organize.js and/or the
+                                            config.organize.command exec hook)
   hodor resume <sessionId> [--fork] [--print]
                                             Open a terminal resuming that session
                                             (--fork: new session id; --print:
@@ -139,6 +146,7 @@ interface Flags {
   intervalMs: number
   port: number
   ticks?: number
+  explain?: string
   rest: string[]
   error?: string
 }
@@ -156,7 +164,7 @@ function parseFlags(args: string[]): Flags {
     port: 4477,
     rest: [],
   }
-  const valueFlags = new Set(['--root', '--interval', '--ticks', '--hide', '--port'])
+  const valueFlags = new Set(['--root', '--interval', '--ticks', '--hide', '--port', '--explain'])
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!
     if (arg === '--json') flags.json = true
@@ -175,6 +183,7 @@ function parseFlags(args: string[]): Flags {
       if (arg === '--interval') flags.intervalMs = Number(value)
       if (arg === '--ticks') flags.ticks = Number(value)
       if (arg === '--port') flags.port = Number(value)
+      if (arg === '--explain') flags.explain = value
     } else flags.rest.push(arg)
   }
   return flags
@@ -529,6 +538,70 @@ function formatAgeMs(ms: number): string {
   return `${Math.floor(hours / 24)}d`
 }
 
+/**
+ * hodor organize — dry-run the user's organizing logic: which labels each
+ * hook produces, where they'd land, and what the server would auto-create.
+ * Never writes; the live server applies for real. --explain <id> shows one
+ * session's fact object next to its labels.
+ */
+async function organizeCommand(deps: CliDeps, flags: Flags): Promise<number> {
+  const files = await loadUserFiles(deps)
+  const config = files.config
+  const stores = await resolveStores(deps, { roots: flags.roots, noDiscover: flags.noDiscover }, config)
+  let state = foldAll(emptyState, configEvents(files))
+  for (const store of stores) {
+    state = foldAll(state, await scanStore(deps.fs, store))
+  }
+  state = await enrich(state, storeFs(deps, stores))
+  const cloudEvent = await scanCloudSessions(deps).catch(() => undefined)
+  if (cloudEvent !== undefined) state = foldAll(state, [cloudEvent])
+  const preliminary = buildSnapshot(state, snapshotOptions(deps, flags, config))
+
+  const organizer = createOrganizer(deps, files.home)
+  const event = await organizer.evaluate(config, state, preliminary)
+  if (event === undefined || event.type !== 'organize-results') {
+    deps.write(
+      `no organizing logic found — create ${files.home.replace(/[\\/]+$/, '')}/organize.js or set organize.command in config.json\n`,
+    )
+    return 1
+  }
+  state = foldAll(state, [event])
+  const snapshot = buildSnapshot(state, snapshotOptions(deps, flags, config))
+
+  const explainId = flags.explain
+  if (explainId !== undefined) {
+    const facts = buildOrganizeFacts(state, preliminary)
+    const fact = facts.find((f) => f.id === explainId || f.id.startsWith(explainId))
+    if (fact === undefined) {
+      deps.write(`no session matching "${explainId}"\n`)
+      return 1
+    }
+    deps.write(JSON.stringify({ fact, labels: event.labels[fact.id] ?? [] }, null, 2) + '\n')
+    return 0
+  }
+
+  if (flags.json) {
+    deps.write(
+      JSON.stringify({ labels: event.labels, organize: snapshot.organize }, null, 2) + '\n',
+    )
+    return 0
+  }
+
+  const labeled = Object.entries(event.labels).filter(([, ls]) => ls.length > 0)
+  const byLabel = new Map<string, number>()
+  for (const [, ls] of labeled) for (const l of ls) byLabel.set(l, (byLabel.get(l) ?? 0) + 1)
+  for (const [label, count] of [...byLabel].sort((a, b) => b[1] - a[1])) {
+    const unresolved = snapshot.organize?.unresolved.some((u) => u.label === label) === true
+    deps.write(
+      `${label.padEnd(28)} ${String(count).padStart(3)} sessions${unresolved ? '  (new project — the server will create it)' : ''}\n`,
+    )
+  }
+  if (byLabel.size === 0) deps.write('logic ran; no labels produced\n')
+  for (const error of snapshot.organize?.errors ?? []) deps.write(`error: ${error}\n`)
+  deps.write(`\n${labeled.length} sessions labeled · hodor organize --explain <id> shows one session's facts\n`)
+  return 0
+}
+
 /** hodor resume <sessionId> [--fork] [--print] — open a terminal on it. */
 async function resumeCommand(deps: CliDeps, flags: Flags): Promise<number> {
   const idArg = flags.rest[0]
@@ -700,6 +773,9 @@ export async function run(argv: string[], deps: CliDeps): Promise<number> {
 
     case 'cloud':
       return cloudCommand(deps, flags)
+
+    case 'organize':
+      return organizeCommand(deps, flags)
 
     case 'watch':
       return watch(deps, flags)

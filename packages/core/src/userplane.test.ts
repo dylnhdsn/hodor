@@ -390,3 +390,73 @@ describe('previewMatcher', () => {
     expect(previewMatcher(state, sessions, { kind: 'session', id: 'nope' })).toEqual([])
   })
 })
+
+describe('rule matchers: new leaves and combinators', () => {
+  const session = (over: Record<string, unknown>) =>
+    ({
+      id: 'sess-1',
+      storeId: 's1',
+      transcriptPath: '/t',
+      cwds: ['/repo/app'],
+      entrypoints: ['cli'],
+      counts: { user: 1, assistant: 1, sidechains: 0, toolCalls: 0 },
+      threads: [],
+      runtime: { kind: 'idle' },
+      ...over,
+    }) as never
+
+  const state = { ...emptyState }
+
+  it('branch globs, title text and regex, model, entrypoint', () => {
+    const s = session({
+      gitBranch: 'claude/deadlock-aim-42',
+      promptPreview: 'Build a Yahtzee scorecard',
+      usage: { 'claude-fable-5': {} },
+    })
+    expect(previewMatcher(state, [s], { kind: 'branch', glob: 'claude/deadlock-*' })).toEqual(['sess-1'])
+    expect(previewMatcher(state, [s], { kind: 'branch', glob: 'claude/pour-*' })).toEqual([])
+    expect(previewMatcher(state, [s], { kind: 'title', match: 'yahtzee' })).toEqual(['sess-1'])
+    expect(previewMatcher(state, [s], { kind: 'title', match: '/score(card)?/i' })).toEqual(['sess-1'])
+    expect(previewMatcher(state, [s], { kind: 'model', match: 'fable' })).toEqual(['sess-1'])
+    expect(previewMatcher(state, [s], { kind: 'entrypoint', value: 'cli' })).toEqual(['sess-1'])
+    expect(previewMatcher(state, [s], { kind: 'entrypoint', value: 'sdk' })).toEqual([])
+  })
+
+  it('all/any/not compose and nest', () => {
+    const s = session({ gitBranch: 'claude/deadlock-aim-42', promptPreview: 'aim trainer' })
+    const tree = {
+      kind: 'all' as const,
+      of: [
+        { kind: 'any' as const, of: [{ kind: 'branch' as const, glob: 'claude/deadlock-*' }] },
+        { kind: 'not' as const, of: { kind: 'title' as const, match: 'yahtzee' } },
+      ],
+    }
+    expect(previewMatcher(state, [s], tree)).toEqual(['sess-1'])
+    expect(
+      previewMatcher(state, [s], { kind: 'not', of: { kind: 'branch', glob: 'claude/deadlock-*' } }),
+    ).toEqual([])
+  })
+
+  it('nested combinators survive the projects.json parser', () => {
+    const { plane, error } = parseUserPlane(
+      JSON.stringify({
+        projects: {
+          games: {
+            name: 'Games',
+            matchers: [
+              {
+                kind: 'any',
+                of: [
+                  { kind: 'branch', glob: 'claude/deadlock-*' },
+                  { kind: 'all', of: [{ kind: 'remote', url: 'github.com/x/y' }, { kind: 'title', match: 'aim' }] },
+                ],
+              },
+            ],
+          },
+        },
+      }),
+    )
+    expect(error).toBeUndefined()
+    expect(plane.projects[0]!.matchers[0]).toMatchObject({ kind: 'any' })
+  })
+})

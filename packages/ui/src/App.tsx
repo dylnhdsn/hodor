@@ -121,6 +121,14 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
 
   return (
     <div className="flex h-full flex-col bg-zinc-950 font-sans text-sm text-zinc-200">
+      {(snapshot.organize?.errors.length ?? 0) > 0 && (
+        <div className="border-b border-amber-900/50 bg-amber-950/40 px-4 py-1 text-xs text-amber-300">
+          organize logic: {snapshot.organize!.errors[0]}
+          {snapshot.organize!.errors.length > 1
+            ? ` (+${snapshot.organize!.errors.length - 1} more)`
+            : ''}
+        </div>
+      )}
       <div className="flex min-h-0 flex-1">
       <aside className="flex w-64 shrink-0 flex-col border-r border-zinc-800">
         <div className="flex items-center gap-2 px-4 py-3">
@@ -897,7 +905,11 @@ function DetailPane(props: {
             {isArchivedProject(p.customProjectId) && <span className="text-amber-400"> (archived)</span>}
             <span className="text-zinc-600">
               {' — '}
-              {p.via === 'include' ? 'pinned by you' : `${p.via.kind}=${matcherValue(p.via)}`}
+              {p.via === 'include'
+                ? 'pinned by you'
+                : p.via === 'organize'
+                  ? 'your organize logic'
+                  : `${p.via.kind}=${matcherValue(p.via)}`}
             </span>
           </div>
         ))}
@@ -977,8 +989,32 @@ function Fact(props: { label: string; value: string; mono?: boolean }) {
 
 // ---------- settings panel ----------
 
-const matcherValue = (m: Matcher): string =>
-  'url' in m ? m.url : 'path' in m ? m.path : 'prefix' in m ? m.prefix : m.id
+// Mirrors core describeMatcher (the core barrel can't load in a browser).
+const matcherValue = (m: Matcher): string => {
+  switch (m.kind) {
+    case 'remote':
+      return m.url
+    case 'root':
+    case 'dir':
+      return m.path
+    case 'cwd':
+      return m.prefix
+    case 'session':
+      return m.id
+    case 'branch':
+      return m.glob
+    case 'title':
+    case 'model':
+      return m.match
+    case 'entrypoint':
+      return m.value
+    case 'all':
+    case 'any':
+      return m.of.map((x) => `${x.kind}=${matcherValue(x)}`).join(', ')
+    case 'not':
+      return `${m.of.kind}=${matcherValue(m.of)}`
+  }
+}
 
 function statusOf(project: RailProject): string {
   if (project.kind === 'auto') return 'Derived automatically. Any edit makes it yours.'

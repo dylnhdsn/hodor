@@ -6,7 +6,10 @@ import type { GitContext } from './git.js'
 import type { MemoryFileInfo } from './memory.js'
 import { addUsage, emptyUsage, type UsageTotals } from './pricing.js'
 import type { Runtime, SessionId, SessionMeta, SessionStore, StoreId } from './types.js'
-import { emptyUserPlane, type UserPlane } from './userplane.js'
+// Type-only on purpose: userplane value-imports gitKey from this module,
+// and a value import back would make the ESM cycle initialization-order
+// dependent (emptyState.userPlane showed up as undefined under vite).
+import type { UserPlane } from './userplane.js'
 
 /**
  * The pure core: state' = fold(state, event). No I/O, no clocks, no
@@ -120,6 +123,8 @@ export interface CoreState {
   checkpointBackups: Record<string, number>
   /** Cloud sessions from the last listing (full replacement each scan). */
   cloud: { sessions: CloudSession[]; scannedAt?: string; error?: string }
+  /** User organizing logic output (session id → labels), replaced whole. */
+  organize: { labels: Record<string, string[]>; errors: string[]; evaluatedAt?: string }
   metas: Record<SessionId, SessionMeta>
   /** Authoritative runtimes (e.g. hosted PTYs); absent = infer from activity. */
   runtimes: Record<SessionId, Runtime>
@@ -136,10 +141,11 @@ export const emptyState: CoreState = {
   memoryFiles: {},
   checkpointBackups: {},
   cloud: { sessions: [] },
+  organize: { labels: {}, errors: [] },
   metas: {},
   runtimes: {},
   config: {},
-  userPlane: emptyUserPlane,
+  userPlane: { projects: [] },
 }
 
 export function gitKey(storeId: StoreId, cwd: string): string {
@@ -404,6 +410,12 @@ export function fold(state: CoreState, event: SourceEvent): CoreState {
             files: event.files,
           },
         },
+      }
+
+    case 'organize-results':
+      return {
+        ...state,
+        organize: { labels: event.labels, errors: event.errors, evaluatedAt: event.evaluatedAt },
       }
 
     case 'cloud-sessions-scanned':

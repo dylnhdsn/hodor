@@ -252,6 +252,13 @@ export function parseMatcherArg(arg: string): Matcher | undefined {
       return { kind, prefix: value }
     case 'session':
       return { kind, id: value }
+    case 'branch':
+      return { kind, glob: value }
+    case 'title':
+    case 'model':
+      return { kind, match: value }
+    case 'entrypoint':
+      return { kind, value }
     default:
       return undefined
   }
