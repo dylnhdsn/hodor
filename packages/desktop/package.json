@@ -2,7 +2,7 @@
   "name": "hodor-desktop",
   "version": "0.0.1",
   "private": true,
-  "description": "hodor — Claude Code session manager with embedded terminals",
+  "description": "hodor \u2014 Claude Code session manager with embedded terminals",
   "author": "dylnhdsn",
   "license": "MIT",
   "repository": "github:dylnhdsn/hodor",
@@ -14,13 +14,10 @@
   "dependencies": {
     "node-pty": "^1.0.0"
   },
-  "overrides": {
-    "node-gyp": "^11.0.0"
-  },
   "devDependencies": {
     "@types/node": "^22.10.0",
     "electron": "^33.4.11",
-    "electron-builder": "^25.1.8",
+    "electron-builder": "^26.0.12",
     "typescript": "^5.7.0"
   },
   "build": {
