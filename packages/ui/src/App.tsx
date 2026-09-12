@@ -188,6 +188,14 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
           >
             {view.hidden.length} hidden sessions
           </button>
+          {snapshot.hodorVersion !== undefined && (
+            <p
+              className="px-4 pb-2 font-mono text-[10px] text-zinc-700"
+              title="the build serving this UI"
+            >
+              {snapshot.hodorVersion.replace(/^\d+\.\d+\.\d+-/, '')}
+            </p>
+          )}
         </div>
       </aside>
 

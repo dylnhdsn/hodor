@@ -23,6 +23,9 @@ import { hiddenBy, type HideRules } from './visibility.js'
 
 export interface Snapshot {
   generatedAt: string
+  /** The serving build (stamped by the server, not the core) — shown in
+   * the UI so "which build am I actually running?" is a glance. */
+  hodorVersion?: string
   stores: SessionStore[]
   sessions: Session[]
   /** Derived (base-plane) projects — machine-owned, rederivable. */

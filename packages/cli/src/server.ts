@@ -30,6 +30,7 @@ import { materializeTarget } from './materialize.js'
 import { resolveStores, storeFs } from './stores.js'
 import { uiAssets } from './ui-assets.js'
 import { loadUserFiles, saveConfig, saveUserPlane, type UserFiles } from './userdata.js'
+import { cliVersion } from './version.js'
 
 /**
  * The local UI/API server: the same pipeline the CLI runs, kept warm and
@@ -138,6 +139,7 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
       now: deps.now(),
       hide: mergeHideRules(defaultHideRules, files.config.hide),
     })
+    next.hodorVersion = cliVersion()
     const nextJson = JSON.stringify(next)
     if (nextJson !== snapshotJson) {
       snapshot = next
