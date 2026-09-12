@@ -86,3 +86,36 @@ clickable project chip.
   only; a WSL-side hodor with a Windows-side login won't see them.
 - Archive from hodor (endpoint exists); events/detail feeds.
 - Cost-over-time could fold cloud cost_usd into analytics.
+
+## Branch pre-flight ("Session resumed without branch")
+
+Dylan's long-standing annoyance: every cloud session he opens prints
+`Session resumed without branch: Failed to checkout branch 'claude/…'`.
+Binary forensics (CLI 2.1.270): opening a cloud session takes
+`session_context.outcomes[git_repository].git_info.branches[0]` from the
+session record, runs `git fetch origin <b>:<b>`, then checkout three
+ways (`checkout <b>` → `checkout -b <b> --track origin/<b>` →
+`checkout --track origin/<b>`); if all fail, the error is CAUGHT, the
+session resumes on the current branch, and that warning prints. The
+branch name is baked into the record forever, so once the branch is
+deleted (normal after its PR merges) every open warns, forever. There
+is no skip flag. Cosmetic, but noisy.
+
+hodor now predicts it instead of letting it surprise: a checker mirrors
+the CLI's fallback chain —
+
+1. refs already known to the joined local checkout (refs/heads or
+   refs/remotes/origin, loose or packed, through worktree indirection)
+   satisfy the checkout: pure fs reads via the same store translation
+   as everything else;
+2. with no local knowledge, one BATCHED `git ls-remote origin
+   refs/heads/<b>…` per repo (cached 5 min, native stores + WSL via
+   wsl.exe from Windows) distinguishes "on origin, never fetched"
+   (fine — claude's fetch will get it) from "deleted" (the warning
+   case). A failed ls-remote yields no verdict — never a false "gone".
+
+Confirmed-gone sessions carry `branchGone` in the snapshot; the cloud
+pane shows "branch gone — opens on your current branch" before you
+click, and `hodor cloud` prints the same under the row. State lives in
+`state.cloud.branchPresence` (survives rescans), event
+`cloud-branches-checked`.

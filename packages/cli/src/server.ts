@@ -24,6 +24,7 @@ import {
 } from '@hodor/core'
 import { flavorOfPath, pathOps } from '@hodor/core'
 import { scanCloudSessions } from './cloud.js'
+import { createBranchChecker } from './cloudbranch.js'
 import { composeHostClaude, composeLaunch, composePtySpec, runLaunch, type LaunchTarget } from './launch.js'
 import type { CliDeps } from './main.js'
 import { materializeTarget } from './materialize.js'
@@ -87,6 +88,7 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
 export async function startServer(deps: CliDeps, options: ServerOptions): Promise<RunningServer> {
   let files: UserFiles = await loadUserFiles(deps)
   const organizer = createOrganizer(deps, files.home)
+  const branchChecker = createBranchChecker(deps)
   const stores = await resolveStores(deps, { roots: [], noDiscover: false }, files.config)
   const fsFor = storeFs(deps, stores)
   const tailers = stores.map((store) => new StoreTailer(deps.fs, store))
@@ -134,6 +136,10 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
       const cloudEvent = await scanCloudSessions(deps).catch(() => undefined)
       if (cloudEvent !== undefined) baseState = foldAll(baseState, [cloudEvent])
     }
+    const branchEvent = await branchChecker
+      .check(baseState, stores, fsFor)
+      .catch(() => undefined)
+    if (branchEvent !== undefined) baseState = foldAll(baseState, [branchEvent])
     files = await loadUserFiles(deps)
 
     let presented = foldAll(baseState, configEventsOf(files))

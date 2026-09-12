@@ -309,3 +309,47 @@ describe('cloud-only repos become ordinary projects', () => {
     expect(snapshot2.cloudSessions[0]!.autoProjectId).toBeUndefined()
   })
 })
+
+describe('cloud branch pre-flight in the fold and snapshot', () => {
+  const scan = (id: string, branches: string[]): SourceEvent => ({
+    type: 'cloud-sessions-scanned',
+    sessions: [{ id, status: 'idle', branches, url: `https://claude.ai/code/${id}` }],
+    scannedAt: '2026-09-12T10:00:00Z',
+  })
+
+  it('marks branchGone only for confirmed-gone sessions', () => {
+    const state = foldAll(emptyState, [
+      scan('cse_gone', ['claude/merged-away']),
+      scan('cse_gone', ['claude/merged-away']),
+      {
+        type: 'cloud-branches-checked',
+        presence: { cse_gone: false, cse_fine: true },
+        checkedAt: '2026-09-12T10:00:05Z',
+      },
+    ])
+    const snapshot = buildSnapshot(state, { now: new Date('2026-09-12T12:00:00Z') })
+    expect(snapshot.cloudSessions[0]!.branchGone).toBe(true)
+
+    // unknown (absent from presence) never gets the flag
+    const unknown = foldAll(emptyState, [
+      scan('cse_new', ['claude/x']),
+      { type: 'cloud-branches-checked', presence: {}, checkedAt: '2026-09-12T10:00:05Z' },
+    ])
+    const s2 = buildSnapshot(unknown, { now: new Date('2026-09-12T12:00:00Z') })
+    expect(s2.cloudSessions[0]!.branchGone).toBeUndefined()
+  })
+
+  it('presence survives a cloud rescan', () => {
+    const state = foldAll(emptyState, [
+      scan('cse_gone', ['claude/merged-away']),
+      {
+        type: 'cloud-branches-checked',
+        presence: { cse_gone: false },
+        checkedAt: '2026-09-12T10:00:05Z',
+      },
+      scan('cse_gone', ['claude/merged-away']),
+    ])
+    const snapshot = buildSnapshot(state, { now: new Date('2026-09-12T12:00:00Z') })
+    expect(snapshot.cloudSessions[0]!.branchGone).toBe(true)
+  })
+})

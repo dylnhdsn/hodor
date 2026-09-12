@@ -122,7 +122,14 @@ export interface CoreState {
    * file-history dir (0 = probed, none there — expired or restored). */
   checkpointBackups: Record<string, number>
   /** Cloud sessions from the last listing (full replacement each scan). */
-  cloud: { sessions: CloudSession[]; scannedAt?: string; error?: string }
+  cloud: {
+    sessions: CloudSession[]
+    scannedAt?: string
+    error?: string
+    /** Cloud session id → outcome branch still resolvable; false =
+     * confirmed gone, absent = unknown. Survives rescans. */
+    branchPresence?: Record<string, boolean>
+  }
   /** User organizing logic output (session id → labels), replaced whole. */
   organize: { labels: Record<string, string[]>; errors: string[]; evaluatedAt?: string }
   metas: Record<SessionId, SessionMeta>
@@ -425,7 +432,16 @@ export function fold(state: CoreState, event: SourceEvent): CoreState {
           sessions: event.sessions,
           scannedAt: event.scannedAt,
           ...(event.error !== undefined ? { error: event.error } : {}),
+          ...(state.cloud.branchPresence !== undefined
+            ? { branchPresence: state.cloud.branchPresence }
+            : {}),
         },
+      }
+
+    case 'cloud-branches-checked':
+      return {
+        ...state,
+        cloud: { ...state.cloud, branchPresence: event.presence },
       }
 
     case 'checkpoint-backups-scanned':

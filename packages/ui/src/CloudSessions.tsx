@@ -138,7 +138,17 @@ export function CloudSessionList(props: {
                   {s.costUsd !== undefined ? ` · ${formatUsd(s.costUsd)}` : ''}
                 </div>
                 {s.branches.length > 0 && (
-                  <div className="sm:col-span-2 truncate font-mono">{s.branches.join(' · ')}</div>
+                  <div className="sm:col-span-2 truncate">
+                    <span className="font-mono">{s.branches.join(' · ')}</span>
+                    {s.branchGone === true && (
+                      <span
+                        className="ml-2 text-amber-500/90"
+                        title="This branch was deleted (usually after its PR merged). Claude will print 'Session resumed without branch' and continue on whatever branch you're on — the session content is unaffected."
+                      >
+                        branch gone — opens on your current branch
+                      </span>
+                    )}
+                  </div>
                 )}
               </div>
             )}

@@ -34,6 +34,11 @@ export interface CloudSession {
   autoProjectId?: string
   /** Outcome branches the session pushed. */
   branches: string[]
+  /** Filled by the snapshot: the first outcome branch no longer exists in
+   * the joined local checkout or on its origin — opening this session
+   * will resume without the branch (the Claude CLI's checkout will fail
+   * and it proceeds on the current branch). */
+  branchGone?: boolean
   model?: string
   effort?: string
   /** Where the session was started: web_claude_ai, android, … */

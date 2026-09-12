@@ -97,6 +97,62 @@ async function chaseLocalRemote(
 }
 
 /**
+ * The directory that holds a repository's shared refs (refs/heads,
+ * refs/remotes, packed-refs). For a plain repo that's `.git` itself; for a
+ * linked worktree it's the primary repo's git dir (branches are shared);
+ * for a submodule-style `.git` pointer, the pointed-to dir.
+ */
+async function refsDirOf(
+  fs: FileSystem,
+  flavor: PathFlavor,
+  repoRoot: string,
+): Promise<string | undefined> {
+  const p = pathOps(flavor)
+  const gitPath = p.join(repoRoot, '.git')
+  const st = await fs.stat(gitPath)
+  if (st?.kind === 'dir') return gitPath
+  if (st?.kind !== 'file') return undefined
+  const pointer = ((await fs.readFile(gitPath)) ?? '').match(/^gitdir:\s*(.+?)\s*$/m)
+  if (pointer?.[1] === undefined) return undefined
+  let gitdir = pointer[1]
+  if (!p.isAbsolute(gitdir)) gitdir = p.normalize(p.join(repoRoot, gitdir))
+  const commondirRaw = await fs.readFile(p.join(gitdir, 'commondir'))
+  if (commondirRaw === undefined) return gitdir
+  const common = commondirRaw.trim()
+  return p.isAbsolute(common) ? p.normalize(common) : p.normalize(p.join(gitdir, common))
+}
+
+/**
+ * Whether a branch is already resolvable from this checkout's own refs —
+ * a local branch, or a remote-tracking ref of origin (which is all
+ * `git checkout --track origin/<b>` needs). Mirrors what the Claude CLI's
+ * teleport checkout can satisfy without touching the network: loose refs
+ * plus packed-refs, through worktree indirection.
+ */
+export async function branchKnownLocally(
+  fs: FileSystem,
+  flavor: PathFlavor,
+  repoRoot: string,
+  branch: string,
+): Promise<boolean> {
+  const dir = await refsDirOf(fs, flavor, repoRoot)
+  if (dir === undefined) return false
+  const p = pathOps(flavor)
+  const names = [`refs/heads/${branch}`, `refs/remotes/origin/${branch}`]
+  for (const name of names) {
+    if ((await fs.stat(p.join(dir, ...name.split('/'))))?.kind === 'file') return true
+  }
+  const packed = await fs.readFile(p.join(dir, 'packed-refs'))
+  if (packed !== undefined) {
+    for (const line of packed.split('\n')) {
+      const ref = line.trim().split(' ')[1]
+      if (ref !== undefined && names.includes(ref)) return true
+    }
+  }
+  return false
+}
+
+/**
  * Resolve the git context for a cwd by walking up to the nearest `.git`.
  *
  * - `.git` directory → normal repository.

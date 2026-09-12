@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { MemFs } from './fs.js'
-import { localRemotePath, parseGitRemotes, pickRemoteUrl, resolveGitContext } from './git.js'
+import { branchKnownLocally, localRemotePath, parseGitRemotes, pickRemoteUrl, resolveGitContext } from './git.js'
 
 const CONFIG = `[core]
 \trepositoryformatversion = 0
@@ -195,5 +195,46 @@ describe('resolveGitContext', () => {
       isWorktree: false,
       remoteUrl: 'git@github.com:dylnhdsn/hodor.git',
     })
+  })
+})
+
+describe('branchKnownLocally', () => {
+  it('finds loose local and remote-tracking refs, nested names included', async () => {
+    const fs = new MemFs()
+    fs.writeFile('/repo/.git/config', '')
+    fs.writeFile('/repo/.git/refs/heads/claude/fix-thing', 'aaaa\n')
+    fs.writeFile('/repo/.git/refs/remotes/origin/claude/other', 'bbbb\n')
+    expect(await branchKnownLocally(fs, 'posix', '/repo', 'claude/fix-thing')).toBe(true)
+    expect(await branchKnownLocally(fs, 'posix', '/repo', 'claude/other')).toBe(true)
+    expect(await branchKnownLocally(fs, 'posix', '/repo', 'claude/gone')).toBe(false)
+  })
+
+  it('reads packed-refs in both namespaces', async () => {
+    const fs = new MemFs()
+    fs.writeFile('/repo/.git/config', '')
+    fs.writeFile(
+      '/repo/.git/packed-refs',
+      '# pack-refs with: peeled fully-peeled sorted\n' +
+        'aaaa refs/heads/claude/packed-one\n' +
+        'bbbb refs/remotes/origin/claude/packed-two\n' +
+        '^cccc\n',
+    )
+    expect(await branchKnownLocally(fs, 'posix', '/repo', 'claude/packed-one')).toBe(true)
+    expect(await branchKnownLocally(fs, 'posix', '/repo', 'claude/packed-two')).toBe(true)
+    expect(await branchKnownLocally(fs, 'posix', '/repo', 'claude/unpacked')).toBe(false)
+  })
+
+  it('follows worktree indirection to the shared refs', async () => {
+    const fs = new MemFs()
+    fs.writeFile('/repo/.git/config', '')
+    fs.writeFile('/repo/.git/refs/heads/claude/shared', 'aaaa\n')
+    fs.writeFile('/repo/.git/worktrees/wt1/commondir', '../..\n')
+    fs.writeFile('/wt1/.git', 'gitdir: /repo/.git/worktrees/wt1\n')
+    expect(await branchKnownLocally(fs, 'posix', '/wt1', 'claude/shared')).toBe(true)
+    expect(await branchKnownLocally(fs, 'posix', '/wt1', 'claude/gone')).toBe(false)
+  })
+
+  it('is false for a directory that is not a repository', async () => {
+    expect(await branchKnownLocally(new MemFs(), 'posix', '/nowhere', 'main')).toBe(false)
   })
 })

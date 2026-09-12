@@ -313,6 +313,30 @@ const remoteKeyOf = (url: string): string => normalizeGitUrl(url).toLowerCase()
  * doesn't happen and the question is "what remotes does hodor think my
  * local sessions have?".
  */
+/**
+ * The local checkouts known per remote, from the same ground truth as the
+ * cloud↔project join: every session cwd's chased git context. Used by the
+ * cloud branch pre-flight to know WHERE to look for a branch's refs.
+ */
+export function localReposByRemote(
+  state: CoreState,
+): Map<string, Array<{ storeId: string; repoRoot: string }>> {
+  const byRemote = new Map<string, Array<{ storeId: string; repoRoot: string }>>()
+  for (const accum of Object.values(state.sessions)) {
+    for (const cwd of accum.cwds) {
+      const context = state.gitContexts[gitKey(accum.storeId, cwd)]
+      if (context?.remoteUrl === undefined || context === null) continue
+      const key = remoteKeyOf(context.remoteUrl)
+      const list = byRemote.get(key) ?? []
+      if (!list.some((r) => r.storeId === accum.storeId && r.repoRoot === context.repoRoot)) {
+        list.push({ storeId: accum.storeId, repoRoot: context.repoRoot })
+      }
+      byRemote.set(key, list)
+    }
+  }
+  return byRemote
+}
+
 export function localSessionsByRemote(state: CoreState): Map<string, string[]> {
   const byRemote = new Map<string, string[]>()
   for (const accum of Object.values(state.sessions)) {
@@ -492,6 +516,13 @@ export function buildSnapshot(state: CoreState, options: SnapshotOptions): Snaps
     .map((s) => ({ ...s }))
     .sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''))
   correlateCloudSessions(state, cloudSessions, placements, assignments, customProjects)
+
+  // Branch pre-flight (docs/brainstorm/019): flag sessions whose outcome
+  // branch is confirmed gone, so the UI can say "opens on your current
+  // branch" BEFORE the CLI's checkout fails with a cryptic warning.
+  for (const cloud of cloudSessions) {
+    if (state.cloud.branchPresence?.[cloud.id] === false) cloud.branchGone = true
+  }
 
   // Organizing logic applies to cloud sessions too: labels append to
   // claimedBy, so a labeled repo-less session lands in a project instead

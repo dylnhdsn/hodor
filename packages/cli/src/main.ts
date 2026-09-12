@@ -523,6 +523,9 @@ async function cloudCommand(deps: CliDeps, flags: Flags): Promise<number> {
     ].join('  ')
     deps.write(`${line.trimEnd()}\n`)
     if (s.needsAction !== undefined) deps.write(`${' '.repeat(28)}needs you: ${s.needsAction}\n`)
+    if (s.branchGone === true) {
+      deps.write(`${' '.repeat(28)}branch gone (${s.branches[0]}) — opens on your current branch\n`)
+    }
   }
   deps.write(
     `\n${snapshot.cloudSessions.length} cloud sessions · unjoined ones: hodor cloud --json shows the evidence\n`,

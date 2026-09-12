@@ -60,6 +60,15 @@ export type SourceEvent =
       error?: string
     }
   | {
+      /** Whether each cloud session's outcome branch is still resolvable
+       * (locally known refs, or confirmed on origin). Keyed by cloud
+       * session id; false = confirmed gone, absent = unknown. Full
+       * replacement per check. */
+      type: 'cloud-branches-checked'
+      presence: Record<string, boolean>
+      checkedAt: string
+    }
+  | {
       /** Output of the user's organizing logic (organize.js / exec hook):
        * session id → project labels. Full replacement per evaluation. */
       type: 'organize-results'
