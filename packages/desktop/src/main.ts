@@ -53,6 +53,8 @@ const stateFile = (): string => join(app.getPath('home'), '.hodor', 'desktop.jso
 
 interface DesktopState {
   mainBounds?: Electron.Rectangle
+  /** Window came back maximized last time — restore it that way. */
+  mainMaximized?: boolean
   /** Chromium zoom level (0 = 100%; each step is 0.5). */
   zoomLevel?: number
 }
@@ -397,11 +399,16 @@ function createMainWindow(): void {
   wireZoom(mainWindow, true)
   const sendWinState = (): void => {
     if (mainWindow !== undefined && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('win:state', { maximized: mainWindow.isMaximized() })
+      const maximized = mainWindow.isMaximized()
+      // maximized-ness is part of the remembered window state; the normal
+      // bounds underneath stay whatever persistBounds last saved.
+      saveState({ ...loadState(), mainMaximized: maximized })
+      mainWindow.webContents.send('win:state', { maximized })
     }
   }
   mainWindow.on('maximize', sendWinState)
   mainWindow.on('unmaximize', sendWinState)
+  if (state.mainMaximized === true) mainWindow.maximize()
   // Instant paint: the local splash shows the moment the process is up —
   // the real UI navigates in via connectMainWindow once the embedded
   // server is listening (store scans no longer gate the first pixel).

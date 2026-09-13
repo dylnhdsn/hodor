@@ -688,7 +688,7 @@ function WindowControls() {
         className="rounded px-2 py-1 text-[11px] text-t4 hover:bg-s3 hover:text-fg"
         title={max ? 'restore' : 'maximize'}
       >
-        {max ? '❐' : '○'}
+        {max ? '❐' : '□'}
       </button>
       <button
         onClick={() => bridge.winClose!()}
