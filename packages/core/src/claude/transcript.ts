@@ -170,6 +170,14 @@ export interface MessageLine {
   usage?: UsageTotals
   /** Names of tool_use blocks on this line (each block appears once). */
   toolNames?: string[]
+  /** Assistant lines: tool_use blocks with ids — the turn-state tracker
+   * matches these against later tool_result ids to find PENDING tools
+   * (an open AskUserQuestion dialog, a tool still running). Interactive
+   * dialogs carry their question and option labels straight from the
+   * tool input, so quick-reply chips are real data, never invented. */
+  toolUses?: Array<{ id: string; name: string; question?: string; options?: string[] }>
+  /** User lines: tool_use ids resolved by tool_result blocks on this line. */
+  toolResultIds?: string[]
   /** The CLI's human-readable session slug, e.g. "structured-munching-map". */
   slug?: string
   /** Effort level in force for this turn (low…max). */
@@ -405,12 +413,42 @@ export function parseTranscriptLine(raw: string): TranscriptLine {
         }
       }
       if (Array.isArray(d.message?.content)) {
-        const names = d.message.content
-          .map((block) => (block as { type?: unknown; name?: unknown } | null) ?? {})
-          .filter((block) => block.type === 'tool_use' && typeof block.name === 'string')
-          .map((block) => block.name as string)
+        const names: string[] = []
+        const uses: NonNullable<MessageLine['toolUses']> = []
+        for (const raw of d.message.content) {
+          const block =
+            (raw as { type?: unknown; name?: unknown; id?: unknown; input?: unknown } | null) ?? {}
+          if (block.type !== 'tool_use' || typeof block.name !== 'string') continue
+          names.push(block.name)
+          if (typeof block.id !== 'string') continue
+          const use: NonNullable<MessageLine['toolUses']>[number] = {
+            id: block.id,
+            name: block.name,
+          }
+          if (block.name === 'AskUserQuestion') {
+            const q = (
+              (block.input as { questions?: unknown } | null)?.questions as
+                | Array<{ question?: unknown; options?: unknown }>
+                | undefined
+            )?.[0]
+            if (typeof q?.question === 'string') use.question = q.question
+            const options = (Array.isArray(q?.options) ? q.options : [])
+              .map((o) => (o as { label?: unknown } | null)?.label)
+              .filter((l): l is string => typeof l === 'string')
+            if (options.length > 0) use.options = options
+          }
+          uses.push(use)
+        }
         if (names.length > 0) line.toolNames = names
+        if (uses.length > 0) line.toolUses = uses
       }
+    }
+    if (type === 'user' && Array.isArray(d.message?.content)) {
+      const resultIds = d.message.content
+        .map((block) => (block as { type?: unknown; tool_use_id?: unknown } | null) ?? {})
+        .filter((block) => block.type === 'tool_result' && typeof block.tool_use_id === 'string')
+        .map((block) => block.tool_use_id as string)
+      if (resultIds.length > 0) line.toolResultIds = resultIds
     }
     if (d.toolUseID !== undefined && d.sourceToolAssistantUUID !== undefined) {
       line.spawnedBy = { toolUseId: d.toolUseID, assistantUuid: d.sourceToolAssistantUUID }

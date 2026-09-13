@@ -52,6 +52,13 @@ export interface SessionAccum {
   forkedFrom?: SessionId
   userCount: number
   assistantCount: number
+  /** Turn-state tracking (docs/brainstorm/023, the Turn Stack): the last
+   * MAIN-chain event's nature + time, and tool_use blocks still awaiting a
+   * tool_result (an open dialog, a tool mid-run). A real human input clears
+   * the open set — an interrupt abandons whatever dialog was up. */
+  lastMainAt?: string
+  lastMainKind?: 'human' | 'assistant-text' | 'assistant-tool' | 'tool-result'
+  openTools: Record<string, { name: string; at?: string; question?: string; options?: string[] }>
   /** tool_use blocks seen, main and sidechains alike. */
   toolCallCount: number
   /** tool_use blocks by tool name — the session's tool fingerprint. */
@@ -186,6 +193,7 @@ function newAccum(id: SessionId, storeId: StoreId, transcriptPath: string): Sess
     uuidToSidechain: {},
     agentToSidechain: {},
     agentMeta: {},
+    openTools: {},
   }
 }
 
@@ -308,6 +316,36 @@ function applyMessage(accum: SessionAccum, line: MessageLine): void {
     }
   }
   if (line.type === 'assistant') accum.assistantCount += 1
+
+  // Turn-state tracking. tool_result lines resolve pending tools; a real
+  // human input abandons whatever was pending (interrupts kill dialogs);
+  // assistant lines record whether the turn's last word was text or an
+  // unresolved tool_use.
+  if (line.type === 'assistant' && line.isApiError !== true) {
+    accum.lastMainKind = (line.toolUses?.length ?? 0) > 0 ? 'assistant-tool' : 'assistant-text'
+    if (ts !== undefined) accum.lastMainAt = ts
+    for (const use of line.toolUses ?? []) {
+      accum.openTools[use.id] = {
+        name: use.name,
+        ...(ts !== undefined ? { at: ts } : {}),
+        ...(use.question !== undefined ? { question: use.question } : {}),
+        ...(use.options !== undefined ? { options: use.options } : {}),
+      }
+    }
+  } else if (line.type === 'user') {
+    if (line.toolResultIds !== undefined) {
+      for (const id of line.toolResultIds) delete accum.openTools[id]
+      accum.lastMainKind = 'tool-result'
+      if (ts !== undefined) accum.lastMainAt = ts
+    } else if (!line.isMeta && line.isCompactSummary !== true) {
+      // Any non-meta user line without tool_results is human-side input —
+      // prompts, slash commands, and interrupt markers alike. All of them
+      // abandon whatever dialog was on screen.
+      accum.lastMainKind = 'human'
+      if (ts !== undefined) accum.lastMainAt = ts
+      accum.openTools = {}
+    }
+  }
   if (line.cwd !== undefined && !accum.cwds.includes(line.cwd)) accum.cwds.push(line.cwd)
   if (line.gitBranch !== undefined) accum.gitBranch = line.gitBranch
   if (line.version !== undefined) accum.cliVersion = line.version
@@ -340,6 +378,7 @@ function cloneAccum(accum: SessionAccum): SessionAccum {
     ),
     checkpointIds: { ...accum.checkpointIds },
     checkpointFiles: { ...accum.checkpointFiles },
+    openTools: { ...accum.openTools },
     ...(accum.lastCompaction !== undefined ? { lastCompaction: { ...accum.lastCompaction } } : {}),
   }
 }

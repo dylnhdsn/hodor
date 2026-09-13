@@ -216,6 +216,7 @@ describe('buildSnapshot', () => {
           },
         ],
         runtime: { kind: 'idle' },
+        turn: { state: 'waiting', since: '2026-06-01T10:00:05Z' },
       },
     ])
   })

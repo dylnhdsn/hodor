@@ -31,6 +31,28 @@ export interface SessionStore {
   watchStrategy: 'fs-events' | 'poll'
 }
 
+/**
+ * Whose turn is it (docs/brainstorm/023, the Turn Stack). Derived purely
+ * from transcript structure — never from summarizing content:
+ *
+ * - waiting: the ball is in the human's court — the agent's last word was
+ *   text and the file has gone quiet, or an interactive dialog
+ *   (AskUserQuestion / ExitPlanMode) is unresolved. No idle downgrade:
+ *   an overnight wait is still a wait; consumers gate by recency/desk.
+ * - working: activity is fresh, or a non-interactive tool_use is still
+ *   unresolved (a tool mid-run and a permission prompt are
+ *   indistinguishable in the transcript — stay honest, say working).
+ * - idle: trailing human input or trailing tool noise long gone quiet —
+ *   the process is dead.
+ */
+export interface SessionTurn {
+  state: 'working' | 'waiting' | 'idle'
+  /** When the wait began — the agent's last word, or the dialog's tool_use. */
+  since?: string
+  /** An unresolved tool_use; dialogs carry real question + option labels. */
+  pending?: { tool: string; question?: string; options?: string[] }
+}
+
 export interface Session {
   id: SessionId
   storeId: StoreId
@@ -103,6 +125,7 @@ export interface Session {
   costUsd?: number
   /** Models with tokens but no pricing entry — costUsd is a floor, not a total. */
   costUnpriced?: string[]
+  turn?: SessionTurn
   threads: Thread[]
   runtime: Runtime
 }

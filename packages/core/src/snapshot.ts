@@ -10,7 +10,15 @@ import {
   type UsageTotals,
 } from './pricing.js'
 import { resolveProjects } from './resolver.js'
-import type { Assignment, Project, Runtime, Session, SessionStore, Thread } from './types.js'
+import type {
+  Assignment,
+  Project,
+  Runtime,
+  Session,
+  SessionStore,
+  SessionTurn,
+  Thread,
+} from './types.js'
 import { normalizeGitUrl, repoNameOf } from './urls.js'
 import { compileUserPlane, computePlacements, type CustomProject, type Placement } from './userplane.js'
 import { hiddenBy, type HideRules } from './visibility.js'
@@ -104,10 +112,65 @@ function inferRuntime(accum: SessionAccum, now: Date, windowMs: number): Runtime
   return { kind: 'idle' }
 }
 
+/** Pending dialogs that ALWAYS wait on a human, whatever the quiet time. */
+const INTERACTIVE_TOOLS = new Set(['AskUserQuestion', 'ExitPlanMode'])
+/** Fresh activity: the agent is (or was seconds ago) streaming. */
+const TURN_ACTIVE_MS = 30_000
+/** A trailing human prompt with no reply for this long = dead process. */
+const TURN_REPLY_MS = 5 * 60_000
+/** A tool pending this long with nothing after = dead process. */
+const TURN_TOOL_IDLE_MS = 2 * 3600_000
+
+/**
+ * Whose turn is it — from transcript structure alone (docs 023). An open
+ * interactive dialog waits regardless of quiet time; the agent's last word
+ * being text waits once the file goes quiet, with no idle downgrade (an
+ * overnight wait is still a wait — consumers gate by desk membership or
+ * recency). A pending ordinary tool reads as WORKING: a tool mid-run and a
+ * permission prompt are indistinguishable here, and a false "needs you"
+ * costs more trust than a late one.
+ */
+export function classifyTurn(
+  accum: Pick<SessionAccum, 'lastMainAt' | 'lastMainKind' | 'openTools'>,
+  now: Date,
+): SessionTurn | undefined {
+  if (accum.lastMainAt === undefined || accum.lastMainKind === undefined) return undefined
+  const last = Date.parse(accum.lastMainAt)
+  if (Number.isNaN(last)) return undefined
+  const quiet = now.getTime() - last
+  const open = Object.values(accum.openTools)
+  const dialog = [...open].reverse().find((t) => INTERACTIVE_TOOLS.has(t.name))
+  if (dialog !== undefined) {
+    return {
+      state: 'waiting',
+      since: dialog.at ?? accum.lastMainAt,
+      pending: {
+        tool: dialog.name,
+        ...(dialog.question !== undefined ? { question: dialog.question } : {}),
+        ...(dialog.options !== undefined ? { options: [...dialog.options] } : {}),
+      },
+    }
+  }
+  const lastTool = open[open.length - 1]
+  const pending =
+    lastTool !== undefined ? { pending: { tool: lastTool.name } } : {}
+  if (quiet < TURN_ACTIVE_MS) return { state: 'working', ...pending }
+  switch (accum.lastMainKind) {
+    case 'assistant-text':
+      return { state: 'waiting', since: accum.lastMainAt }
+    case 'assistant-tool':
+    case 'tool-result':
+      return quiet < TURN_TOOL_IDLE_MS ? { state: 'working', ...pending } : { state: 'idle' }
+    case 'human':
+      return quiet < TURN_REPLY_MS ? { state: 'working' } : { state: 'idle' }
+  }
+}
+
 function toSession(
   accum: SessionAccum,
   runtime: Runtime,
   pricing: Record<string, ModelPricing>,
+  now: Date,
   checkpointBackupFiles?: number,
 ): Session {
   const threads: Thread[] = []
@@ -195,6 +258,8 @@ function toSession(
   if (accum.createdAt !== undefined) session.createdAt = accum.createdAt
   if (accum.lastActivityAt !== undefined) session.lastActivityAt = accum.lastActivityAt
   if (accum.cliVersion !== undefined) session.cliVersion = accum.cliVersion
+  const turn = classifyTurn(accum, now)
+  if (turn !== undefined) session.turn = turn
   return session
 }
 
@@ -421,6 +486,7 @@ export function buildSnapshot(state: CoreState, options: SnapshotOptions): Snaps
         accum,
         state.runtimes[accum.id] ?? inferRuntime(accum, options.now, windowMs),
         pricing,
+        options.now,
         state.checkpointBackups[gitKey(accum.storeId, accum.id)],
       )
       const meta = state.metas[accum.id]
