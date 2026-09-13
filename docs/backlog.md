@@ -34,6 +34,12 @@ brainstorm doc when they get built. Living file — prune on completion.
   "cosmetics later").
 - **Cost-over-time analytics** — spend charts per project/model/day.
 
+- **Claude settings control** — researched + verified in
+  [024](brainstorm/024-settings-control.md): read all layers with
+  effective-value provenance, write user/local/project + global-config
+  keys on a safety ladder, doctor-grade validation, cross-boundary
+  view. Awaits go-ahead (UI part waits on the 023 design pass).
+
 ## Platform & distribution
 
 - **Workspace v2: the durable desk** — requirements settled in
