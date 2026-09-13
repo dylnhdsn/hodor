@@ -132,7 +132,10 @@ terminals, resume dead slots. Global: search (substring + `has:agents`,
 
 ## Proposed information architecture
 
-Three-region app, one window (desktop adds terminals; web hides them):
+On desktop, **the workspace is the app's main surface** (see "The
+workspace" below — this was settled by Dylan's own workflow); the
+library, detail, and rail are the management layer you summon over or
+beside it. On the web (no PTYs), the library IS the app.
 
 - **Rail** (left, unchanged in spirit): Home (triage), All sessions,
   projects by recency with unified counts, archived/hidden, version +
@@ -152,13 +155,73 @@ Three-region app, one window (desktop adds terminals; web hides them):
   geo/tier) · Provenance ("here because matcher `remote=…`" in human
   words). Cloud detail = same skeleton, its facts (status story,
   context meter, branch pre-flight) in the same slots.
-- **Workbench** (bottom region on desktop, drag-height, or popped-out
-  windows): dockview tiles as today, but visually of-a-piece, with a
-  two-way link: a session row shows a "terminal open" glyph; a tile's
+- **Workspace** (desktop, the main surface): named zones of session
+  tabs — the next section is its full requirements. Two-way link
+  everywhere: a session row shows a "terminal open" glyph; a tile's
   tab links back to the session detail.
-- **Turn Stack** (desktop, a workspace view): the triage surface —
-  see the next section. Home's "Needs you" group is the list-shaped
-  echo of the same queue and links into it.
+- **Turn Stack** (desktop, a view inside the workspace): the triage
+  surface — see its section. Home's "Needs you" group is the
+  list-shaped echo of the same queue and links into it.
+
+## The workspace: the workflow to beat is Windows Terminal
+
+This section is the definitive workspace requirement, grounded in how
+Dylan already works — every design decision here traces to it.
+
+**The current workflow.** Windows Terminal divides the screen into
+windows-of-tabs, and the windows carry MEANING: half the screen is
+"sessions I'm actively driving"; one quarter is "agents reviewing
+other people's PRs"; the last quarter is "misc tasks". At any moment
+~5 sessions are hot and 10+ are open. The geometry is the
+organization — each window is a category the user sorts sessions
+into with their hands.
+
+**The pain.** A restart or crash evaporates the whole working set:
+not just the layout, but WHICH SESSIONS WERE WHERE. Rebuilding means
+excavating your own recent history by hand, session by session.
+
+**The requirement, in one sentence:** hodor is that Windows Terminal
+layout, but durable — the same freedom to carve the screen into
+meaningful zones of tabs, plus the one thing only hodor can do: every
+tile knows which session it holds, so the arrangement AND its
+contents survive anything (`claude --resume` reconstructs a session
+losslessly from its transcript).
+
+What that demands, beyond the shipped v1 engine (dockview groups +
+splits + autosaved slots already EXPRESS the 50/25/25 layout in one
+maximized window):
+
+1. **Workspace-first posture.** The desk fills the window; the
+   library/detail/rail summon over or beside it (palette, drawer,
+   keyboard). The bottom-strip dock inverts this and is wrong for
+   this workflow.
+2. **Named zones.** A dockview group gets a label ("Active" ·
+   "PR reviews" · "Misc") — the user's categories, persisted with the
+   layout. Sessions route into zones: "open in → <zone>" from any
+   session row, drag a row onto a zone, and a zone can be the default
+   target for new opens.
+3. **Restore all.** The post-crash experience is ONE action: reopen
+   hodor → "Restore your desk? 11 sessions across 3 zones" → every
+   slot resumes into place. Per-tile resume stays as the selective
+   fallback. This is the feature the whole design exists for.
+4. **Stability is sacred.** Zones and tiles never rearrange
+   themselves; hands learn where "PR reviews" lives. Slot rules
+   evaluate at open/restore time only — nothing live-rebinds. Only
+   views (the Turn Stack) have live content, and their FRAME stays
+   put.
+5. **The bridge.** hodor tails transcripts regardless of which
+   terminal ran them — so "what was I running in the hour before the
+   crash" is answerable even for sessions opened in Windows Terminal,
+   from last-activity data. Recovery works before the user has moved
+   their whole workflow in; the zones just make it automatic.
+
+Tile kinds stay the three from the arc so far: a **bound terminal**
+(this session's PTY), a **slot** (a rule that produces one: resume X,
+newest-in-project, new-in-root — doc 022 v3), and a **view** (a live
+surface over sessions; the Turn Stack is the first and, for now, the
+only one). Named workspaces and templates (doc 022 v2/v3) ride on
+top; multi-window (022 v4) matters for multi-monitor desks but the
+canonical scenario fits one maximized window.
 
 ## The Turn Stack (triage, settled)
 
@@ -282,8 +345,15 @@ anywhere in the UI.
 4. **Session detail, local** — tail + collapsed fact groups + forks.
 5. **Session detail, cloud** — status story, context meter, teleport/
    message verbs, branch pre-flight label.
-6. **Workbench** — dock open with 3 tiles (one split), row↔tile link
-   visible, one dead slot offering resume.
+6. **Workspace (the desk)** — THE canonical scenario: one maximized
+   window, three named zones (Active ½ · PR reviews ¼ · Misc ¼), tabs
+   in each, ~11 sessions total, real TUI in the focused tile, a
+   row↔tile link visible, the library summoned as an overlay/drawer
+   on top of the desk.
+6b. **Restore all (post-crash)** — the same desk on relaunch: every
+   tile a dead slot, one banner ("Restore your desk? 11 sessions
+   across 3 zones"), one tile mid-resume, per-tile resume as the
+   fallback affordance.
 7. **Project settings** — matchers with preview, pins, danger-free
    archive/revert affordances.
 8. **States sheet** — row anatomy at every status; empty states (no
@@ -293,11 +363,16 @@ anywhere in the UI.
 Feed each artboard this doc plus real snapshot JSON (`hodor scan
 --json`) so the data is never lorem.
 
+## Settled along the way
+
+- **Default view / workbench posture**: on desktop the workspace (the
+  desk) IS the app; library/detail summon over it. On the web the
+  library is the app. The bottom-strip dock is dead.
+- **Triage**: the Turn Stack, a view inside the workspace — not a
+  modal, not question cards.
+
 ## Open questions (Dylan decides, then we design)
 
-- Is **Home/triage the default view** on launch, or All sessions?
-- Workbench posture: keep the **stacked bottom region**, or promote to
-  a **mode/tab** (library ⇄ workbench) with popouts for multi-monitor?
 - How loud should **cost** be — a per-row fact, detail-only, or a
   dedicated analytics surface (backlog: cost-over-time)?
 - Do projects get **colors/icons** now (they'd carry the rail, rows,

@@ -4,8 +4,10 @@ Date: 2026-09-12
 Status: v1 implemented (see Phasing) — the main-window dock is a dockview
 region of tab groups and splits, terminals only, autosaved to
 `~/.hodor/workspaces.json` (one implicit workspace) via `/api/workspace`,
-with dead slots degrading to a resume affordance on restore. v2+ (named
-workspaces, templates, multi-window documents) remain design.
+with dead slots degrading to a resume affordance on restore. v2 was then
+re-scoped by doc 023 ("the workflow to beat is Windows Terminal"):
+workspace-first posture, named zones with routing, one-action
+restore-all. Templates and multi-window documents follow as before.
 
 The ask: beyond the project/session viewer, **workspace views** —
 persistent window, tab, and split arrangements that can be (a) templated

@@ -36,10 +36,12 @@ brainstorm doc when they get built. Living file — prune on completion.
 
 ## Platform & distribution
 
-- **Window management v2–v4** — v1 (dockview splits/tabs, autosaved
-  implicit workspace, restore-by-resume) shipped; named workspaces,
-  templates + slot rules, and multi-window documents remain
-  ([022](brainstorm/022-window-management.md)).
+- **Workspace v2: the durable desk** — requirements settled in
+  [023](brainstorm/023-ui-design-brief.md) ("the workflow to beat is
+  Windows Terminal"): workspace-first posture (library summons over
+  it), named zones with open-into-zone routing, one-action restore-all
+  after crash/restart. Then 022's v3/v4: templates + slot rules,
+  multi-window. Awaits the design pass.
 - **Desktop polish** — app icon, keyboard shortcuts (next/prev
   terminal), signing, multiple manager windows.
 - **WSL-native install** — installer assumes shared Windows home;
