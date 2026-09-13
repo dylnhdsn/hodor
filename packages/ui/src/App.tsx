@@ -63,6 +63,22 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
   )
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set())
+  // Rail collapse (artifact a1edae46): icons-only strip, badges intact.
+  const [railOpen, setRailOpen] = useState<boolean>(() => {
+    try {
+      return window.localStorage.getItem('hodor-rail') !== 'closed'
+    } catch {
+      return true
+    }
+  })
+  const toggleRail = (open: boolean) => {
+    setRailOpen(open)
+    try {
+      window.localStorage.setItem('hodor-rail', open ? 'open' : 'closed')
+    } catch {
+      // per-viewer convenience only
+    }
+  }
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [detailId, setDetailId] = useState<string | undefined>(undefined)
 
@@ -281,13 +297,16 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
           platform === 'darwin' ? 'pl-[78px]' : ''
         }`}
       >
+        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[6px] bg-ac font-ui text-[12px] font-bold text-ink">
+          h
+        </span>
         <Wordmark height={14} />
         <span
           className={`h-1.5 w-1.5 rounded-full ${connected ? 'bg-run' : 'bg-b6'}`}
           title={connected ? 'live' : 'reconnecting'}
         />
         <span className="text-t6">/</span>
-        <span className="text-[12px] font-bold text-fg">{crumb.title}</span>
+        <span className="font-ui text-[12.5px] font-bold text-fg">{crumb.title}</span>
         {crumb.meta !== undefined && <span className="text-[11px] text-t4">{crumb.meta}</span>}
         <span className="no-drag ml-auto flex items-center gap-2">
           {desktop !== undefined && (
@@ -298,8 +317,8 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
               title="desk sessions waiting on you, longest first (Enter · esc closes)"
               className={
                 stackN > 0
-                  ? 'flex items-center gap-1.5 rounded border border-ask/50 bg-ask/10 px-2.5 py-1 text-[11px] font-bold text-ask hover:bg-ask/15'
-                  : 'flex items-center gap-1.5 rounded border border-b3 px-2.5 py-1 text-[11px] text-t5 hover:border-b5 hover:text-t3'
+                  ? 'flex items-center gap-1.5 rounded border border-ask/50 bg-ask/10 px-2.5 py-1 font-ui text-[11.5px] font-bold text-ask hover:bg-ask/15'
+                  : 'flex items-center gap-1.5 rounded border border-b3 px-2.5 py-1 font-ui text-[11.5px] text-t5 hover:border-b5 hover:text-t3'
               }
             >
               {stackN > 0 ? <>▲ {stackN} your turn — turn stack</> : <>turn stack</>}
@@ -333,9 +352,18 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
       )}
       <div className="flex min-h-0 flex-1">
       {/* The turn stack takes the whole window — the rail steps aside. */}
-      {filter.kind !== 'stack' && (
+      {filter.kind !== 'stack' && (railOpen ? (
       <aside className="flex w-[215px] shrink-0 flex-col border-r border-b1">
-        <nav className="flex-1 overflow-y-auto pt-2 pb-2">
+        <nav className="flex-1 overflow-y-auto pt-1 pb-2">
+          <div className="flex justify-end px-2">
+            <button
+              onClick={() => toggleRail(false)}
+              title="collapse the rail"
+              className="px-1.5 text-[11px] text-t6 hover:text-fg"
+            >
+              «
+            </button>
+          </div>
           <RailItem
             label="Home"
             active={filter.kind === 'home'}
@@ -416,7 +444,7 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
           {view.archivedProjects.length > 0 && (
             <button
               onClick={() => setFilter({ kind: 'archived' })}
-              className={`block w-full px-3.5 py-1.5 text-left ${
+              className={`block w-full px-3.5 py-1.5 text-left font-ui ${
                 filter.kind === 'archived' ? 'text-ask' : 'text-t5 hover:text-t2'
               }`}
             >
@@ -426,7 +454,7 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
           )}
           <button
             onClick={() => setFilter({ kind: 'hidden' })}
-            className={`block w-full px-3.5 pb-1.5 text-left ${
+            className={`block w-full px-3.5 pb-1.5 text-left font-ui ${
               view.archivedProjects.length === 0 ? 'pt-1.5' : ''
             } ${filter.kind === 'hidden' ? 'text-ask' : 'text-t5 hover:text-t2'}`}
           >
@@ -439,7 +467,47 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
           )}
         </div>
       </aside>
-      )}
+      ) : (
+      <aside className="flex w-[46px] shrink-0 flex-col items-center border-r border-b1 pt-2">
+        <RailIcon
+          glyph="⌂"
+          label="Home"
+          active={filter.kind === 'home'}
+          badge={waitingN}
+          onClick={() => setFilter({ kind: 'home' })}
+        />
+        <RailIcon
+          glyph="▤"
+          label="All sessions"
+          active={filter.kind === 'all' || filter.kind === 'project'}
+          onClick={() => setFilter({ kind: 'all' })}
+        />
+        {desktop !== undefined && (
+          <>
+            <RailIcon
+              glyph="⛶"
+              label="the desk"
+              active={filter.kind === 'desk'}
+              onClick={() => setFilter({ kind: 'desk' })}
+            />
+            <RailIcon
+              glyph="▲"
+              label="turn stack"
+              active={false}
+              badge={stackN}
+              onClick={() => setFilter({ kind: 'stack' })}
+            />
+          </>
+        )}
+        <button
+          onClick={() => toggleRail(true)}
+          title="expand the rail"
+          className="mt-auto mb-2 px-1.5 text-[11px] text-t6 hover:text-fg"
+        >
+          »
+        </button>
+      </aside>
+      ))}
 
       <main className="flex min-w-0 flex-1 flex-col">
         {/* The desk stays mounted whatever lens is up: its PTYs, dockview
@@ -656,12 +724,38 @@ function RailItem(props: {
   return (
     <button
       onClick={props.onClick}
-      className={`flex w-full items-center justify-between px-3.5 py-[7px] text-left text-[11.5px] ${
+      className={`flex w-full items-center justify-between px-3.5 py-[7px] text-left ${
         props.active ? 'bg-s3 text-fg' : 'text-t2 hover:bg-s1 hover:text-fg'
       }`}
     >
-      <span className="truncate">{props.label}</span>
+      <span className="truncate font-ui text-[12px]">{props.label}</span>
       <span className="ml-2 flex shrink-0 items-center gap-1.5">{props.right}</span>
+    </button>
+  )
+}
+
+/** Collapsed-rail icon: the badge rides the corner, exactly like the mock. */
+function RailIcon(props: {
+  glyph: string
+  label: string
+  active: boolean
+  badge?: number
+  onClick: () => void
+}) {
+  return (
+    <button
+      onClick={props.onClick}
+      title={props.label}
+      className={`relative mb-1 flex h-8 w-8 items-center justify-center rounded-[5px] text-[13px] ${
+        props.active ? 'bg-s4 text-fg' : 'text-t4 hover:bg-s2 hover:text-fg'
+      }`}
+    >
+      {props.glyph}
+      {props.badge !== undefined && props.badge > 0 && (
+        <span className="absolute -top-1 -right-1 rounded-full bg-ask px-[4px] text-[8.5px] leading-[13px] font-bold text-app">
+          {props.badge}
+        </span>
+      )}
     </button>
   )
 }
@@ -958,7 +1052,7 @@ function SessionRow(props: {
           >
             ●
           </span>
-          <span className="truncate text-[12.5px] font-bold text-fg">{titleOf(s)}</span>
+          <span className="truncate font-ui text-[12.5px] font-bold text-fg">{titleOf(s)}</span>
           {s.forkedFrom !== undefined && (
             <span className="shrink-0 rounded border border-b4 px-1.5 text-[10px] text-t4">
               fork
@@ -1127,7 +1221,7 @@ function DetailPane(props: {
   return (
     <div className="w-96 shrink-0 overflow-y-auto border-l border-b1 px-4 py-3 text-xs">
       <div className="mb-1 flex items-start gap-2">
-        <h2 className="min-w-0 flex-1 text-sm font-semibold break-words text-fg">
+        <h2 className="min-w-0 flex-1 font-ui text-sm font-semibold break-words text-fg">
           {titleOf(s)}
         </h2>
         <button onClick={close} className="shrink-0 px-1 text-t4 hover:text-t1">

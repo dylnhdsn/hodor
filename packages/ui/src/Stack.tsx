@@ -218,7 +218,7 @@ export function Stack(props: {
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded border-[1.5px] border-ask/55 bg-s8 shadow-2xl">
           <div className="flex shrink-0 items-center gap-2 border-b border-b1 bg-s3 px-3.5 py-2.5">
             <span className="text-[9px] text-ask">●</span>
-            <span className="truncate text-sm font-bold">{titleOf(top.session)}</span>
+            <span className="truncate font-ui text-sm font-bold">{titleOf(top.session)}</span>
             <span className="whitespace-nowrap rounded border border-b4 px-2 font-mono text-[10px] text-t3">
               {projectName(top.session)}
             </span>
@@ -386,7 +386,7 @@ export function Stack(props: {
                 className="flex items-center gap-2.5 rounded border border-b1 bg-s1 px-3 py-1.5 text-left hover:border-b6"
               >
                 <span className="text-[9px] text-ask">●</span>
-                <span className="flex-1 truncate text-[12.5px] font-semibold">
+                <span className="flex-1 truncate font-ui text-[12.5px] font-semibold">
                   {titleOf(session)}
                 </span>
                 <span className="font-mono text-[10.5px] text-t4">

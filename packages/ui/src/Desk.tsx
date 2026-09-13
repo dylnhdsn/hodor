@@ -373,7 +373,7 @@ function SlotTab(props: IDockviewPanelHeaderProps<SlotParams>) {
     >
       <span className={`text-[8px] ${dot}`}>●</span>
       <span className="text-t6">❯</span>
-      <span className="max-w-[160px] truncate font-semibold">{title}</span>
+      <span className="max-w-[160px] truncate font-ui text-[11.5px] font-semibold">{title}</span>
       <button
         onClick={(e) => {
           e.stopPropagation()

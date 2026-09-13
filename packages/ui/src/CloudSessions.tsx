@@ -81,7 +81,7 @@ export function CloudRow(props: {
             >
               ●
             </span>
-            <span className="truncate text-[12.5px] font-bold text-fg">
+            <span className="truncate font-ui text-[12.5px] font-bold text-fg">
               {s.title ?? s.id.slice(0, 12)}
             </span>
             {originTag(s.origin) !== undefined && (
