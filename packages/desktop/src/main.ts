@@ -374,7 +374,6 @@ function setupUpdater(): void {
 }
 
 function createMainWindow(): void {
-  if (server === undefined) return
   const state = loadState()
   mainWindow = new BrowserWindow({
     width: state.mainBounds?.width ?? 1280,
@@ -403,10 +402,13 @@ function createMainWindow(): void {
   }
   mainWindow.on('maximize', sendWinState)
   mainWindow.on('unmaximize', sendWinState)
-  void mainWindow.loadURL(server.url)
+  // Instant paint: the local splash shows the moment the process is up —
+  // the real UI navigates in via connectMainWindow once the embedded
+  // server is listening (store scans no longer gate the first pixel).
+  void mainWindow.loadFile(join(__dirname, 'splash.html'))
   // External links (e.g. the GitHub repo) open in the real browser.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith(server?.url ?? '')) return { action: 'allow' }
+    if (server !== undefined && url.startsWith(server.url)) return { action: 'allow' }
     void shell.openExternal(url)
     return { action: 'deny' }
   })
@@ -422,6 +424,12 @@ function createMainWindow(): void {
   })
 }
 
+/** Navigate the (splash-showing) main window to the now-listening server. */
+function connectMainWindow(): void {
+  if (server === undefined || mainWindow === undefined || mainWindow.isDestroyed()) return
+  void mainWindow.loadURL(server.url)
+}
+
 app.whenReady().then(async () => {
   // macOS About panel says hodor, not Electron.
   if (process.platform === 'darwin') {
@@ -430,6 +438,10 @@ app.whenReady().then(async () => {
       applicationVersion: typeof __HODOR_VERSION__ === 'string' ? __HODOR_VERSION__ : 'dev',
     })
   }
+  // Window BEFORE server: the splash paints immediately; the store scan
+  // (transcripts, git, WSL bridge) no longer gates the first pixel.
+  wireIpc()
+  createMainWindow()
   server = await startServer(
     {
       ...baseNodeDeps(),
@@ -440,13 +452,17 @@ app.whenReady().then(async () => {
         return 1
       },
     },
-    { port: 0 },
+    // Listen first, scan in the background — the renderer's own boot
+    // splash takes over while the first snapshot builds.
+    { port: 0, deferInitialRefresh: true },
   )
-  wireIpc()
   setupUpdater()
-  createMainWindow()
+  connectMainWindow()
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createMainWindow()
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createMainWindow()
+      connectMainWindow()
+    }
   })
 })
 

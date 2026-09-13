@@ -86,7 +86,11 @@ jobs:
 
       # The desktop package is npm-managed on purpose: electron-builder
       # wants a flat node_modules and rebuilds node-pty for Electron's ABI.
-      - run: npm install
+      # npm ci, not install: releases build from the LOCKFILE, so two
+      # builds of the same commit ship the same electron/node-pty instead
+      # of whatever the registry resolved that hour. (bundle-desktop.mjs
+      # stamps the lockfile's version fields so ci's sync check passes.)
+      - run: npm ci
         working-directory: packages/desktop
       - run: npx electron-builder ${{ matrix.args }} --publish never
         working-directory: packages/desktop

@@ -1,0 +1,81 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>hodor</title>
+    <style>
+      /* The instant-on splash: painted the moment the process is up,
+         BEFORE the embedded server scans a single transcript. Mirrors the
+         renderer's BootSplash so the hand-off is seamless. */
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #0b0a10;
+        overflow: hidden;
+        -webkit-app-region: drag; /* frameless window stays movable */
+        font-family: ui-monospace, 'Cascadia Mono', Menlo, Consolas, monospace;
+      }
+      .wrap {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 18px;
+      }
+      svg {
+        color: #e8e4f0;
+        animation: pulse 2.4s ease-in-out infinite;
+      }
+      p {
+        margin: 0;
+        font-size: 11px;
+        color: #6b6478;
+        letter-spacing: 0.04em;
+      }
+      .close {
+        -webkit-app-region: no-drag;
+        position: fixed;
+        top: 10px;
+        right: 12px;
+        border: 0;
+        background: none;
+        color: #4a4556;
+        font: inherit;
+        font-size: 13px;
+        cursor: pointer;
+      }
+      .close:hover {
+        color: #e8e4f0;
+      }
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.45;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <button class="close" onclick="window.close()" title="close">✕</button>
+    <div class="wrap">
+      <svg viewBox="0 0 70 26" height="60" aria-label="hodor">
+        <g fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 1.8 L3 24" />
+          <path d="M3 13.5 C3 9.2 5.8 8 8 8 C10.6 8 13 9.4 13 13.5 L13 24" />
+          <circle cx="23" cy="16" r="5.9" />
+          <circle cx="37" cy="16" r="5.9" />
+          <path d="M42.9 1.8 L42.9 24" />
+          <circle cx="52" cy="16" r="5.9" />
+          <path d="M61 8.3 L61 24" />
+          <path d="M61 14.5 C61 9.6 63.8 8.2 67 8.2" />
+        </g>
+      </svg>
+      <p>holding the door…</p>
+    </div>
+  </body>
+</html>

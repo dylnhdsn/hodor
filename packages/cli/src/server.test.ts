@@ -440,6 +440,8 @@ describe('cloud sessions', () => {
     })
     fs.writeFile('/home/u/.claude/projects/-r/aaaa.jsonl', line('u1', '2026-06-01T11:00:00Z', '/r/app'))
     const server = await start(fs, deps)
+    // the first refresh stays off the network; the cloud scan runs on tick 2
+    await server.tick()
 
     const snapshot = (await (await fetch(`${server.url}/api/snapshot`)).json()) as {
       cloudSessions: Array<{ id: string; bucket?: string; needsAction?: string; remoteUrl?: string }>
@@ -493,6 +495,7 @@ describe('cloud sessions', () => {
     const { deps, fs } = serverDeps()
     fs.writeFile('/home/u/.claude/projects/-r/aaaa.jsonl', line('u1', '2026-06-01T11:00:00Z', '/r/app'))
     const server = await start(fs, deps)
+    await server.tick()
     const snapshot = (await (await fetch(`${server.url}/api/snapshot`)).json()) as {
       cloudSessions: unknown[]
       cloudError?: string

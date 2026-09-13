@@ -41,10 +41,15 @@ await build({
 
 // The window icon rides next to main.cjs (BrowserWindow { icon } on
 // win/linux); electron-builder picks the same art up from build/ for the
-// exe, dock and installers.
+// exe, dock and installers. The splash paints before the server exists,
+// so it ships as a plain file too.
 copyFileSync(
   new URL('../packages/desktop/build/icon.png', import.meta.url),
   new URL('../packages/desktop/dist/icon.png', import.meta.url),
+)
+copyFileSync(
+  new URL('../packages/desktop/src/splash.html', import.meta.url),
+  new URL('../packages/desktop/dist/splash.html', import.meta.url),
 )
 
 // Stamp an INCREASING semver from the CI run number: the auto-updater
@@ -59,5 +64,16 @@ const run = /-build\.(\d+)\./.exec(version)?.[1]
 const [major = '0', minor = '0'] = version.split('-')[0].split('.')
 desktopPkg.version = run !== undefined ? `${major}.${minor}.${run}` : '0.0.0'
 writeFileSync(desktopPkgPath, JSON.stringify(desktopPkg, null, 2) + '\n')
+
+// Keep the lockfile's own version fields in step, so CI can `npm ci`
+// (it refuses a root-version mismatch): dependency versions then come
+// from the LOCKFILE on every release build — two builds of the same
+// commit ship the same electron/electron-builder/node-pty instead of
+// whatever the registry resolved that hour.
+const lockPath = new URL('../packages/desktop/package-lock.json', import.meta.url)
+const lock = JSON.parse(readFileSync(lockPath, 'utf8'))
+lock.version = desktopPkg.version
+if (lock.packages?.[''] !== undefined) lock.packages[''].version = desktopPkg.version
+writeFileSync(lockPath, JSON.stringify(lock, null, 2) + '\n')
 
 console.log(`bundled hodor desktop ${version}`)

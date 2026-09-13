@@ -53,6 +53,10 @@ export interface ServerOptions {
   port: number
   /** Poll cadence; 0 disables the timer (tests drive tick() manually). */
   intervalMs?: number
+  /** Return as soon as the port is listening; the first refresh runs in
+   * the background (requests that need a snapshot await it). The desktop
+   * uses this so its window paints before the stores are scanned. */
+  deferInitialRefresh?: boolean
 }
 
 export interface RunningServer {
@@ -126,6 +130,10 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
   }
 
   async function refreshOnce(): Promise<void> {
+    // The FIRST pass stays off the network: the library paints from local
+    // files alone, and the cloud listing + branch checks fold in on the
+    // next tick (~2s), streamed out over SSE like any other update.
+    const firstPass = snapshot === undefined
     for (const tailer of tailers) {
       const events = await tailer.poll()
       if (events.length > 0) baseState = foldAll(baseState, events)
@@ -133,14 +141,14 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
     baseState = foldAll(baseState, await enrichGitContexts(baseState, fsFor))
     baseState = foldAll(baseState, await enrichMemoryFiles(baseState, fsFor))
     baseState = foldAll(baseState, await enrichCheckpointBackups(baseState, fsFor))
-    if (Date.now() >= nextCloudScanAt) {
+    if (!firstPass && Date.now() >= nextCloudScanAt) {
       nextCloudScanAt = Date.now() + CLOUD_SCAN_INTERVAL_MS
       const cloudEvent = await scanCloudSessions(deps).catch(() => undefined)
       if (cloudEvent !== undefined) baseState = foldAll(baseState, [cloudEvent])
     }
-    const branchEvent = await branchChecker
-      .check(baseState, stores, fsFor)
-      .catch(() => undefined)
+    const branchEvent = firstPass
+      ? undefined
+      : await branchChecker.check(baseState, stores, fsFor).catch(() => undefined)
     if (branchEvent !== undefined) baseState = foldAll(baseState, [branchEvent])
     files = await loadUserFiles(deps)
 
@@ -644,7 +652,11 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
   const address = server.address()
   const port = typeof address === 'object' && address !== null ? address.port : options.port
 
-  await refresh()
+  if (options.deferInitialRefresh === true) {
+    void refresh().catch(() => {})
+  } else {
+    await refresh()
+  }
 
   const intervalMs = options.intervalMs ?? 2000
   const timer = intervalMs > 0 ? setInterval(() => void refresh().catch(() => {}), intervalMs) : undefined
