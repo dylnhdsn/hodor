@@ -292,8 +292,10 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
         <span className="no-drag ml-auto flex items-center gap-2">
           {desktop !== undefined && (
             <button
-              onClick={() => setFilter({ kind: 'stack' })}
-              title="desk sessions waiting on you, longest first (Enter)"
+              onClick={() =>
+                setFilter(filter.kind === 'stack' ? { kind: 'desk' } : { kind: 'stack' })
+              }
+              title="desk sessions waiting on you, longest first (Enter · esc closes)"
               className={
                 stackN > 0
                   ? 'flex items-center gap-1.5 rounded border border-ask/50 bg-ask/10 px-2.5 py-1 text-[11px] font-bold text-ask hover:bg-ask/15'
@@ -330,6 +332,8 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
         </div>
       )}
       <div className="flex min-h-0 flex-1">
+      {/* The turn stack takes the whole window — the rail steps aside. */}
+      {filter.kind !== 'stack' && (
       <aside className="flex w-[215px] shrink-0 flex-col border-r border-b1">
         <nav className="flex-1 overflow-y-auto pt-2 pb-2">
           <RailItem
@@ -398,7 +402,8 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
               />
               <RailItem
                 label="turn stack"
-                active={filter.kind === 'stack'}
+                // the rail is gone while the stack is open, so never active here
+                active={false}
                 onClick={() => setFilter({ kind: 'stack' })}
                 right={stackN > 0 ? <WaitChip n={stackN} /> : <Count n={0} />}
               />
@@ -434,6 +439,7 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
           )}
         </div>
       </aside>
+      )}
 
       <main className="flex min-w-0 flex-1 flex-col">
         {/* The desk stays mounted whatever lens is up: its PTYs, dockview

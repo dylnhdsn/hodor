@@ -79,6 +79,8 @@ export const deskState: { entries: DeskEntry[]; defer: Record<string, DeferState
 
 interface DeskOps {
   closePanel: (panelId: string) => void
+  /** Make a tile the active panel of its zone (no focus steal). */
+  revealPanel: (panelId: string) => void
   resumePanel: (panelId: string) => Promise<void>
   setDefer: (sessionId: string, state: DeferState | undefined) => void
 }
@@ -97,6 +99,21 @@ function notifyDesk(): void {
 
 /** Zone metas mirrored at module scope so entries can carry zone names. */
 let zoneMetas: Record<string, ZoneMeta> = {}
+
+/** Window teardown: dockview disposes panel by panel, and a debounced
+ * save mid-dispose would persist a half-emptied desk — after restart the
+ * missing tiles read as "the app forgot my sessions". Killing PTYs from
+ * the removal handler is equally wrong then: the removal is the app
+ * closing, not the user closing a tile. */
+let unloading = false
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeunload', () => {
+    unloading = true
+  })
+  window.addEventListener('pagehide', () => {
+    unloading = true
+  })
+}
 
 /** Turn states by session id, pushed in by the App from each snapshot so
  * the desk's tabs (separate React roots) can color their status dots. */
@@ -391,6 +408,18 @@ export function Desk({ inspect }: { inspect?: (sessionId: string) => void }) {
   const deferRef = useRef<Record<string, DeferState>>({})
   /** PTYs whose panel removal is a move (pop-out), not a kill. */
   const movingOut = useRef(new Set<string>())
+  /** Live-terminal adoption must WAIT for the saved layout: if it wins
+   * the race, panels.length !== 0 skips fromJSON and the next autosave
+   * overwrites the doc with just the adopted panel — the desk "forgets"
+   * every dead tile (seen live: a saved two-tile desk reloaded as one). */
+  const restoreLatch = useRef<{ p: Promise<void>; done: () => void } | undefined>(undefined)
+  if (restoreLatch.current === undefined) {
+    let done!: () => void
+    const p = new Promise<void>((resolve) => {
+      done = resolve
+    })
+    restoreLatch.current = { p, done }
+  }
   zonesRef.current = zones
   zoneMetas = zones
   useEffect(() => {
@@ -399,10 +428,11 @@ export function Desk({ inspect }: { inspect?: (sessionId: string) => void }) {
   }, [zones])
 
   const save = useCallback(() => {
+    if (unloading) return
     if (saveTimer.current !== undefined) window.clearTimeout(saveTimer.current)
     saveTimer.current = window.setTimeout(() => {
       const api = apiRef.current
-      if (api === null) return
+      if (api === null || unloading) return
       // prune zone meta for groups that no longer exist
       const live = new Set(api.groups.map((g) => g.id))
       const zoneOut: Record<string, ZoneMeta> = {}
@@ -517,6 +547,11 @@ export function Desk({ inspect }: { inspect?: (sessionId: string) => void }) {
         const panel = api?.getPanel(panelId)
         if (api !== undefined && api !== null && panel !== undefined) api.removePanel(panel)
       },
+      revealPanel: (panelId) => {
+        // Bring the tile forward in its zone, so the desk behind the
+        // stack (and after esc) shows the session being dealt with.
+        apiRef.current?.getPanel(panelId)?.api.setActive()
+      },
       resumePanel,
       setDefer: (sessionId, state) => {
         if (state === undefined) delete deskState.defer[sessionId]
@@ -535,6 +570,7 @@ export function Desk({ inspect }: { inspect?: (sessionId: string) => void }) {
       const api = event.api
       apiRef.current = api
       api.onDidRemovePanel((panel) => {
+        if (unloading) return
         const ptyId = paramsOf(panel).ptyId
         if (ptyId !== undefined && desktop !== undefined && !movingOut.current.delete(ptyId)) {
           void desktop.close(ptyId)
@@ -589,6 +625,8 @@ export function Desk({ inspect }: { inspect?: (sessionId: string) => void }) {
           refreshEntries(api)
         },
       )
+        .catch(() => {})
+        .finally(() => restoreLatch.current?.done())
     },
     [save],
   )
@@ -597,16 +635,19 @@ export function Desk({ inspect }: { inspect?: (sessionId: string) => void }) {
     if (desktop === undefined) return
     const bridge = desktop
 
-    // Terminals opened before this view mounted (renderer reload).
-    void bridge.list().then((list) => {
-      const api = apiRef.current
-      if (api === null) return
-      for (const t of list) {
-        if (findPanelByPty(api, t.id) === undefined) {
-          addPtyPanel(api, t.id, t.title, t.target)
+    // Terminals opened before this view mounted (renderer reload) —
+    // adopted only AFTER the saved layout restores (see restoreLatch).
+    void (restoreLatch.current?.p ?? Promise.resolve())
+      .then(() => bridge.list())
+      .then((list) => {
+        const api = apiRef.current
+        if (api === null) return
+        for (const t of list) {
+          if (findPanelByPty(api, t.id) === undefined) {
+            addPtyPanel(api, t.id, t.title, t.target)
+          }
         }
-      }
-    })
+      })
 
     function defaultGroup(api: DockviewApi): string | undefined {
       const id = Object.entries(zonesRef.current).find(([, meta]) => meta.def === true)?.[0]
