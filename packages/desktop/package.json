@@ -1,8 +1,8 @@
 {
   "name": "hodor-desktop",
-  "version": "0.0.1",
+  "version": "0.0.0",
   "private": true,
-  "description": "hodor \u2014 Claude Code session manager with embedded terminals",
+  "description": "hodor — Claude Code session manager with embedded terminals",
   "author": "dylnhdsn",
   "license": "MIT",
   "repository": "github:dylnhdsn/hodor",

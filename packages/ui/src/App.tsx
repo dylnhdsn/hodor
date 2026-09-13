@@ -63,6 +63,11 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
   // Desk membership drives the turn-stack badge; re-render on any change.
   const [, setDeskTick] = useState(0)
   useEffect(() => subscribeDesk(() => setDeskTick((t) => t + 1)), [])
+  // The frameless window needs to know where the native controls live.
+  const [platform, setPlatform] = useState<string | undefined>(undefined)
+  useEffect(() => {
+    if (desktop !== undefined) void desktop.info().then((i) => setPlatform(i.platform))
+  }, [])
   const [, setThemeTick] = useState(0)
   useEffect(() => onThemeChange(() => setThemeTick((t) => t + 1)), [])
   const stackN = desktop !== undefined ? stackQueue(view.byId, nowMs).length : 0
@@ -234,7 +239,11 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
 
   return (
     <div className="flex h-full flex-col bg-app font-mono text-[12px] text-t1">
-      <div className="flex h-[42px] shrink-0 items-center gap-2.5 border-b border-b1 px-3.5">
+      <div
+        className={`drag flex h-[42px] shrink-0 items-center gap-2.5 border-b border-b1 px-3.5 ${
+          platform === 'darwin' ? 'pl-[78px]' : ''
+        }`}
+      >
         <Wordmark height={14} />
         <span
           className={`h-1.5 w-1.5 rounded-full ${connected ? 'bg-run' : 'bg-b6'}`}
@@ -243,7 +252,7 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
         <span className="text-t6">/</span>
         <span className="text-[12px] font-bold text-fg">{crumb.title}</span>
         {crumb.meta !== undefined && <span className="text-[11px] text-t4">{crumb.meta}</span>}
-        <span className="ml-auto flex items-center gap-2">
+        <span className="no-drag ml-auto flex items-center gap-2">
           {desktop !== undefined && (
             <button
               onClick={() => setFilter({ kind: 'stack' })}
@@ -269,6 +278,7 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
           >
             ⚙
           </button>
+          {platform !== undefined && platform !== 'darwin' && <WindowControls />}
         </span>
       </div>
       {(snapshot.organize?.errors.length ?? 0) > 0 && (
@@ -538,6 +548,44 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
       </main>
       </div>
     </div>
+  )
+}
+
+/** Frameless-window controls (win/linux — macOS keeps its traffic lights). */
+function WindowControls() {
+  const [max, setMax] = useState(false)
+  useEffect(() => {
+    if (desktop?.winIsMaximized !== undefined) {
+      void desktop.winIsMaximized().then(setMax)
+    }
+    return desktop?.onWinState?.(({ maximized }) => setMax(maximized))
+  }, [])
+  const bridge = desktop
+  if (bridge?.winMinimize === undefined) return null
+  return (
+    <span className="ml-1.5 flex items-center border-l border-b2 pl-1.5">
+      <button
+        onClick={() => bridge.winMinimize!()}
+        className="rounded px-2 py-1 text-[11px] text-t4 hover:bg-s3 hover:text-fg"
+        title="minimize"
+      >
+        —
+      </button>
+      <button
+        onClick={() => bridge.winMaximize!()}
+        className="rounded px-2 py-1 text-[11px] text-t4 hover:bg-s3 hover:text-fg"
+        title={max ? 'restore' : 'maximize'}
+      >
+        {max ? '❐' : '○'}
+      </button>
+      <button
+        onClick={() => bridge.winClose!()}
+        className="rounded px-2 py-1 text-[11px] text-t4 hover:bg-err/70 hover:text-fg"
+        title="close"
+      >
+        ✕
+      </button>
+    </span>
   )
 }
 

@@ -238,6 +238,23 @@ function wireIpc(): void {
     platform: process.platform,
   }))
 
+  // Frameless-window controls: each call targets the caller's own window,
+  // so a pop-out (native frame today) would also behave if it ever asks.
+  ipcMain.on('win:minimize', (event) =>
+    BrowserWindow.fromWebContents(event.sender)?.minimize(),
+  )
+  ipcMain.on('win:maximize', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (win === null) return
+    if (win.isMaximized()) win.unmaximize()
+    else win.maximize()
+  })
+  ipcMain.on('win:close', (event) => BrowserWindow.fromWebContents(event.sender)?.close())
+  ipcMain.handle(
+    'win:isMaximized',
+    (event) => BrowserWindow.fromWebContents(event.sender)?.isMaximized() ?? false,
+  )
+
   ipcMain.handle('update:state', () => updateState)
   ipcMain.handle('update:install', () => {
     if (updateState?.state === 'ready') autoUpdater.quitAndInstall()
@@ -312,6 +329,12 @@ function createMainWindow(): void {
     ...(state.mainBounds !== undefined ? { x: state.mainBounds.x, y: state.mainBounds.y } : {}),
     backgroundColor: '#0a0a0b',
     title: 'hodor',
+    // Chromeless: the app's own top bar is the titlebar (design pass).
+    // macOS keeps native traffic lights inset into that bar; everywhere
+    // else the renderer draws its own — ❐ ✕ controls.
+    ...(process.platform === 'darwin'
+      ? { titleBarStyle: 'hidden' as const, trafficLightPosition: { x: 12, y: 13 } }
+      : { frame: false }),
     webPreferences: {
       preload: join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -319,6 +342,13 @@ function createMainWindow(): void {
     },
   })
   mainWindow.setMenuBarVisibility(false)
+  const sendWinState = (): void => {
+    if (mainWindow !== undefined && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('win:state', { maximized: mainWindow.isMaximized() })
+    }
+  }
+  mainWindow.on('maximize', sendWinState)
+  mainWindow.on('unmaximize', sendWinState)
   void mainWindow.loadURL(server.url)
   // External links (e.g. the GitHub repo) open in the real browser.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {

@@ -180,6 +180,14 @@ body {
   background: color-mix(in srgb, var(--h-ac) 32%, transparent);
 }
 
+/* Frameless desktop window: the top bar doubles as the titlebar. */
+.drag {
+  -webkit-app-region: drag;
+}
+.no-drag {
+  -webkit-app-region: no-drag;
+}
+
 /* Dockview chrome follows the scheme. */
 .dockview-theme-dark {
   --dv-group-view-background-color: var(--h-bg);

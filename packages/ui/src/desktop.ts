@@ -42,6 +42,12 @@ export interface HodorDesktop {
   list(): Promise<TermInfo[]>
   popOut(id: string): Promise<void>
   info(): Promise<{ version: string; platform: string }>
+  /** Frameless-window controls (absent in older desktop builds). */
+  winMinimize?(): void
+  winMaximize?(): void
+  winClose?(): void
+  winIsMaximized?(): Promise<boolean>
+  onWinState?(handler: (payload: { maximized: boolean }) => void): () => void
   updateState(): Promise<UpdateState | undefined>
   installUpdate(): Promise<void>
   onUpdateEvent(handler: (payload: UpdateState) => void): () => void

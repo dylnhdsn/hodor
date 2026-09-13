@@ -22,6 +22,15 @@ const api = {
   list: () => ipcRenderer.invoke('pty:list'),
   popOut: (id: string) => ipcRenderer.invoke('pty:popout', { id }),
   info: () => ipcRenderer.invoke('desktop:info'),
+  winMinimize: () => ipcRenderer.send('win:minimize'),
+  winMaximize: () => ipcRenderer.send('win:maximize'),
+  winClose: () => ipcRenderer.send('win:close'),
+  winIsMaximized: () => ipcRenderer.invoke('win:isMaximized'),
+  onWinState: (handler: (payload: { maximized: boolean }) => void) => {
+    const listener = (_event: unknown, payload: { maximized: boolean }): void => handler(payload)
+    ipcRenderer.on('win:state', listener)
+    return () => ipcRenderer.removeListener('win:state', listener)
+  },
   updateState: () => ipcRenderer.invoke('update:state'),
   installUpdate: () => ipcRenderer.invoke('update:install'),
   onUpdateEvent: (handler: (payload: unknown) => void) => {

@@ -19,7 +19,7 @@ export function Wordmark({ height = 16 }: { height?: number }) {
 /** Boot splash: shown until the first snapshot lands. */
 export function BootSplash({ desk }: { desk: boolean }) {
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-4 bg-app">
+    <div className="drag flex h-full flex-col items-center justify-center gap-4 bg-app">
       <div className="text-fg" style={{ animation: 'hjit 3.2s steps(1) infinite' }}>
         <Wordmark height={60} />
       </div>
