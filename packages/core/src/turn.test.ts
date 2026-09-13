@@ -109,10 +109,11 @@ describe('classifyTurn via the fold', () => {
     )
     // fresh: still working (more blocks may stream)
     expect(turnAt(state, '2026-09-13T10:01:10Z')).toMatchObject({ state: 'working' })
-    // quiet 31s: your turn, since the agent's last word
+    // quiet 31s: your turn, since the agent's last word — carried verbatim
     expect(turnAt(state, '2026-09-13T10:01:31Z')).toMatchObject({
       state: 'waiting',
       since: '2026-09-13T10:01:00Z',
+      preview: 'done — want me to also X?',
     })
     // no idle downgrade: overnight is still a wait
     expect(turnAt(state, '2026-09-14T09:00:00Z')).toMatchObject({ state: 'waiting' })
@@ -128,6 +129,7 @@ describe('classifyTurn via the fold', () => {
     expect(turnAt(state, '2026-09-13T10:00:32Z')).toEqual({
       state: 'waiting',
       since: '2026-09-13T10:00:30Z',
+      preview: 'which way?',
       pending: { tool: 'AskUserQuestion', question: 'which way?', options: ['left', 'right'] },
     })
   })

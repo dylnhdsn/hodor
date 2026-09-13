@@ -101,7 +101,7 @@ export function Appearance() {
     <div className="flex-1 overflow-y-auto px-5 py-4">
       <div className="flex max-w-4xl flex-col gap-4">
         <div>
-          <h2 className="text-[15px] font-bold text-fg">Appearance</h2>
+          <h2 className="font-ui text-[15px] font-semibold text-fg">Settings</h2>
           <p className="mt-1 max-w-2xl text-xs leading-relaxed text-t3">
             every color in hodor is calculated from a terminal colorscheme — surfaces and borders
             are background→foreground mixes; needs-you is ANSI yellow, running is green,

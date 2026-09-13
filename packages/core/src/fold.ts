@@ -58,6 +58,9 @@ export interface SessionAccum {
    * the open set — an interrupt abandons whatever dialog was up. */
   lastMainAt?: string
   lastMainKind?: 'human' | 'assistant-text' | 'assistant-tool' | 'tool-result'
+  /** The agent's last words — the most recent assistant text preview.
+   * Surfaced verbatim on waiting rows: it IS the question, usually. */
+  lastMainText?: string
   openTools: Record<string, { name: string; at?: string; question?: string; options?: string[] }>
   /** tool_use blocks seen, main and sidechains alike. */
   toolCallCount: number
@@ -324,6 +327,7 @@ function applyMessage(accum: SessionAccum, line: MessageLine): void {
   if (line.type === 'assistant' && line.isApiError !== true) {
     accum.lastMainKind = (line.toolUses?.length ?? 0) > 0 ? 'assistant-tool' : 'assistant-text'
     if (ts !== undefined) accum.lastMainAt = ts
+    if (line.textPreview !== undefined) accum.lastMainText = line.textPreview
     for (const use of line.toolUses ?? []) {
       accum.openTools[use.id] = {
         name: use.name,

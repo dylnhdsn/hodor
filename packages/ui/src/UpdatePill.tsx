@@ -25,7 +25,7 @@ export function UpdatePill() {
     return (
       <button
         onClick={() => void bridge.installUpdate()}
-        className="mx-3 mb-2 rounded border border-run/50 bg-run/10 px-2 py-1 text-left text-xs text-run hover:border-run"
+        className="mx-3 mb-2 rounded border border-b6 px-2 py-1.5 text-center text-[11px] text-t2 hover:border-fg/50 hover:text-fg"
         title={`version ${update.version} downloaded — restarts the app`}
       >
         ↻ restart to update
@@ -37,7 +37,7 @@ export function UpdatePill() {
       href={update.url}
       target="_blank"
       rel="noreferrer"
-      className="mx-3 mb-2 rounded border border-sky-900 bg-sky-950/50 px-2 py-1 text-xs text-sky-300 hover:border-sky-600"
+      className="mx-3 mb-2 rounded border border-rev/40 bg-rev/10 px-2 py-1.5 text-center text-[11px] text-rev hover:border-rev"
       title="unsigned macOS builds can't self-install — grab the fresh dmg"
     >
       update available ↗

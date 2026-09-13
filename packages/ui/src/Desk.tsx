@@ -7,6 +7,7 @@ import {
   type DockviewDndOverlayEvent,
   type DockviewReadyEvent,
   type IDockviewHeaderActionsProps,
+  type IDockviewPanelHeaderProps,
   type IDockviewPanelProps,
   type IWatermarkPanelProps,
   type SerializedDockview,
@@ -67,6 +68,8 @@ export interface DeskEntry {
   title: string
   sessionId?: string
   ptyId?: string
+  /** The named zone this tile lives in ("ACTIVE", "PR REVIEWS"…). */
+  zone?: string
 }
 
 export const deskState: { entries: DeskEntry[]; defer: Record<string, DeferState> } = {
@@ -92,9 +95,26 @@ function notifyDesk(): void {
   for (const fn of deskListeners) fn()
 }
 
+/** Zone metas mirrored at module scope so entries can carry zone names. */
+let zoneMetas: Record<string, ZoneMeta> = {}
+
+/** Turn states by session id, pushed in by the App from each snapshot so
+ * the desk's tabs (separate React roots) can color their status dots. */
+export const deskTurnStates: Record<string, 'working' | 'waiting' | 'idle'> = {}
+export function setDeskTurnStates(next: Record<string, 'working' | 'waiting' | 'idle'>): void {
+  const changed =
+    Object.keys(next).length !== Object.keys(deskTurnStates).length ||
+    Object.entries(next).some(([id, state]) => deskTurnStates[id] !== state)
+  if (!changed) return
+  for (const id of Object.keys(deskTurnStates)) delete deskTurnStates[id]
+  Object.assign(deskTurnStates, next)
+  notifyDesk()
+}
+
 function refreshEntries(api: DockviewApi): void {
   deskState.entries = api.panels.map((p) => {
     const params = paramsOf(p)
+    const zone = p.group !== undefined ? zoneMetas[p.group.id]?.name : undefined
     return {
       panelId: p.id,
       title: p.title ?? p.id,
@@ -102,6 +122,7 @@ function refreshEntries(api: DockviewApi): void {
         ? { sessionId: params.target.sessionId }
         : {}),
       ...(params.ptyId !== undefined ? { ptyId: params.ptyId } : {}),
+      ...(zone !== undefined ? { zone } : {}),
     }
   })
   notifyDesk()
@@ -237,46 +258,51 @@ function TerminalPanel(props: IDockviewPanelProps<SlotParams>) {
   )
 }
 
-/** Zone chrome on the group header: name, default-target mark, rename. */
+/** Zone chrome on the group header: NAME + tab count (mock: "ACTIVE 3 tabs"). */
 function ZoneHeader(props: IDockviewHeaderActionsProps) {
-  const { zones, renameZone, toggleDefault } = useContext(DeskContext)
+  const { zones, renameZone } = useContext(DeskContext)
   const meta = zones[props.group.id]
+  const n = props.panels.length
   return (
-    <div className="flex h-full items-center gap-1.5 pl-2 pr-1">
+    <div className="flex h-full items-center gap-2 pl-2.5 pr-1">
       <button
         onClick={() => renameZone(props.group.id)}
         title="rename this zone"
-        className={`font-mono text-[10px] font-semibold tracking-[.12em] ${
-          meta?.name !== undefined ? 'text-t3 hover:text-fg' : 'text-t6 hover:text-t3'
+        className={`font-mono text-[10px] font-bold tracking-[.14em] ${
+          meta?.name !== undefined ? 'text-t1 hover:text-fg' : 'text-t6 hover:text-t3'
         }`}
       >
-        {meta?.name ?? 'name zone…'}
+        {meta?.name ?? 'NAME ZONE…'}
       </button>
-      <button
-        onClick={() => toggleDefault(props.group.id)}
-        title="new terminals open here"
-        className={`font-mono text-[9.5px] ${
-          meta?.def === true
-            ? 'rounded border border-dashed border-b4 px-1.5 text-t5'
-            : 'px-1 text-t6 opacity-40 hover:opacity-100'
-        }`}
-      >
-        {meta?.def === true ? 'default target' : '◎'}
-      </button>
+      <span className="font-mono text-[9.5px] text-t6">
+        {n} tab{n === 1 ? '' : 's'}
+      </span>
     </div>
   )
 }
 
-/** Pop the active terminal out into its own window. */
+/** Right chrome: default-target chip, detail, pop-out. */
 function GroupActions(props: IDockviewHeaderActionsProps) {
-  const { inspect } = useContext(DeskContext)
+  const { zones, toggleDefault, inspect } = useContext(DeskContext)
+  const meta = zones[props.group.id]
   const active = props.activePanel
   const ptyId = active !== undefined ? paramsOf(active).ptyId : undefined
   const sessionId = active !== undefined ? paramsOf(active).target?.sessionId : undefined
   if (desktop === undefined) return null
   const bridge = desktop
   return (
-    <div className="flex h-full items-center px-1">
+    <div className="flex h-full items-center gap-0.5 px-1.5">
+      <button
+        onClick={() => toggleDefault(props.group.id)}
+        title="new terminals open here"
+        className={`font-mono text-[9.5px] ${
+          meta?.def === true
+            ? 'rounded border border-dashed border-b5 px-1.5 py-px text-t4'
+            : 'px-1 text-t6 opacity-40 hover:opacity-100'
+        }`}
+      >
+        {meta?.def === true ? 'default target' : '◎'}
+      </button>
       {sessionId !== undefined && inspect !== undefined && (
         <button
           onClick={() => inspect(sessionId)}
@@ -295,6 +321,52 @@ function GroupActions(props: IDockviewHeaderActionsProps) {
           ⧉
         </button>
       )}
+    </div>
+  )
+}
+
+/** Mock tab anatomy: status dot + ❯ + title, active = amber underline. */
+function SlotTab(props: IDockviewPanelHeaderProps<SlotParams>) {
+  const [active, setActive] = useState(props.api.isActive)
+  const [title, setTitle] = useState(props.api.title ?? props.api.id)
+  const [, force] = useState(0)
+  useEffect(() => {
+    const d1 = props.api.onDidActiveChange((e) => setActive(e.isActive))
+    const d2 = props.api.onDidTitleChange((e) => setTitle(e.title))
+    const off = subscribeDesk(() => force((t) => t + 1))
+    return () => {
+      d1.dispose()
+      d2.dispose()
+      off()
+    }
+  }, [props.api])
+  const sessionId =
+    props.params.target?.kind === 'resume' ? props.params.target.sessionId : undefined
+  const turn = sessionId !== undefined ? deskTurnStates[sessionId] : undefined
+  const dead = props.params.ptyId === undefined
+  const dot =
+    turn === 'waiting' ? 'text-ask' : dead ? 'text-b6' : 'text-run'
+  return (
+    <div
+      className={`group flex h-full items-center gap-1.5 px-2.5 font-mono text-[11px] ${
+        active
+          ? 'text-fg shadow-[inset_0_-2px_0_0_var(--h-ask)]'
+          : 'text-t4 hover:text-t2'
+      }`}
+    >
+      <span className={`text-[8px] ${dot}`}>●</span>
+      <span className="text-t6">❯</span>
+      <span className="max-w-[160px] truncate font-semibold">{title}</span>
+      <button
+        onClick={(e) => {
+          e.stopPropagation()
+          props.api.close()
+        }}
+        className="pl-0.5 text-t6 opacity-0 hover:text-err group-hover:opacity-100"
+        title="close"
+      >
+        ×
+      </button>
     </div>
   )
 }
@@ -320,6 +392,11 @@ export function Desk({ inspect }: { inspect?: (sessionId: string) => void }) {
   /** PTYs whose panel removal is a move (pop-out), not a kill. */
   const movingOut = useRef(new Set<string>())
   zonesRef.current = zones
+  zoneMetas = zones
+  useEffect(() => {
+    // zone names changed → entries carry them → library zone chips update
+    if (apiRef.current !== null) refreshEntries(apiRef.current)
+  }, [zones])
 
   const save = useCallback(() => {
     if (saveTimer.current !== undefined) window.clearTimeout(saveTimer.current)
@@ -641,8 +718,9 @@ export function Desk({ inspect }: { inspect?: (sessionId: string) => void }) {
           <DockviewReact
             onReady={onReady}
             components={panelComponents}
+            defaultTabComponent={SlotTab}
             watermarkComponent={Watermark}
-            leftHeaderActionsComponent={ZoneHeader}
+            prefixHeaderActionsComponent={ZoneHeader}
             rightHeaderActionsComponent={GroupActions}
             onDidDrop={onDidDrop}
             theme={themeDark}

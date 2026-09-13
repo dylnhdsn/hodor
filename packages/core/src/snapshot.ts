@@ -131,7 +131,7 @@ const TURN_TOOL_IDLE_MS = 2 * 3600_000
  * costs more trust than a late one.
  */
 export function classifyTurn(
-  accum: Pick<SessionAccum, 'lastMainAt' | 'lastMainKind' | 'openTools'>,
+  accum: Pick<SessionAccum, 'lastMainAt' | 'lastMainKind' | 'lastMainText' | 'openTools'>,
   now: Date,
 ): SessionTurn | undefined {
   if (accum.lastMainAt === undefined || accum.lastMainKind === undefined) return undefined
@@ -139,11 +139,14 @@ export function classifyTurn(
   if (Number.isNaN(last)) return undefined
   const quiet = now.getTime() - last
   const open = Object.values(accum.openTools)
+  // The waiting row's second line: the agent's last words, verbatim.
+  const preview = accum.lastMainText !== undefined ? { preview: accum.lastMainText } : {}
   const dialog = [...open].reverse().find((t) => INTERACTIVE_TOOLS.has(t.name))
   if (dialog !== undefined) {
     return {
       state: 'waiting',
       since: dialog.at ?? accum.lastMainAt,
+      ...(dialog.question !== undefined ? { preview: dialog.question } : preview),
       pending: {
         tool: dialog.name,
         ...(dialog.question !== undefined ? { question: dialog.question } : {}),
@@ -157,7 +160,7 @@ export function classifyTurn(
   if (quiet < TURN_ACTIVE_MS) return { state: 'working', ...pending }
   switch (accum.lastMainKind) {
     case 'assistant-text':
-      return { state: 'waiting', since: accum.lastMainAt }
+      return { state: 'waiting', since: accum.lastMainAt, ...preview }
     case 'assistant-tool':
     case 'tool-result':
       return quiet < TURN_TOOL_IDLE_MS ? { state: 'working', ...pending } : { state: 'idle' }

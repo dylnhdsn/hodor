@@ -49,6 +49,9 @@ export interface SessionTurn {
   state: 'working' | 'waiting' | 'idle'
   /** When the wait began — the agent's last word, or the dialog's tool_use. */
   since?: string
+  /** The agent's last words, verbatim (truncated) — on a waiting session
+   * this is usually the question being asked. Never a summary. */
+  preview?: string
   /** An unresolved tool_use; dialogs carry real question + option labels. */
   pending?: { tool: string; question?: string; options?: string[] }
 }

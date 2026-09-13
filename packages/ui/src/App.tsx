@@ -19,9 +19,10 @@ import {
 } from './data.js'
 import { Appearance } from './Appearance.js'
 import { CloudSessionList } from './CloudSessions.js'
-import { Desk, SESSION_DRAG_MIME, subscribeDesk } from './Desk.js'
+import { Desk, deskState, SESSION_DRAG_MIME, setDeskTurnStates, subscribeDesk } from './Desk.js'
 import { Stack, stackQueue } from './Stack.js'
 import { desktop } from './desktop.js'
+import { activeScheme, onThemeChange } from './theme.js'
 import { UpdatePill } from './UpdatePill.js'
 import { useSnapshot } from './useSnapshot.js'
 import { BootSplash, Wordmark } from './Wordmark.js'
@@ -62,11 +63,22 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
   // Desk membership drives the turn-stack badge; re-render on any change.
   const [, setDeskTick] = useState(0)
   useEffect(() => subscribeDesk(() => setDeskTick((t) => t + 1)), [])
+  const [, setThemeTick] = useState(0)
+  useEffect(() => onThemeChange(() => setThemeTick((t) => t + 1)), [])
   const stackN = desktop !== undefined ? stackQueue(view.byId, nowMs).length : 0
   const waitingN = useMemo(
     () => view.visible.filter((s) => s.turn?.state === 'waiting').length,
     [view],
   )
+
+  // Feed turn states to the desk's tabs (they live in separate React roots).
+  useEffect(() => {
+    if (desktop === undefined) return
+    const states: Record<string, 'working' | 'waiting' | 'idle'> = {}
+    for (const s of view.visible) if (s.turn !== undefined) states[s.id] = s.turn.state
+    setDeskTurnStates(states)
+  }, [view])
+
 
   // Enter anywhere neutral summons the turn stack (desktop only) — the
   // "what needs me" reflex. Typing surfaces keep their Enter.
@@ -88,6 +100,34 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
   }, [])
 
   const project = filter.kind === 'project' ? view.rail.find((p) => p.id === filter.id) : undefined
+
+  // Top-bar breadcrumb: where you are + what it holds, in the bar itself.
+  const totalN = view.visible.length + view.cloud.length
+  const crumb: { title: string; meta?: string } = (() => {
+    switch (filter.kind) {
+      case 'home':
+        return { title: 'Home', meta: `${totalN} sessions · ${waitingN} need you` }
+      case 'all':
+        return { title: 'All sessions', meta: `${totalN} sessions · ${waitingN} need you` }
+      case 'project': {
+        const n = (project?.sessions.length ?? 0) + (view.cloudByProject.get(filter.id)?.length ?? 0)
+        return { title: project?.name ?? filter.id, meta: `${n} session${n === 1 ? '' : 's'}` }
+      }
+      case 'hidden':
+        return { title: 'hidden', meta: `${view.hidden.length} sessions kept out of the lists` }
+      case 'archived':
+        return { title: 'archived', meta: `${view.archivedProjects.length} projects` }
+      case 'appearance':
+        return {
+          title: 'Settings',
+          meta: `${activeScheme().name} · every color derived from the scheme`,
+        }
+      case 'desk':
+        return { title: 'the desk', meta: 'autosaved · zones remember their sessions' }
+      case 'stack':
+        return { title: 'Turn Stack', meta: `${stackN} waiting · longest first · cloud waits in Home` }
+    }
+  })()
 
   const sessions = useMemo(() => {
     let list: Session[]
@@ -193,105 +233,136 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
   )
 
   return (
-    <div className="flex h-full flex-col bg-app font-ui text-sm text-t1">
+    <div className="flex h-full flex-col bg-app font-mono text-[12px] text-t1">
+      <div className="flex h-[42px] shrink-0 items-center gap-2.5 border-b border-b1 px-3.5">
+        <Wordmark height={14} />
+        <span
+          className={`h-1.5 w-1.5 rounded-full ${connected ? 'bg-run' : 'bg-b6'}`}
+          title={connected ? 'live' : 'reconnecting'}
+        />
+        <span className="text-t6">/</span>
+        <span className="text-[12px] font-bold text-fg">{crumb.title}</span>
+        {crumb.meta !== undefined && <span className="text-[11px] text-t4">{crumb.meta}</span>}
+        <span className="ml-auto flex items-center gap-2">
+          {desktop !== undefined && (
+            <button
+              onClick={() => setFilter({ kind: 'stack' })}
+              title="desk sessions waiting on you, longest first (Enter)"
+              className={
+                stackN > 0
+                  ? 'flex items-center gap-1.5 rounded border border-ask/50 bg-ask/10 px-2.5 py-1 text-[11px] font-bold text-ask hover:bg-ask/15'
+                  : 'flex items-center gap-1.5 rounded border border-b3 px-2.5 py-1 text-[11px] text-t5 hover:border-b5 hover:text-t3'
+              }
+            >
+              {stackN > 0 ? <>▲ {stackN} your turn — turn stack</> : <>turn stack</>}
+              <span className="rounded border border-current px-1 text-[9px] opacity-60">⏎</span>
+            </button>
+          )}
+          <button
+            onClick={() => setFilter({ kind: 'appearance' })}
+            title="settings — colorscheme, fonts"
+            className={`rounded border px-2 py-1 text-[11px] ${
+              filter.kind === 'appearance'
+                ? 'border-acb text-ach'
+                : 'border-b3 text-t4 hover:border-b5 hover:text-fg'
+            }`}
+          >
+            ⚙
+          </button>
+        </span>
+      </div>
       {(snapshot.organize?.errors.length ?? 0) > 0 && (
-        <div className="border-b border-ask/45 bg-ask/10 px-4 py-1 text-xs text-ask">
-          organize logic: {snapshot.organize!.errors[0]}
-          {snapshot.organize!.errors.length > 1
-            ? ` (+${snapshot.organize!.errors.length - 1} more)`
-            : ''}
+        <div className="flex items-center gap-2 border-b border-ask/40 bg-ask/8 px-3.5 py-1 text-[11px] text-ask">
+          <span>⚠</span>
+          <span className="truncate">
+            organize.js: {snapshot.organize!.errors[0]}
+            {snapshot.organize!.errors.length > 1
+              ? ` (+${snapshot.organize!.errors.length - 1} more)`
+              : ''}
+          </span>
         </div>
       )}
       <div className="flex min-h-0 flex-1">
-      <aside className="flex w-64 shrink-0 flex-col border-r border-b1">
-        <div className="flex items-center gap-2 px-4 py-3 text-fg">
-          <Wordmark height={15} />
-          <span
-            className={`h-2 w-2 rounded-full ${connected ? 'bg-run' : 'bg-b6'}`}
-            title={connected ? 'live' : 'reconnecting'}
-          />
-        </div>
-
-        <nav className="flex-1 overflow-y-auto px-2 pb-2">
+      <aside className="flex w-[215px] shrink-0 flex-col border-r border-b1">
+        <nav className="flex-1 overflow-y-auto pt-2 pb-2">
           <RailItem
             label="Home"
-            count={view.visible.length + view.cloud.length}
-            waiting={waitingN}
             active={filter.kind === 'home'}
             onClick={() => setFilter({ kind: 'home' })}
-          />
-          <RailItem
-            label="All sessions"
-            count={view.visible.length + view.cloud.length}
-            active={filter.kind === 'all'}
-            onClick={() => setFilter({ kind: 'all' })}
+            right={waitingN > 0 ? <WaitChip n={waitingN} /> : <Count n={totalN} />}
           />
 
           <RailHeading>
             projects
             <button
               onClick={() => void createProject()}
-              className="rounded px-1.5 text-t3 hover:bg-s5 hover:text-fg"
+              className="px-1.5 text-t4 hover:text-fg"
               title="New project"
             >
               +
             </button>
           </RailHeading>
-          {view.rail.map((p) => (
-            <RailItem
-              key={p.id}
-              label={p.name}
-              count={p.sessions.length + (view.cloudByProject.get(p.id)?.length ?? 0)}
-              active={filter.kind === 'project' && filter.id === p.id}
-              onClick={() => {
-                setFilter({ kind: 'project', id: p.id })
-                setSelected(new Set())
-              }}
-            />
-          ))}
+          {view.rail.map((p) => {
+            const wait = p.sessions.filter((s) => s.turn?.state === 'waiting').length
+            const run = p.sessions.filter(
+              (s) => s.turn?.state === 'working' || s.runtime.kind !== 'idle',
+            ).length
+            const total = p.sessions.length + (view.cloudByProject.get(p.id)?.length ?? 0)
+            return (
+              <RailItem
+                key={p.id}
+                label={p.name}
+                active={filter.kind === 'project' && filter.id === p.id}
+                onClick={() => {
+                  setFilter({ kind: 'project', id: p.id })
+                  setSelected(new Set())
+                }}
+                right={
+                  <>
+                    {wait > 0 && <WaitChip n={wait} />}
+                    {run > 0 && <span className="text-[10px] text-run">● {run}</span>}
+                    {wait === 0 && run === 0 && <Count n={total} />}
+                  </>
+                }
+              />
+            )
+          })}
           {view.rail.length === 0 && (
-            <p className="px-3 py-1 text-xs text-t5">none yet — press +</p>
+            <p className="px-3.5 py-1 text-[11px] text-t5">none yet — press +</p>
           )}
+          <RailItem
+            label="All sessions"
+            active={filter.kind === 'all'}
+            onClick={() => setFilter({ kind: 'all' })}
+            right={<Count n={totalN} />}
+          />
 
           {desktop !== undefined && (
             <>
               <RailHeading>workspace</RailHeading>
-              <button
+              <RailItem
+                label="the desk"
+                active={filter.kind === 'desk'}
                 onClick={() => setFilter({ kind: 'desk' })}
-                className={`flex w-full items-center justify-between rounded px-3 py-1.5 text-left ${
-                  filter.kind === 'desk' ? 'bg-ac/12 text-fg' : 'text-t1 hover:bg-s3'
-                }`}
-              >
-                <span>the desk</span>
-                <span className="font-mono text-[10px] text-t4">autosaved</span>
-              </button>
-              <button
+                right={<span className="text-[10px] text-t6">autosaved</span>}
+              />
+              <RailItem
+                label="turn stack"
+                active={filter.kind === 'stack'}
                 onClick={() => setFilter({ kind: 'stack' })}
-                className={`flex w-full items-center justify-between rounded px-3 py-1.5 text-left ${
-                  filter.kind === 'stack' ? 'bg-ac/12 text-fg' : 'text-t1 hover:bg-s3'
-                }`}
-                title="desk sessions waiting on you, longest first (Enter)"
-              >
-                <span>▲ turn stack</span>
-                <span
-                  className={`font-mono text-[10px] ${
-                    stackN > 0 ? 'rounded bg-ask/15 px-1.5 font-bold text-ask' : 'text-t4'
-                  }`}
-                >
-                  {stackN}
-                </span>
-              </button>
+                right={stackN > 0 ? <WaitChip n={stackN} /> : <Count n={0} />}
+              />
             </>
           )}
         </nav>
 
         <UpdatePill />
-        <div className="border-t border-b1 text-xs">
+        <div className="border-t border-b1 text-[11px]">
           {view.archivedProjects.length > 0 && (
             <button
               onClick={() => setFilter({ kind: 'archived' })}
-              className={`block w-full px-4 py-2 text-left ${
-                filter.kind === 'archived' ? 'text-ask' : 'text-t4 hover:text-t2'
+              className={`block w-full px-3.5 py-1.5 text-left ${
+                filter.kind === 'archived' ? 'text-ask' : 'text-t5 hover:text-t2'
               }`}
             >
               {view.archivedProjects.length} archived project
@@ -300,25 +371,14 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
           )}
           <button
             onClick={() => setFilter({ kind: 'hidden' })}
-            className={`block w-full px-4 pb-2 text-left ${
-              view.archivedProjects.length === 0 ? 'pt-2' : ''
-            } ${filter.kind === 'hidden' ? 'text-ask' : 'text-t4 hover:text-t2'}`}
+            className={`block w-full px-3.5 pb-1.5 text-left ${
+              view.archivedProjects.length === 0 ? 'pt-1.5' : ''
+            } ${filter.kind === 'hidden' ? 'text-ask' : 'text-t5 hover:text-t2'}`}
           >
             {view.hidden.length} hidden sessions
           </button>
-          <button
-            onClick={() => setFilter({ kind: 'appearance' })}
-            className={`block w-full px-4 pb-2 text-left ${
-              filter.kind === 'appearance' ? 'text-ach' : 'text-t4 hover:text-t2'
-            }`}
-          >
-            ⚙ appearance
-          </button>
           {snapshot.hodorVersion !== undefined && (
-            <p
-              className="px-4 pb-2 font-mono text-[10px] text-t6"
-              title="the build serving this UI"
-            >
+            <p className="px-3.5 pb-2 pt-0.5 text-[10px] text-t6" title="the build serving this UI">
               {snapshot.hodorVersion}
             </p>
           )}
@@ -372,38 +432,46 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
           <ArchivedList view={view} mutateProject={mutateProject} />
         ) : (
           <>
-            <header className="border-b border-b1 px-4 py-2">
-              <div className="flex items-center gap-3">
+            <header className="flex h-10 shrink-0 items-center gap-2.5 border-b border-b1 px-4">
+              <h1 className="font-ui text-[15px] font-semibold text-fg">{crumb.title}</h1>
+              {project !== undefined && (
+                <button
+                  onClick={() => {
+                    setSettingsOpen(!settingsOpen)
+                    setDetailId(undefined)
+                  }}
+                  className={`whitespace-nowrap rounded border px-2 py-0.5 text-[10.5px] ${
+                    settingsOpen ? 'border-acb text-fg' : 'border-b4 text-t3 hover:text-fg'
+                  }`}
+                >
+                  ⚙ settings
+                </button>
+              )}
+              {project !== undefined && newSessionTarget !== undefined && (
+                <button
+                  onClick={() => void launchOrCopy({ kind: 'new', ...newSessionTarget })}
+                  className="whitespace-nowrap rounded border border-run/40 px-2 py-0.5 text-[10.5px] text-run hover:bg-run/10"
+                  title={`open a terminal running claude in ${newSessionTarget.root}`}
+                >
+                  + new session
+                </button>
+              )}
+              <span className="ml-auto flex items-center gap-2.5">
                 <input
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
-                  placeholder="search titles, prompts, paths, ids… (has:agents, is:fork)"
-                  className="w-full max-w-md rounded border border-b1 bg-s3 px-3 py-1.5 text-sm outline-none placeholder:text-t5 focus:border-b6"
+                  placeholder="search… (has:agents, is:fork)"
+                  className="w-56 rounded border border-b1 bg-s1 px-2.5 py-1 text-[11px] outline-none placeholder:text-t6 focus:border-b6"
                 />
-                <span className="ml-auto whitespace-nowrap text-xs text-t4">
+                <span className="whitespace-nowrap text-[10.5px] text-t5">
                   {sessions.length + cloudShown.length} session
                   {sessions.length + cloudShown.length === 1 ? '' : 's'}
                 </span>
-                {project !== undefined && (
-                  <button
-                    onClick={() => {
-                      setSettingsOpen(!settingsOpen)
-                      setDetailId(undefined)
-                    }}
-                    className={`whitespace-nowrap rounded border px-2 py-1 text-xs ${
-                      settingsOpen
-                        ? 'border-acb text-fg'
-                        : 'border-b4 text-t3 hover:text-fg'
-                    }`}
-                  >
-                    settings
-                  </button>
-                )}
-              </div>
-              {project !== undefined && (
-                <ProjectStats project={project} nowMs={nowMs} newSession={newSessionTarget} />
-              )}
+              </span>
             </header>
+            {project !== undefined && (
+              <ProjectStats project={project} nowMs={nowMs} />
+            )}
 
             {selected.size > 0 && (
               <BulkBar
@@ -433,6 +501,9 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
                   sessions={sessions}
                   renderRow={renderRow}
                   showEmpty={cloudShown.length === 0}
+                  openStack={
+                    desktop !== undefined ? () => setFilter({ kind: 'stack' }) : undefined
+                  }
                 />
               ) : (
                 <ul className="min-w-0 flex-1 divide-y divide-b2">
@@ -472,35 +543,43 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
 
 function RailHeading(props: { children: React.ReactNode }) {
   return (
-    <div className="mt-4 mb-1 flex items-center justify-between px-3 text-[11px] font-medium tracking-wider text-t4 uppercase">
+    <div className="mt-4 mb-1 flex items-center justify-between px-3.5 text-[9px] font-semibold tracking-[.14em] text-t5 uppercase">
       {props.children}
     </div>
   )
 }
 
+/** The amber "needs you" chip — the one badge that matters. */
+function WaitChip(props: { n: number }) {
+  return (
+    <span
+      className="rounded-[3px] bg-ask/15 px-[5px] py-px text-[10px] font-bold text-ask"
+      title="waiting on you"
+    >
+      ▲ {props.n}
+    </span>
+  )
+}
+
+function Count(props: { n: number }) {
+  return <span className="text-[10.5px] text-t5">{props.n}</span>
+}
+
 function RailItem(props: {
   label: string
-  count: number
   active: boolean
   onClick: () => void
-  waiting?: number
+  right?: React.ReactNode
 }) {
   return (
     <button
       onClick={props.onClick}
-      className={`flex w-full items-center justify-between rounded px-3 py-1.5 text-left ${
-        props.active ? 'bg-s5 text-fg' : 'text-t1 hover:bg-s3'
+      className={`flex w-full items-center justify-between px-3.5 py-[7px] text-left text-[11.5px] ${
+        props.active ? 'bg-s3 text-fg' : 'text-t2 hover:bg-s1 hover:text-fg'
       }`}
     >
       <span className="truncate">{props.label}</span>
-      <span className="ml-2 flex shrink-0 items-center gap-1.5 text-xs text-t4">
-        {props.waiting !== undefined && props.waiting > 0 && (
-          <span className="font-mono text-[10px] font-semibold text-ask" title="waiting on you">
-            ▲{props.waiting}
-          </span>
-        )}
-        {props.count}
-      </span>
+      <span className="ml-2 flex shrink-0 items-center gap-1.5">{props.right}</span>
     </button>
   )
 }
@@ -510,6 +589,7 @@ function HomeList(props: {
   sessions: Session[]
   renderRow: (s: Session) => React.ReactNode
   showEmpty: boolean
+  openStack?: (() => void) | undefined
 }) {
   const wait: Session[] = []
   const run: Session[] = []
@@ -521,22 +601,37 @@ function HomeList(props: {
   }
   // Needs-you mirrors the turn stack: longest wait first.
   wait.sort((a, b) => (a.turn?.since ?? '').localeCompare(b.turn?.since ?? ''))
-  const group = (title: string, cls: string, list: Session[]) =>
+  const group = (title: string, cls: string, list: Session[], action?: React.ReactNode) =>
     list.length === 0 ? null : (
       <div key={title}>
         <div
-          className={`border-y border-b1 bg-s1 px-4 py-1 font-mono text-[10px] font-semibold tracking-[.14em] ${cls}`}
+          className={`flex items-center gap-2.5 px-4 pt-4 pb-1.5 text-[9.5px] font-bold tracking-[.14em] ${cls}`}
         >
-          {title} — {list.length}
+          <span>
+            {title} · {list.length}
+          </span>
+          {action}
         </div>
-        <ul className="divide-y divide-b2">{list.map(props.renderRow)}</ul>
+        <ul className="divide-y divide-b2 border-t border-b2">{list.map(props.renderRow)}</ul>
       </div>
     )
   return (
     <div className="min-w-0 flex-1">
-      {group('▲ NEEDS YOU', 'text-ask', wait)}
+      {group(
+        '▲ NEEDS YOU',
+        'text-ask',
+        wait,
+        props.openStack !== undefined ? (
+          <button
+            onClick={props.openStack}
+            className="font-normal tracking-normal text-t5 hover:text-t2"
+          >
+            open the turn stack →
+          </button>
+        ) : undefined,
+      )}
       {group('● RUNNING', 'text-run', run)}
-      {group('RECENT', 'text-t4', rest)}
+      {group('RECENT', 'text-t5', rest)}
       {props.sessions.length === 0 && props.showEmpty && (
         <p className="px-4 py-8 text-center text-t5">nothing here</p>
       )}
@@ -544,12 +639,8 @@ function HomeList(props: {
   )
 }
 
-function ProjectStats(props: {
-  project: RailProject
-  nowMs: number
-  newSession?: { storeId: string; root: string } | undefined
-}) {
-  const { project, nowMs, newSession } = props
+function ProjectStats(props: { project: RailProject; nowMs: number }) {
+  const { project, nowMs } = props
   const active = project.sessions.filter((s) => s.runtime.kind !== 'idle').length
   const latest = project.sessions
     .map((s) => s.lastActivityAt ?? '')
@@ -557,22 +648,12 @@ function ProjectStats(props: {
   const cost = project.sessions.reduce((sum, s) => sum + (s.costUsd ?? 0), 0)
   const roots = cwdsOf(project.sessions)
   return (
-    <div className="mt-1.5 flex items-center gap-3 text-xs text-t4">
-      <span className="font-medium text-t2">{project.name}</span>
-      {newSession !== undefined && (
-        <button
-          onClick={() => void launchOrCopy({ kind: 'new', ...newSession })}
-          className="text-run hover:text-run"
-          title={`open a terminal running claude in ${newSession.root}`}
-        >
-          + new session
-        </button>
-      )}
-      {active > 0 && <span className="text-run">{active} active</span>}
+    <div className="flex shrink-0 items-center gap-3 border-b border-b2 px-4 py-1 text-[10.5px] text-t5">
+      {active > 0 && <span className="text-run">● {active} active</span>}
       {latest !== '' && <span>last {formatAge(nowMs, latest)}</span>}
-      {cost >= 0.005 && <span className="text-t3">~{formatUsd(cost)}</span>}
+      {cost >= 0.005 && <span>~{formatUsd(cost)}</span>}
       {roots.length > 0 && (
-        <span className="truncate text-t5">
+        <span className="truncate text-t6">
           {roots[0]}
           {roots.length > 1 ? ` +${roots.length - 1} more` : ''}
         </span>
@@ -706,6 +787,16 @@ function SessionRow(props: {
   const turn = s.turn?.state
   const claims = view.claimsBySession.get(s.id) ?? []
   const derived = view.derivedOf.get(s.id)
+  const deskEntry = deskState.entries.find((e) => e.sessionId === s.id)
+  const model = modelShortOf(s)
+  // The mock's second line: the agent's last words for a waiting session,
+  // what it's doing for a working one, otherwise where it lives.
+  const line2 =
+    turn === 'waiting' && s.turn?.preview !== undefined
+      ? `"${s.turn.preview}"`
+      : turn === 'working' && s.turn?.pending !== undefined
+        ? `running ${s.turn.pending.tool}…`
+        : (s.turn?.preview ?? s.cwd ?? '')
 
   async function addTo(projectId: string) {
     if (projectId === '') return
@@ -735,113 +826,172 @@ function SessionRow(props: {
           JSON.stringify({ kind: 'resume', sessionId: s.id }),
         )
       }}
-      className={`group cursor-pointer px-4 py-2 ${inspecting ? 'bg-s3' : 'hover:bg-s3/60'}`}
+      className={`group flex cursor-pointer items-center gap-2.5 px-4 py-2 ${
+        inspecting ? 'bg-s3' : 'hover:bg-s1/70'
+      }`}
     >
-      <div className="flex items-center gap-2">
+      <span
+        onClick={stop}
+        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[4px] border border-b4 bg-s1"
+        title={
+          deskEntry !== undefined
+            ? `on the desk${deskEntry.zone !== undefined ? ` — ${deskEntry.zone}` : ''}`
+            : 'not on the desk'
+        }
+      >
+        <span
+          className={`text-[11px] ${deskEntry !== undefined ? 'text-acb' : 'text-t6'} ${
+            anySelected ? 'hidden' : 'block group-hover:hidden'
+          }`}
+        >
+          {deskEntry !== undefined ? '❯' : '·'}
+        </span>
         <input
           type="checkbox"
           checked={checked}
           onChange={toggle}
-          onClick={stop}
-          className={`h-3 w-3 shrink-0 accent-ac ${
-            anySelected ? '' : 'opacity-0 transition group-hover:opacity-100'
-          }`}
+          className={`h-3 w-3 accent-ac ${anySelected ? 'block' : 'hidden group-hover:block'}`}
         />
-        <span
-          className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-            turn === 'waiting' ? 'bg-ask' : turn === 'working' || active ? 'bg-run' : 'bg-b4'
-          }`}
-          title={
-            turn === 'waiting' ? 'your turn' : turn === 'working' ? 'agent working' : undefined
-          }
-        />
-        <span className="truncate font-medium text-fg">{titleOf(s)}</span>
-        {claims.map((id) => (
+      </span>
+
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
           <span
-            key={id}
-            className="shrink-0 rounded-full bg-ac/15 px-2 py-0.5 text-[11px] text-acb"
+            className={`shrink-0 text-[9px] ${
+              turn === 'waiting'
+                ? 'text-ask'
+                : turn === 'working' || active
+                  ? 'text-run'
+                  : 'text-b6'
+            }`}
+            title={
+              turn === 'waiting' ? 'your turn' : turn === 'working' ? 'agent working' : undefined
+            }
           >
-            {customNames.get(id) ?? id}
+            ●
           </span>
-        ))}
-        <span
-          onClick={stop}
-          className="ml-auto flex shrink-0 items-center gap-2 opacity-0 transition group-hover:opacity-100"
-        >
-          <select
-            defaultValue=""
-            onChange={(e) => {
-              void addTo(e.target.value)
-              e.target.value = ''
-            }}
-            className="rounded border border-b4 bg-s3 px-1 py-0.5 text-[11px] text-t3"
-          >
-            <option value="">add to…</option>
-            {rail
-              .filter((p) => !claims.includes(p.id))
-              .map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-          </select>
-          <button
-            onClick={() => void launchOrCopy({ kind: 'resume', sessionId: s.id })}
-            className="text-[11px] text-run hover:text-run"
-            title="open a terminal resuming this session"
-          >
-            resume
-          </button>
-          <button
-            onClick={() => void launchOrCopy({ kind: 'fork', sessionId: s.id })}
-            className="text-[11px] text-t4 hover:text-t1"
-            title="resume as a new forked session"
-          >
-            fork
-          </button>
-          <button onClick={() => void rename()} className="text-[11px] text-t4 hover:text-t1">
-            rename
-          </button>
-          {s.hiddenBy === 'archived' ? (
-            <button onClick={() => void setArchived(false)} className="text-[11px] text-t4 hover:text-t1">
-              unarchive
-            </button>
-          ) : (
-            <button onClick={() => void setArchived(true)} className="text-[11px] text-t4 hover:text-t1">
-              archive
-            </button>
+          <span className="truncate text-[12.5px] font-bold text-fg">{titleOf(s)}</span>
+          {s.forkedFrom !== undefined && (
+            <span className="shrink-0 rounded border border-b4 px-1.5 text-[10px] text-t4">
+              fork
+            </span>
           )}
-        </span>
+          {claims.map((id) => (
+            <span
+              key={id}
+              className="shrink-0 rounded border border-b4 px-1.5 py-px text-[10px] text-t3"
+            >
+              {customNames.get(id) ?? id}
+            </span>
+          ))}
+          {claims.length === 0 && derived !== undefined && (
+            <span className="shrink-0 truncate text-[10px] text-t6">{derived.name}</span>
+          )}
+          {deskEntry?.zone !== undefined && (
+            <span className="shrink-0 text-[10px] font-semibold text-rev">
+              ⛶ {deskEntry.zone}
+            </span>
+          )}
+          {s.counts.sidechains > 0 && (
+            <span className="shrink-0 text-[10px] text-t6" title="subagent runs">
+              ⑂ {s.counts.sidechains}
+            </span>
+          )}
+          {showHiddenBy && s.hiddenBy !== undefined && (
+            <span className="shrink-0 rounded bg-ask/15 px-1.5 text-[10px] text-ask">
+              {s.hiddenBy}
+            </span>
+          )}
+          <span
+            onClick={stop}
+            className="ml-auto flex shrink-0 items-center gap-2 opacity-0 transition group-hover:opacity-100"
+          >
+            <select
+              defaultValue=""
+              onChange={(e) => {
+                void addTo(e.target.value)
+                e.target.value = ''
+              }}
+              className="rounded border border-b4 bg-s3 px-1 py-0.5 text-[10px] text-t3"
+            >
+              <option value="">add to…</option>
+              {rail
+                .filter((p) => !claims.includes(p.id))
+                .map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+            </select>
+            <button
+              onClick={() => void launchOrCopy({ kind: 'resume', sessionId: s.id })}
+              className="text-[10.5px] text-run hover:text-run"
+              title="open a terminal resuming this session"
+            >
+              resume
+            </button>
+            <button
+              onClick={() => void launchOrCopy({ kind: 'fork', sessionId: s.id })}
+              className="text-[10.5px] text-t4 hover:text-t1"
+              title="resume as a new forked session"
+            >
+              fork
+            </button>
+            <button onClick={() => void rename()} className="text-[10.5px] text-t4 hover:text-t1">
+              rename
+            </button>
+            {s.hiddenBy === 'archived' ? (
+              <button
+                onClick={() => void setArchived(false)}
+                className="text-[10.5px] text-t4 hover:text-t1"
+              >
+                unarchive
+              </button>
+            ) : (
+              <button
+                onClick={() => void setArchived(true)}
+                className="text-[10.5px] text-t4 hover:text-t1"
+              >
+                archive
+              </button>
+            )}
+          </span>
+        </div>
+        <div
+          className={`mt-0.5 truncate pl-[17px] text-[11px] ${
+            turn === 'waiting' ? 'text-ask/75' : 'text-t5'
+          }`}
+        >
+          {line2}
+        </div>
       </div>
-      <div className="mt-0.5 flex items-center gap-2 pl-7 text-xs text-t4">
-        <span className="font-mono">{s.id.slice(0, 8)}</span>
-        <span>{formatAge(nowMs, s.lastActivityAt)}</span>
-        {turn === 'waiting' && (
-          <span className="font-mono text-ask">▲ waiting {formatAge(nowMs, s.turn?.since)}</span>
+
+      <span className="ml-2 shrink-0 whitespace-nowrap text-right text-[10.5px] text-t5">
+        {turn === 'waiting' ? (
+          <span className="font-semibold text-ask">waiting {formatAge(nowMs, s.turn?.since)}</span>
+        ) : (
+          formatAge(nowMs, s.lastActivityAt)
         )}
-        {s.costUsd !== undefined && s.costUsd >= 0.01 && (
-          <span className="text-t3" title="estimated cost">
-            {formatUsd(s.costUsd)}
-          </span>
-        )}
-        {s.counts.sidechains > 0 && (
-          <span className="rounded bg-s5 px-1.5 text-[11px] text-t3" title="subagent runs">
-            ⑂ {s.counts.sidechains}
-          </span>
-        )}
-        {s.forkedFrom !== undefined && (
-          <span className="rounded bg-s5 px-1.5 text-[11px] text-t3" title="forked session">
-            fork
-          </span>
-        )}
-        {derived !== undefined && <span className="truncate text-t5">{derived.name}</span>}
-        <span className="truncate">{s.cwd}</span>
-        {showHiddenBy && s.hiddenBy !== undefined && (
-          <span className="rounded bg-ask/15 px-1.5 text-[11px] text-ask">{s.hiddenBy}</span>
-        )}
-      </div>
+        {model !== undefined && ` · ${model}`}
+        {s.costUsd !== undefined && s.costUsd >= 0.01 && ` · ${formatUsd(s.costUsd)}`}
+      </span>
     </li>
   )
+}
+
+/** Largest-usage model, shortened: "claude-sonnet-4-6" → "sonnet-4-6". */
+function modelShortOf(s: Session): string | undefined {
+  if (s.usage === undefined) return undefined
+  let best: string | undefined
+  let bestTokens = -1
+  for (const [model, u] of Object.entries(s.usage)) {
+    const t = u.input + u.output
+    if (t > bestTokens) {
+      bestTokens = t
+      best = model
+    }
+  }
+  return best?.replace(/^claude-/, '').replace(/-\d{8}$/, '')
 }
 
 // ---------- session detail pane ----------

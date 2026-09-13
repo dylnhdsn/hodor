@@ -184,7 +184,7 @@ body {
 .dockview-theme-dark {
   --dv-group-view-background-color: var(--h-bg);
   --dv-tabs-and-actions-container-background-color: var(--h-s1);
-  --dv-activegroup-visiblepanel-tab-background-color: var(--h-s4);
+  --dv-activegroup-visiblepanel-tab-background-color: var(--h-s3);
   --dv-activegroup-visiblepanel-tab-color: var(--h-fg);
   --dv-activegroup-hiddenpanel-tab-background-color: var(--h-s1);
   --dv-inactivegroup-visiblepanel-tab-background-color: var(--h-s2);
@@ -194,4 +194,17 @@ body {
   --dv-drag-over-background-color: color-mix(in srgb, var(--h-ac) 14%, transparent);
   --dv-drag-over-border-color: var(--h-ac);
   --dv-paneview-active-outline-color: var(--h-ac);
+}
+
+/* Mock tab anatomy (dot + ❯ + title) owns the tab's full box. */
+.dockview-theme-dark .dv-tab {
+  padding: 0;
+  min-width: 0;
+}
+.dockview-theme-dark .dv-tab .dv-default-tab {
+  padding: 0;
+}
+.dockview-theme-dark .dv-tabs-and-actions-container {
+  height: 30px;
+  font-size: 11px;
 }

@@ -208,7 +208,7 @@ export function Stack(props: {
             <div className="flex items-center gap-2 border-b border-b1 bg-s3 px-3.5 py-2.5">
               <span className="text-[9px] text-ask">●</span>
               <span className="text-sm font-bold">{titleOf(top.session)}</span>
-              <span className="rounded border border-b4 px-2 font-mono text-[10px] text-t3">
+              <span className="whitespace-nowrap rounded border border-b4 px-2 font-mono text-[10px] text-t3">
                 {projectName(top.session)}
               </span>
               {top.session.gitBranch !== undefined && (
