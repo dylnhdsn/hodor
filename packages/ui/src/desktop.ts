@@ -57,6 +57,30 @@ export interface HodorDesktop {
   ): () => void
 }
 
-export const desktop: HodorDesktop | undefined = (
-  window as { hodorDesktop?: HodorDesktop }
-).hodorDesktop
+const raw: HodorDesktop | undefined = (window as { hodorDesktop?: HodorDesktop }).hodorDesktop
+
+// Two views in one window can share a PTY (a desk tile and the turn-stack
+// card). The main process tracks subscribers per WebContents, so the first
+// detach from this window would silently freeze every other view of the
+// same terminal — refcount here and only forward the last one.
+const attachCounts = new Map<string, number>()
+
+export const desktop: HodorDesktop | undefined =
+  raw === undefined
+    ? undefined
+    : {
+        ...raw,
+        attach: (id) => {
+          attachCounts.set(id, (attachCounts.get(id) ?? 0) + 1)
+          return raw.attach(id)
+        },
+        detach: (id) => {
+          const left = (attachCounts.get(id) ?? 1) - 1
+          if (left <= 0) {
+            attachCounts.delete(id)
+            raw.detach(id)
+          } else {
+            attachCounts.set(id, left)
+          }
+        },
+      }

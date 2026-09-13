@@ -19,7 +19,8 @@ import {
 } from './data.js'
 import { Appearance } from './Appearance.js'
 import { CloudSessionList } from './CloudSessions.js'
-import { Desk, SESSION_DRAG_MIME } from './Desk.js'
+import { Desk, SESSION_DRAG_MIME, subscribeDesk } from './Desk.js'
+import { Stack, stackQueue } from './Stack.js'
 import { desktop } from './desktop.js'
 import { UpdatePill } from './UpdatePill.js'
 import { useSnapshot } from './useSnapshot.js'
@@ -32,6 +33,8 @@ type Filter =
   | { kind: 'hidden' }
   | { kind: 'appearance' }
   | { kind: 'desk' }
+  | { kind: 'stack' }
+  | { kind: 'home' }
 
 export function App() {
   const { snapshot, connected } = useSnapshot()
@@ -56,12 +59,41 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
   const view = useMemo(() => deriveView(snapshot), [snapshot])
   const nowMs = Date.parse(snapshot.generatedAt)
 
+  // Desk membership drives the turn-stack badge; re-render on any change.
+  const [, setDeskTick] = useState(0)
+  useEffect(() => subscribeDesk(() => setDeskTick((t) => t + 1)), [])
+  const stackN = desktop !== undefined ? stackQueue(view.byId, nowMs).length : 0
+  const waitingN = useMemo(
+    () => view.visible.filter((s) => s.turn?.state === 'waiting').length,
+    [view],
+  )
+
+  // Enter anywhere neutral summons the turn stack (desktop only) — the
+  // "what needs me" reflex. Typing surfaces keep their Enter.
+  useEffect(() => {
+    if (desktop === undefined) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Enter' || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return
+      const el = e.target as HTMLElement | null
+      const tag = el?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'BUTTON') return
+      if (el !== null && el.closest('.xterm') !== null) return
+      // Swallow the keystroke: the stack autofocuses its terminal, and an
+      // unconsumed Enter would land there as an empty reply to the agent.
+      e.preventDefault()
+      setFilter({ kind: 'stack' })
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
   const project = filter.kind === 'project' ? view.rail.find((p) => p.id === filter.id) : undefined
 
   const sessions = useMemo(() => {
     let list: Session[]
     switch (filter.kind) {
       case 'all':
+      case 'home':
         list = view.visible
         break
       case 'project':
@@ -73,6 +105,7 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
       case 'archived':
       case 'appearance':
       case 'desk':
+      case 'stack':
         list = []
         break
     }
@@ -83,8 +116,8 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
   // Cloud sessions shown alongside the local list — counted with it, so the
   // rail and header numbers match what's actually on the page.
   const cloudShown = useMemo(() => {
-    if (filter.kind !== 'all' && filter.kind !== 'project') return []
-    const base = filter.kind === 'all' ? view.cloud : (view.cloudByProject.get(filter.id) ?? [])
+    if (filter.kind !== 'all' && filter.kind !== 'home' && filter.kind !== 'project') return []
+    const base = filter.kind !== 'project' ? view.cloud : (view.cloudByProject.get(filter.id) ?? [])
     const q = query.trim().toLowerCase()
     if (q.length === 0) return base
     return base.filter((c) =>
@@ -138,6 +171,27 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
     setSelected(next)
   }
 
+  const renderRow = (s: Session) => (
+    <SessionRow
+      key={s.id}
+      session={s}
+      nowMs={nowMs}
+      view={view}
+      customNames={customNames}
+      rail={view.rail}
+      showHiddenBy={filter.kind === 'hidden'}
+      checked={selected.has(s.id)}
+      anySelected={selected.size > 0}
+      inspecting={detailId === s.id}
+      toggle={() => toggleSelected(s.id)}
+      open={() => {
+        setDetailId(detailId === s.id ? undefined : s.id)
+        setSettingsOpen(false)
+      }}
+      mutateProject={mutateProject}
+    />
+  )
+
   return (
     <div className="flex h-full flex-col bg-app font-ui text-sm text-t1">
       {(snapshot.organize?.errors.length ?? 0) > 0 && (
@@ -159,6 +213,13 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
         </div>
 
         <nav className="flex-1 overflow-y-auto px-2 pb-2">
+          <RailItem
+            label="Home"
+            count={view.visible.length + view.cloud.length}
+            waiting={waitingN}
+            active={filter.kind === 'home'}
+            onClick={() => setFilter({ kind: 'home' })}
+          />
           <RailItem
             label="All sessions"
             count={view.visible.length + view.cloud.length}
@@ -203,6 +264,22 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
               >
                 <span>the desk</span>
                 <span className="font-mono text-[10px] text-t4">autosaved</span>
+              </button>
+              <button
+                onClick={() => setFilter({ kind: 'stack' })}
+                className={`flex w-full items-center justify-between rounded px-3 py-1.5 text-left ${
+                  filter.kind === 'stack' ? 'bg-ac/12 text-fg' : 'text-t1 hover:bg-s3'
+                }`}
+                title="desk sessions waiting on you, longest first (Enter)"
+              >
+                <span>▲ turn stack</span>
+                <span
+                  className={`font-mono text-[10px] ${
+                    stackN > 0 ? 'rounded bg-ask/15 px-1.5 font-bold text-ask' : 'text-t4'
+                  }`}
+                >
+                  {stackN}
+                </span>
               </button>
             </>
           )}
@@ -249,9 +326,34 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
       </aside>
 
       <main className="flex min-w-0 flex-1 flex-col">
-        {filter.kind === 'desk' ? (
-          <div className="flex min-h-0 flex-1">
+        {/* The desk stays mounted whatever lens is up: its PTYs, dockview
+            state, and the deskStore the turn stack reads all live here. */}
+        {desktop !== undefined && (
+          <div className={filter.kind === 'desk' ? 'flex min-h-0 flex-1' : 'hidden'}>
             <Desk inspect={(id) => setDetailId(id)} />
+            {filter.kind === 'desk' && detailId !== undefined && view.byId.has(detailId) && (
+              <DetailPane
+                key={detailId}
+                session={view.byId.get(detailId)!}
+                nowMs={nowMs}
+                view={view}
+                snapshot={snapshot}
+                jump={(id) => setDetailId(id)}
+                close={() => setDetailId(undefined)}
+              />
+            )}
+          </div>
+        )}
+        {filter.kind === 'desk' ? null : filter.kind === 'stack' ? (
+          <div className="flex min-h-0 flex-1">
+            <Stack
+              snapshot={snapshot}
+              view={view}
+              nowMs={nowMs}
+              onExit={() => setFilter({ kind: 'desk' })}
+              onInspect={(id) => setDetailId(detailId === id ? undefined : id)}
+              onJumpDesk={() => setFilter({ kind: 'desk' })}
+            />
             {detailId !== undefined && view.byId.has(detailId) && (
               <DetailPane
                 key={detailId}
@@ -315,42 +417,31 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
 
             <div className="flex min-h-0 flex-1">
               <div className="flex min-w-0 flex-1 flex-col overflow-y-auto">
-              {filter.kind === 'all' || filter.kind === 'project' ? (
+              {filter.kind === 'all' || filter.kind === 'home' || filter.kind === 'project' ? (
                 <CloudSessionList
                   sessions={cloudShown}
                   nowMs={nowMs}
-                  projectOf={filter.kind === 'all' ? view.cloudProjectOf : undefined}
+                  projectOf={filter.kind !== 'project' ? view.cloudProjectOf : undefined}
                   openProject={(id) => {
                     setFilter({ kind: 'project', id })
                     setSelected(new Set())
                   }}
                 />
               ) : null}
-              <ul className="min-w-0 flex-1 divide-y divide-b2">
-                {sessions.map((s) => (
-                  <SessionRow
-                    key={s.id}
-                    session={s}
-                    nowMs={nowMs}
-                    view={view}
-                    customNames={customNames}
-                    rail={view.rail}
-                    showHiddenBy={filter.kind === 'hidden'}
-                    checked={selected.has(s.id)}
-                    anySelected={selected.size > 0}
-                    inspecting={detailId === s.id}
-                    toggle={() => toggleSelected(s.id)}
-                    open={() => {
-                      setDetailId(detailId === s.id ? undefined : s.id)
-                      setSettingsOpen(false)
-                    }}
-                    mutateProject={mutateProject}
-                  />
-                ))}
-                {sessions.length === 0 && cloudShown.length === 0 && (
-                  <li className="px-4 py-8 text-center text-t5">nothing here</li>
-                )}
-              </ul>
+              {filter.kind === 'home' ? (
+                <HomeList
+                  sessions={sessions}
+                  renderRow={renderRow}
+                  showEmpty={cloudShown.length === 0}
+                />
+              ) : (
+                <ul className="min-w-0 flex-1 divide-y divide-b2">
+                  {sessions.map(renderRow)}
+                  {sessions.length === 0 && cloudShown.length === 0 && (
+                    <li className="px-4 py-8 text-center text-t5">nothing here</li>
+                  )}
+                </ul>
+              )}
               </div>
               {detailId !== undefined && view.byId.has(detailId) ? (
                 <DetailPane
@@ -387,7 +478,13 @@ function RailHeading(props: { children: React.ReactNode }) {
   )
 }
 
-function RailItem(props: { label: string; count: number; active: boolean; onClick: () => void }) {
+function RailItem(props: {
+  label: string
+  count: number
+  active: boolean
+  onClick: () => void
+  waiting?: number
+}) {
   return (
     <button
       onClick={props.onClick}
@@ -396,8 +493,54 @@ function RailItem(props: { label: string; count: number; active: boolean; onClic
       }`}
     >
       <span className="truncate">{props.label}</span>
-      <span className="ml-2 shrink-0 text-xs text-t4">{props.count}</span>
+      <span className="ml-2 flex shrink-0 items-center gap-1.5 text-xs text-t4">
+        {props.waiting !== undefined && props.waiting > 0 && (
+          <span className="font-mono text-[10px] font-semibold text-ask" title="waiting on you">
+            ▲{props.waiting}
+          </span>
+        )}
+        {props.count}
+      </span>
     </button>
+  )
+}
+
+/** The Home lens: the library grouped by whose turn it is. */
+function HomeList(props: {
+  sessions: Session[]
+  renderRow: (s: Session) => React.ReactNode
+  showEmpty: boolean
+}) {
+  const wait: Session[] = []
+  const run: Session[] = []
+  const rest: Session[] = []
+  for (const s of props.sessions) {
+    if (s.turn?.state === 'waiting') wait.push(s)
+    else if (s.turn?.state === 'working' || s.runtime.kind !== 'idle') run.push(s)
+    else rest.push(s)
+  }
+  // Needs-you mirrors the turn stack: longest wait first.
+  wait.sort((a, b) => (a.turn?.since ?? '').localeCompare(b.turn?.since ?? ''))
+  const group = (title: string, cls: string, list: Session[]) =>
+    list.length === 0 ? null : (
+      <div key={title}>
+        <div
+          className={`border-y border-b1 bg-s1 px-4 py-1 font-mono text-[10px] font-semibold tracking-[.14em] ${cls}`}
+        >
+          {title} — {list.length}
+        </div>
+        <ul className="divide-y divide-b2">{list.map(props.renderRow)}</ul>
+      </div>
+    )
+  return (
+    <div className="min-w-0 flex-1">
+      {group('▲ NEEDS YOU', 'text-ask', wait)}
+      {group('● RUNNING', 'text-run', run)}
+      {group('RECENT', 'text-t4', rest)}
+      {props.sessions.length === 0 && props.showEmpty && (
+        <p className="px-4 py-8 text-center text-t5">nothing here</p>
+      )}
+    </div>
   )
 }
 
@@ -560,6 +703,7 @@ function SessionRow(props: {
   const { session: s, nowMs, view, customNames, rail, showHiddenBy } = props
   const { checked, anySelected, inspecting, toggle, open, mutateProject } = props
   const active = s.runtime.kind !== 'idle'
+  const turn = s.turn?.state
   const claims = view.claimsBySession.get(s.id) ?? []
   const derived = view.derivedOf.get(s.id)
 
@@ -603,7 +747,14 @@ function SessionRow(props: {
             anySelected ? '' : 'opacity-0 transition group-hover:opacity-100'
           }`}
         />
-        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${active ? 'bg-run' : 'bg-b4'}`} />
+        <span
+          className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+            turn === 'waiting' ? 'bg-ask' : turn === 'working' || active ? 'bg-run' : 'bg-b4'
+          }`}
+          title={
+            turn === 'waiting' ? 'your turn' : turn === 'working' ? 'agent working' : undefined
+          }
+        />
         <span className="truncate font-medium text-fg">{titleOf(s)}</span>
         {claims.map((id) => (
           <span
@@ -665,6 +816,9 @@ function SessionRow(props: {
       <div className="mt-0.5 flex items-center gap-2 pl-7 text-xs text-t4">
         <span className="font-mono">{s.id.slice(0, 8)}</span>
         <span>{formatAge(nowMs, s.lastActivityAt)}</span>
+        {turn === 'waiting' && (
+          <span className="font-mono text-ask">▲ waiting {formatAge(nowMs, s.turn?.since)}</span>
+        )}
         {s.costUsd !== undefined && s.costUsd >= 0.01 && (
           <span className="text-t3" title="estimated cost">
             {formatUsd(s.costUsd)}

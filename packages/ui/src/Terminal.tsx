@@ -10,7 +10,15 @@ import { activeFont, activeTerminalTheme, onThemeChange } from './theme.js'
  * component replays the backlog on mount, then streams — so a terminal can
  * move between the dock and a pop-out window without losing its scrollback.
  */
-export function TerminalView({ ptyId, visible }: { ptyId: string; visible: boolean }) {
+export function TerminalView({
+  ptyId,
+  visible,
+  autoFocus = false,
+}: {
+  ptyId: string
+  visible: boolean
+  autoFocus?: boolean
+}) {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
 
@@ -62,6 +70,7 @@ export function TerminalView({ ptyId, visible }: { ptyId: string; visible: boole
       bridge.resize(ptyId, term.cols, term.rows)
     }
     doFit()
+    if (autoFocus) term.focus()
     const observer = new ResizeObserver(doFit)
     observer.observe(host)
 

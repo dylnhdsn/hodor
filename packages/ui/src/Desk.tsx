@@ -56,6 +56,57 @@ export interface DeferState {
 /** External drag payload: a session row dropped onto the desk. */
 export const SESSION_DRAG_MIME = 'application/x-hodor-session'
 
+/**
+ * The desk's shared face (module store): the Turn Stack and the library
+ * read which sessions live on the desk without owning the dockview. The
+ * Desk component stays MOUNTED (hidden, not unmounted) while other views
+ * show, so terminals keep their buffers and this store stays live.
+ */
+export interface DeskEntry {
+  panelId: string
+  title: string
+  sessionId?: string
+  ptyId?: string
+}
+
+export const deskState: { entries: DeskEntry[]; defer: Record<string, DeferState> } = {
+  entries: [],
+  defer: {},
+}
+
+interface DeskOps {
+  closePanel: (panelId: string) => void
+  resumePanel: (panelId: string) => Promise<void>
+  setDefer: (sessionId: string, state: DeferState | undefined) => void
+}
+
+let deskOps: DeskOps | undefined
+export const getDeskOps = (): DeskOps | undefined => deskOps
+
+const deskListeners = new Set<() => void>()
+export function subscribeDesk(fn: () => void): () => void {
+  deskListeners.add(fn)
+  return () => deskListeners.delete(fn)
+}
+function notifyDesk(): void {
+  for (const fn of deskListeners) fn()
+}
+
+function refreshEntries(api: DockviewApi): void {
+  deskState.entries = api.panels.map((p) => {
+    const params = paramsOf(p)
+    return {
+      panelId: p.id,
+      title: p.title ?? p.id,
+      ...(params.target?.sessionId !== undefined && params.target.kind === 'resume'
+        ? { sessionId: params.target.sessionId }
+        : {}),
+      ...(params.ptyId !== undefined ? { ptyId: params.ptyId } : {}),
+    }
+  })
+  notifyDesk()
+}
+
 /** One panel at a time re-binds to the next 'opened' PTY (restore, slots). */
 const claim: { panelId: string | undefined; resolve: (() => void) | undefined } = {
   panelId: undefined,
@@ -381,6 +432,27 @@ export function Desk({ inspect }: { inspect?: (sessionId: string) => void }) {
     }
   }, [deadPanels, resumePanel])
 
+  // Publish the desk's operations for the Turn Stack and the library.
+  useEffect(() => {
+    deskOps = {
+      closePanel: (panelId) => {
+        const api = apiRef.current
+        const panel = api?.getPanel(panelId)
+        if (api !== undefined && api !== null && panel !== undefined) api.removePanel(panel)
+      },
+      resumePanel,
+      setDefer: (sessionId, state) => {
+        if (state === undefined) delete deskState.defer[sessionId]
+        else deskState.defer[sessionId] = state
+        save()
+        notifyDesk()
+      },
+    }
+    return () => {
+      deskOps = undefined
+    }
+  }, [resumePanel, save])
+
   const onReady = useCallback(
     (event: DockviewReadyEvent) => {
       const api = event.api
@@ -390,8 +462,13 @@ export function Desk({ inspect }: { inspect?: (sessionId: string) => void }) {
         if (ptyId !== undefined && desktop !== undefined && !movingOut.current.delete(ptyId)) {
           void desktop.close(ptyId)
         }
+        refreshEntries(api)
       })
-      api.onDidLayoutChange(() => save())
+      api.onDidAddPanel(() => refreshEntries(api))
+      api.onDidLayoutChange(() => {
+        save()
+        refreshEntries(api)
+      })
       // Accept session-row drags from the library as drop targets.
       api.onUnhandledDragOver((e) => {
         const native = e.nativeEvent
@@ -431,6 +508,8 @@ export function Desk({ inspect }: { inspect?: (sessionId: string) => void }) {
             }
           }
           if (dead > 0) setRestore({ dead, zones: deadGroups.size })
+          deskState.defer = deferRef.current
+          refreshEntries(api)
         },
       )
     },
@@ -489,6 +568,7 @@ export function Desk({ inspect }: { inspect?: (sessionId: string) => void }) {
             })
             if (event.title !== undefined) panel.api.setTitle(event.title)
             save()
+            refreshEntries(api)
             resolve?.()
             return
           }
