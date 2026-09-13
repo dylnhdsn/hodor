@@ -156,6 +156,80 @@ Three-region app, one window (desktop adds terminals; web hides them):
   windows): dockview tiles as today, but visually of-a-piece, with a
   two-way link: a session row shows a "terminal open" glyph; a tile's
   tab links back to the session detail.
+- **Turn Stack** (desktop, a workspace view): the triage surface —
+  see the next section. Home's "Needs you" group is the list-shaped
+  echo of the same queue and links into it.
+
+## The Turn Stack (triage, settled)
+
+Triage went through three shapes. Claude Design's first pass proposed
+question cards: each waiting session distilled to a one-line question
+with quick-answer chips, stepped through in a modal. Measurement
+killed it: across this project's own transcript, 67 real
+human-reply moments — **0%** ended in a structured ask
+(AskUserQuestion / plan approval), only **19%** ended in a question
+mark at all, and the median final agent message was **~2,000 chars**
+(p90 ~3,800): a turn *report*, not a question. Any UI that promises
+"the question" as a card is faking it most of the time.
+
+Dylan's reframe dissolves the problem: **the triage view is a stack
+of ACTUAL Claude CLI sessions** — real PTYs rendering the real TUI —
+filtered to those waiting on the human turn, ordered
+waiting-longest-first. The card IS the terminal: whatever the waiting
+state looks like (a long report, an AskUserQuestion dialog, a
+permission prompt mid-tool), claude renders its own ground truth and
+hodor interprets nothing. You look at the top of the stack and either
+**take the turn** — the terminal has focus, you just type — or
+**triage it** with one verb:
+
+**Return the turn cheaply** (agent resumes immediately):
+- *Quick reply* — the workhorse. Chips are real data when the wait is
+  structured (AskUserQuestion options, plan approval, permission
+  prompt); otherwise they are the USER'S canned replies ("go ahead",
+  "use your judgment", "yes to your recommendation"), configurable
+  like mail templates. Delivered by writing into the PTY.
+
+**Defer** (stays yours, leaves the stack):
+- *Skip* — rotate to the bottom. The pure "not now".
+- *Snooze* — 30m / 2h / **until it moves again** (new transcript
+  lines; we already tail them). Snoozed sessions leave the needs-you
+  count so the badge stays honest.
+- *Send to phone* — inject `/remote-control` into the PTY so the
+  session becomes answerable from the Claude app; it leaves the desk
+  queue without being abandoned. (Verify injection behaves before
+  shipping the verb.)
+
+**End it** (the turn never comes back):
+- *Done* — the wait is often terminal politeness ("let me know if you
+  want more"). Acknowledge, close the PTY, transcript stays and is
+  resumable forever — safe by construction.
+- *Kill* — close without a reply, for dead-end lines of work.
+
+**Escape hatch**: open the full detail pane, or jump to the session's
+tile in the main workspace.
+
+Mechanics that make or break it:
+
+- **Entry criteria.** Waiting = the last transcript event is the
+  agent's and the file has been quiet ~10s, OR a tool_use has no
+  result (a permission prompt is sitting on screen). Live PTYs enter
+  directly; a dormant waiting session gets its PTY spawned when its
+  card surfaces (`claude --resume` straight into the stack). Cloud
+  sessions stay OUT of the stack in v1 — a PTY needs a teleport,
+  which takes the session over; they keep their message box in Home.
+- **Keystroke discipline.** Plain typing ALWAYS goes to the terminal;
+  triage verbs live on a modifier layer (⌘S skip, ⌘Z snooze, ⌘D done…)
+  or visible chrome buttons — never bare letters. One stolen
+  keystroke into the wrong session kills trust. Auto-advance (when a
+  session's turn flips back to the agent) fires only when the user
+  isn't mid-typing.
+- **v1 cuts**: priority ordering beyond waiting-longest,
+  snooze-until-another-session-finishes, cloud cards.
+
+Build prerequisites (not yet built): a turn-state detector in core
+(waiting / working / done, from transcript structure + tail
+liveness), the stack view as a workspace mode over existing PTYs,
+quick-reply presets in config, snooze state in the user plane.
 
 ## Design principles for the pass
 
@@ -195,17 +269,24 @@ anywhere in the UI.
 
 1. **Home (triage lens)** — the "what needs me" answer, with realistic
    mixed data: 2 needs-you cloud sessions, 1 running, a review-ready,
-   recents across 3 projects, one branch-gone label.
-2. **Project view** — unified list, ~14 rows mixed local/cloud, search
+   recents across 3 projects, one branch-gone label. Its "Needs you"
+   group opens the Turn Stack.
+2. **Turn Stack** — the triage view: a real terminal (render actual
+   claude TUI output, not a stylized conversation) on top of a visible
+   queue of 3 more waiting sessions; take-the-turn focus in the
+   terminal; triage verbs as chrome (quick-reply chips — one card with
+   real AskUserQuestion options, one with user presets — skip, snooze
+   menu, send-to-phone, done); the empty state ("all agents working").
+3. **Project view** — unified list, ~14 rows mixed local/cloud, search
    active, bulk-select state, project stats header.
-3. **Session detail, local** — tail + collapsed fact groups + forks.
-4. **Session detail, cloud** — status story, context meter, teleport/
+4. **Session detail, local** — tail + collapsed fact groups + forks.
+5. **Session detail, cloud** — status story, context meter, teleport/
    message verbs, branch pre-flight label.
-5. **Workbench** — dock open with 3 tiles (one split), row↔tile link
+6. **Workbench** — dock open with 3 tiles (one split), row↔tile link
    visible, one dead slot offering resume.
-6. **Project settings** — matchers with preview, pins, danger-free
+7. **Project settings** — matchers with preview, pins, danger-free
    archive/revert affordances.
-7. **States sheet** — row anatomy at every status; empty states (no
+8. **States sheet** — row anatomy at every status; empty states (no
    sessions, no cloud login, fresh install); the update pill; organize
    error banner, humane provenance strings.
 

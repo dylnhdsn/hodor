@@ -18,6 +18,10 @@ brainstorm doc when they get built. Living file — prune on completion.
 
 ## UI
 
+- **Turn Stack (triage view)** — designed in 023 (stack of real
+  waiting terminals; take the turn or skip/snooze/quick-reply/
+  send-to-phone/done). Prereqs: turn-state detector in core,
+  quick-reply presets, snooze state. Awaits the design pass.
 - **Full transcript viewer** — today only the conversation tail.
 - **Live-leaf conversation tail** — the tail renders in timestamp
   order, so dead branches (from double-resume or rewinds) interleave;
