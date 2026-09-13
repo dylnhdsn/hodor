@@ -1,7 +1,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { App } from './App.js'
-import { PopoutTerminal } from './TerminalDock.js'
+import { PopoutTerminal } from './Desk.js'
 import { loadTheme } from './theme.js'
 import './index.css'
 

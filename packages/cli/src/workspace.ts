@@ -11,13 +11,20 @@ import type { CliDeps } from './main.js'
  */
 
 export interface WorkspaceWindow {
-  layout?: unknown
+  layout?: unknown | undefined
+  /** Zone identity per dockview group id: the user's named categories
+   * ("ACTIVE", "PR REVIEWS") and which zone new terminals land in. */
+  zones?: Record<string, { name?: string; def?: boolean }>
 }
 
 export interface Workspace {
   id: string
   name: string
   windows: WorkspaceWindow[]
+  /** Turn-stack deferrals per session id (snooze / sent-to-phone). */
+  defer?:
+    | Record<string, { until?: string; untilMoves?: string; phone?: boolean }>
+    | undefined
 }
 
 export interface WorkspaceDoc {
@@ -45,7 +52,13 @@ export function parseWorkspaceDoc(raw: unknown): WorkspaceDoc | undefined {
     }
     const windows = Array.isArray(w['windows']) ? w['windows'] : []
     if (!windows.every(isRecord)) return undefined
-    workspaces.push({ id: w['id'], name: w['name'], windows: windows as WorkspaceWindow[] })
+    const defer = w['defer']
+    workspaces.push({
+      id: w['id'],
+      name: w['name'],
+      windows: windows as WorkspaceWindow[],
+      ...(isRecord(defer) ? { defer: defer as Workspace['defer'] } : {}),
+    })
   }
   const height = raw['dockHeight']
   return {

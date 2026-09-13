@@ -19,9 +19,11 @@ import {
 } from './data.js'
 import { Appearance } from './Appearance.js'
 import { CloudSessionList } from './CloudSessions.js'
-import { TerminalDock } from './TerminalDock.js'
+import { Desk, SESSION_DRAG_MIME } from './Desk.js'
+import { desktop } from './desktop.js'
 import { UpdatePill } from './UpdatePill.js'
 import { useSnapshot } from './useSnapshot.js'
+import { BootSplash, Wordmark } from './Wordmark.js'
 
 type Filter =
   | { kind: 'all' }
@@ -29,22 +31,23 @@ type Filter =
   | { kind: 'archived' }
   | { kind: 'hidden' }
   | { kind: 'appearance' }
+  | { kind: 'desk' }
 
 export function App() {
   const { snapshot, connected } = useSnapshot()
   if (snapshot === undefined) {
-    return (
-      <div className="flex h-full items-center justify-center bg-app text-t4">
-        connecting to hodor…
-      </div>
-    )
+    return <BootSplash desk={desktop !== undefined} />
   }
   return <Main snapshot={snapshot} connected={connected} />
 }
 
 function Main(props: { snapshot: Snapshot; connected: boolean }) {
   const { snapshot, connected } = props
-  const [filter, setFilter] = useState<Filter>({ kind: 'all' })
+  // Desktop opens onto the desk (the workspace IS the app there); the web
+  // build has no PTYs, so the library is the app.
+  const [filter, setFilter] = useState<Filter>(
+    desktop !== undefined ? { kind: 'desk' } : { kind: 'all' },
+  )
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set())
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -69,6 +72,7 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
         break
       case 'archived':
       case 'appearance':
+      case 'desk':
         list = []
         break
     }
@@ -146,8 +150,8 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
       )}
       <div className="flex min-h-0 flex-1">
       <aside className="flex w-64 shrink-0 flex-col border-r border-b1">
-        <div className="flex items-center gap-2 px-4 py-3">
-          <span className="text-base font-semibold tracking-tight text-fg">hodor</span>
+        <div className="flex items-center gap-2 px-4 py-3 text-fg">
+          <Wordmark height={15} />
           <span
             className={`h-2 w-2 rounded-full ${connected ? 'bg-run' : 'bg-b6'}`}
             title={connected ? 'live' : 'reconnecting'}
@@ -188,6 +192,20 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
             <p className="px-3 py-1 text-xs text-t5">none yet — press +</p>
           )}
 
+          {desktop !== undefined && (
+            <>
+              <RailHeading>workspace</RailHeading>
+              <button
+                onClick={() => setFilter({ kind: 'desk' })}
+                className={`flex w-full items-center justify-between rounded px-3 py-1.5 text-left ${
+                  filter.kind === 'desk' ? 'bg-ac/12 text-fg' : 'text-t1 hover:bg-s3'
+                }`}
+              >
+                <span>the desk</span>
+                <span className="font-mono text-[10px] text-t4">autosaved</span>
+              </button>
+            </>
+          )}
         </nav>
 
         <UpdatePill />
@@ -231,7 +249,22 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
       </aside>
 
       <main className="flex min-w-0 flex-1 flex-col">
-        {filter.kind === 'appearance' ? (
+        {filter.kind === 'desk' ? (
+          <div className="flex min-h-0 flex-1">
+            <Desk inspect={(id) => setDetailId(id)} />
+            {detailId !== undefined && view.byId.has(detailId) && (
+              <DetailPane
+                key={detailId}
+                session={view.byId.get(detailId)!}
+                nowMs={nowMs}
+                view={view}
+                snapshot={snapshot}
+                jump={(id) => setDetailId(id)}
+                close={() => setDetailId(undefined)}
+              />
+            )}
+          </div>
+        ) : filter.kind === 'appearance' ? (
           <Appearance />
         ) : filter.kind === 'archived' ? (
           <ArchivedList view={view} mutateProject={mutateProject} />
@@ -342,7 +375,6 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
         )}
       </main>
       </div>
-      <TerminalDock />
     </div>
   )
 }
@@ -551,6 +583,14 @@ function SessionRow(props: {
   return (
     <li
       onClick={open}
+      draggable={desktop !== undefined}
+      onDragStart={(e) => {
+        // Drop onto a desk zone to open the session there.
+        e.dataTransfer.setData(
+          SESSION_DRAG_MIME,
+          JSON.stringify({ kind: 'resume', sessionId: s.id }),
+        )
+      }}
       className={`group cursor-pointer px-4 py-2 ${inspecting ? 'bg-s3' : 'hover:bg-s3/60'}`}
     >
       <div className="flex items-center gap-2">
