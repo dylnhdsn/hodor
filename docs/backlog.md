@@ -18,10 +18,12 @@ brainstorm doc when they get built. Living file — prune on completion.
 
 ## UI
 
-- **Turn Stack (triage view)** — designed in 023 (stack of real
-  waiting terminals; take the turn or skip/snooze/quick-reply/
-  send-to-phone/done). Prereqs: turn-state detector in core,
-  quick-reply presets, snooze state. Awaits the design pass.
+- **Turn Stack follow-ups** — the stack shipped in 0.2.0 (real waiting
+  terminals; skip/snooze/send-to-phone/done over the turn-state
+  detector). Remaining: quick-reply presets are a UI constant — make
+  them user config; a global OS hotkey to summon the stack from
+  anywhere; surface cloud sessions awaiting input once the API exposes
+  that cleanly.
 - **Full transcript viewer** — today only the conversation tail.
 - **Live-leaf conversation tail** — the tail renders in timestamp
   order, so dead branches (from double-resume or rewinds) interleave;
@@ -42,12 +44,10 @@ brainstorm doc when they get built. Living file — prune on completion.
 
 ## Platform & distribution
 
-- **Workspace v2: the durable desk** — requirements settled in
-  [023](brainstorm/023-ui-design-brief.md) ("the workflow to beat is
-  Windows Terminal"): workspace-first posture (library summons over
-  it), named zones with open-into-zone routing, one-action restore-all
-  after crash/restart. Then 022's v3/v4: templates + slot rules,
-  multi-window. Awaits the design pass.
+- **Workspace v3/v4** — the desk shipped in 0.2.0 (workspace-first
+  posture, named zones with open-into-zone routing, restore-all).
+  Next per 022: named workspaces + templates with slot rules, then
+  multi-window arrangements.
 - **Desktop polish** — app icon, keyboard shortcuts (next/prev
   terminal), signing, multiple manager windows.
 - **WSL-native install** — installer assumes shared Windows home;

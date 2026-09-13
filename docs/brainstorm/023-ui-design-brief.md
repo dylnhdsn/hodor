@@ -6,6 +6,19 @@ data plumbing; this brief is the input to a real design pass (Claude
 Design). Everything here describes what EXISTS in the core today unless
 marked (later).
 
+**Built (0.2.0)**: the Claude Design pass produced an artifact; the
+implementable ideas landed as four milestones — the turn-state detector
+(core `session.turn`, transcript-structure only), the colorscheme theme
+engine (every UI color derived from a 16-ANSI scheme; terminals match
+chrome; import from WT/iTerm2/Alacritty/kitty/Ghostty/Xresources), the
+desk (workspace-first posture, named zones, open-into-zone routing,
+restore-all), and the Turn Stack (real waiting terminals, take the turn
+by typing; skip/snooze/send-to-phone/done; Home lens grouped by whose
+turn it is). Deliberately NOT taken from the mock: summarized question
+cards with fake chips (structured options render display-only; the real
+TUI dialog owns selection), inputs-over-terminals, custom window chrome,
+and the mock's UI-font-set-to-mono bug.
+
 ## What hodor is
 
 Mission control for every Claude Code session you have — local
