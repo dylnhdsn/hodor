@@ -1,7 +1,197 @@
 @import 'tailwindcss';
 
+/* Embedded fonts (SIL OFL): Archivo for chrome, JetBrains Mono for
+   identifiers and terminals. Variable latin subsets, ~44KB together;
+   system stacks below are the fallback and the second "font pack". */
+@font-face {
+  font-family: 'Archivo';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('./assets/fonts/archivo-latin.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: swap;
+  src: url('./assets/fonts/jetbrains-mono-latin.woff2') format('woff2');
+}
+
+/* Theme tokens (docs 023/024 design pass): every color derives from a
+   terminal colorscheme at runtime — deriveTheme() writes these variables.
+   The defaults below are the derived "hodor" scheme, so the first paint
+   is correct before any JS runs. */
+:root {
+  --h-bg: #0b0a10;
+  --h-s1: #111016;
+  --h-s2: #0e0d13;
+  --h-s3: #16151b;
+  --h-s4: #19181e;
+  --h-s5: #1c1a21;
+  --h-s6: #141319;
+  --h-s7: #201f25;
+  --h-s8: #0d0c12;
+  --h-b1: #212027;
+  --h-b2: #1a1920;
+  --h-b3: #26242b;
+  --h-b4: #2c2b32;
+  --h-b5: #333139;
+  --h-b6: #403e46;
+  --h-fg: #e8e4f2;
+  --h-t1: #d2cedb;
+  --h-t2: #afabb7;
+  --h-t3: #9896a1;
+  --h-t4: #7a7781;
+  --h-t5: #6a6871;
+  --h-t6: #5b5861;
+  --h-ac: #b78af7;
+  --h-ach: #c6a5f6;
+  --h-acb: #cdb3f5;
+  --h-ink: #ffffff;
+  --h-ask: #e5a83b;
+  --h-run: #7ec98b;
+  --h-rev: #82a9ef;
+  --h-err: #e07a76;
+  --h-font-ui: 'Archivo', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --h-font-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Mono', Menlo, Consolas, monospace;
+}
+
+@theme inline {
+  --color-app: var(--h-bg);
+  --color-s1: var(--h-s1);
+  --color-s2: var(--h-s2);
+  --color-s3: var(--h-s3);
+  --color-s4: var(--h-s4);
+  --color-s5: var(--h-s5);
+  --color-s6: var(--h-s6);
+  --color-s7: var(--h-s7);
+  --color-s8: var(--h-s8);
+  --color-b1: var(--h-b1);
+  --color-b2: var(--h-b2);
+  --color-b3: var(--h-b3);
+  --color-b4: var(--h-b4);
+  --color-b5: var(--h-b5);
+  --color-b6: var(--h-b6);
+  --color-fg: var(--h-fg);
+  --color-t1: var(--h-t1);
+  --color-t2: var(--h-t2);
+  --color-t3: var(--h-t3);
+  --color-t4: var(--h-t4);
+  --color-t5: var(--h-t5);
+  --color-t6: var(--h-t6);
+  --color-ac: var(--h-ac);
+  --color-ach: var(--h-ach);
+  --color-acb: var(--h-acb);
+  --color-ink: var(--h-ink);
+  --color-ask: var(--h-ask);
+  --color-run: var(--h-run);
+  --color-rev: var(--h-rev);
+  --color-err: var(--h-err);
+  --font-ui: var(--h-font-ui);
+  --font-mono: var(--h-font-mono);
+}
+
 html,
 body,
 #root {
   height: 100%;
+}
+
+body {
+  background: var(--h-bg);
+  font-family: var(--h-font-ui);
+}
+
+@keyframes hblink {
+  0%,
+  55% {
+    opacity: 1;
+  }
+  56%,
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes hpulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@keyframes hjit {
+  0%,
+  88%,
+  100% {
+    transform: translate(0, 0);
+  }
+  90% {
+    transform: translate(-2px, 1px);
+  }
+  92% {
+    transform: translate(2px, -1px);
+  }
+  94% {
+    transform: translate(-1px, 0);
+  }
+  96% {
+    transform: translate(1px, 1px);
+  }
+}
+@keyframes hghost {
+  0%,
+  84%,
+  100% {
+    opacity: 0;
+    transform: translate(0, 0);
+  }
+  86% {
+    opacity: 0.85;
+    transform: translate(3px, -1px);
+  }
+  88% {
+    opacity: 0;
+  }
+  92% {
+    opacity: 0.7;
+    transform: translate(-3px, 1px);
+  }
+  94% {
+    opacity: 0;
+  }
+}
+
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--h-b4);
+  border-radius: 5px;
+  border: 2px solid var(--h-bg);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::selection {
+  background: color-mix(in srgb, var(--h-ac) 32%, transparent);
+}
+
+/* Dockview chrome follows the scheme. */
+.dockview-theme-dark {
+  --dv-group-view-background-color: var(--h-bg);
+  --dv-tabs-and-actions-container-background-color: var(--h-s1);
+  --dv-activegroup-visiblepanel-tab-background-color: var(--h-s4);
+  --dv-activegroup-visiblepanel-tab-color: var(--h-fg);
+  --dv-activegroup-hiddenpanel-tab-background-color: var(--h-s1);
+  --dv-inactivegroup-visiblepanel-tab-background-color: var(--h-s2);
+  --dv-inactivegroup-hiddenpanel-tab-background-color: var(--h-s1);
+  --dv-tab-divider-color: var(--h-b1);
+  --dv-separator-border: var(--h-b1);
+  --dv-drag-over-background-color: color-mix(in srgb, var(--h-ac) 14%, transparent);
+  --dv-drag-over-border-color: var(--h-ac);
+  --dv-paneview-active-outline-color: var(--h-ac);
 }

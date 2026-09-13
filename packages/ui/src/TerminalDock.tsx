@@ -102,10 +102,10 @@ function TerminalPanel(props: IDockviewPanelProps<SlotParams>) {
   }, [ptyId])
 
   if (desktop === undefined) return null
-  if (status === 'checking') return <div className="h-full w-full bg-[#0a0a0b]" />
+  if (status === 'checking') return <div className="h-full w-full bg-app" />
   if (status === 'live' && ptyId !== undefined) {
     return (
-      <div className="h-full w-full bg-[#0a0a0b] p-1">
+      <div className="h-full w-full bg-app p-1">
         <TerminalView ptyId={ptyId} visible />
       </div>
     )
@@ -124,21 +124,21 @@ function TerminalPanel(props: IDockviewPanelProps<SlotParams>) {
   }
 
   return (
-    <div className="flex h-full w-full flex-col items-center justify-center gap-3 bg-[#0a0a0b] text-sm text-zinc-400">
+    <div className="flex h-full w-full flex-col items-center justify-center gap-3 bg-app text-sm text-t3">
       <p className="max-w-md truncate px-4">{describeTarget(target)}</p>
-      {error !== undefined && <p className="max-w-md px-4 text-xs text-red-400">{error}</p>}
+      {error !== undefined && <p className="max-w-md px-4 text-xs text-err">{error}</p>}
       <div className="flex gap-2">
         {target !== undefined && (
           <button
             onClick={() => void relaunch()}
-            className="rounded border border-zinc-600 px-3 py-1 text-zinc-200 hover:border-zinc-400"
+            className="rounded border border-b6 px-3 py-1 text-t1 hover:border-acb"
           >
             {verbOf(target)}
           </button>
         )}
         <button
           onClick={() => props.api.close()}
-          className="rounded border border-zinc-800 px-3 py-1 text-zinc-500 hover:text-zinc-300"
+          className="rounded border border-b1 px-3 py-1 text-t4 hover:text-t2"
         >
           remove
         </button>
@@ -157,7 +157,7 @@ function GroupActions(props: IDockviewHeaderActionsProps) {
     <div className="flex h-full items-center px-1">
       <button
         onClick={() => void bridge.popOut(ptyId)}
-        className="px-1 text-zinc-500 hover:text-zinc-200"
+        className="px-1 text-t4 hover:text-t1"
         title="open in its own window"
       >
         ⧉
@@ -317,12 +317,12 @@ export function TerminalDock() {
 
   return (
     <div
-      className={`flex shrink-0 flex-col overflow-hidden ${open ? 'border-t border-zinc-800' : ''}`}
+      className={`flex shrink-0 flex-col overflow-hidden ${open ? 'border-t border-b1' : ''}`}
       style={{ height: open ? height : 0 }}
     >
       <div
         onMouseDown={onDividerDown}
-        className="h-1 shrink-0 cursor-row-resize bg-zinc-900 hover:bg-zinc-700"
+        className="h-1 shrink-0 cursor-row-resize bg-s3 hover:bg-b4"
         title="drag to resize"
       />
       <div className="min-h-0 flex-1">
@@ -341,7 +341,7 @@ export function TerminalDock() {
 /** A pop-out window's whole content: one terminal, edge to edge. */
 export function PopoutTerminal({ ptyId }: { ptyId: string }) {
   return (
-    <div className="flex h-full flex-col bg-[#0a0a0b]">
+    <div className="flex h-full flex-col bg-app">
       <div className="min-h-0 flex-1 p-1">
         <TerminalView ptyId={ptyId} visible />
       </div>

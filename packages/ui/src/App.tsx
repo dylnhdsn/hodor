@@ -17,6 +17,7 @@ import {
   type TranscriptEntry,
   type View,
 } from './data.js'
+import { Appearance } from './Appearance.js'
 import { CloudSessionList } from './CloudSessions.js'
 import { TerminalDock } from './TerminalDock.js'
 import { UpdatePill } from './UpdatePill.js'
@@ -27,12 +28,13 @@ type Filter =
   | { kind: 'project'; id: string }
   | { kind: 'archived' }
   | { kind: 'hidden' }
+  | { kind: 'appearance' }
 
 export function App() {
   const { snapshot, connected } = useSnapshot()
   if (snapshot === undefined) {
     return (
-      <div className="flex h-full items-center justify-center bg-zinc-950 text-zinc-500">
+      <div className="flex h-full items-center justify-center bg-app text-t4">
         connecting to hodor…
       </div>
     )
@@ -66,6 +68,7 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
         list = view.hidden
         break
       case 'archived':
+      case 'appearance':
         list = []
         break
     }
@@ -132,9 +135,9 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
   }
 
   return (
-    <div className="flex h-full flex-col bg-zinc-950 font-sans text-sm text-zinc-200">
+    <div className="flex h-full flex-col bg-app font-ui text-sm text-t1">
       {(snapshot.organize?.errors.length ?? 0) > 0 && (
-        <div className="border-b border-amber-900/50 bg-amber-950/40 px-4 py-1 text-xs text-amber-300">
+        <div className="border-b border-ask/45 bg-ask/10 px-4 py-1 text-xs text-ask">
           organize logic: {snapshot.organize!.errors[0]}
           {snapshot.organize!.errors.length > 1
             ? ` (+${snapshot.organize!.errors.length - 1} more)`
@@ -142,11 +145,11 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
         </div>
       )}
       <div className="flex min-h-0 flex-1">
-      <aside className="flex w-64 shrink-0 flex-col border-r border-zinc-800">
+      <aside className="flex w-64 shrink-0 flex-col border-r border-b1">
         <div className="flex items-center gap-2 px-4 py-3">
-          <span className="text-base font-semibold tracking-tight text-zinc-50">hodor</span>
+          <span className="text-base font-semibold tracking-tight text-fg">hodor</span>
           <span
-            className={`h-2 w-2 rounded-full ${connected ? 'bg-emerald-400' : 'bg-zinc-600'}`}
+            className={`h-2 w-2 rounded-full ${connected ? 'bg-run' : 'bg-b6'}`}
             title={connected ? 'live' : 'reconnecting'}
           />
         </div>
@@ -163,7 +166,7 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
             projects
             <button
               onClick={() => void createProject()}
-              className="rounded px-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
+              className="rounded px-1.5 text-t3 hover:bg-s5 hover:text-fg"
               title="New project"
             >
               +
@@ -182,18 +185,18 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
             />
           ))}
           {view.rail.length === 0 && (
-            <p className="px-3 py-1 text-xs text-zinc-600">none yet — press +</p>
+            <p className="px-3 py-1 text-xs text-t5">none yet — press +</p>
           )}
 
         </nav>
 
         <UpdatePill />
-        <div className="border-t border-zinc-800 text-xs">
+        <div className="border-t border-b1 text-xs">
           {view.archivedProjects.length > 0 && (
             <button
               onClick={() => setFilter({ kind: 'archived' })}
               className={`block w-full px-4 py-2 text-left ${
-                filter.kind === 'archived' ? 'text-amber-300' : 'text-zinc-500 hover:text-zinc-300'
+                filter.kind === 'archived' ? 'text-ask' : 'text-t4 hover:text-t2'
               }`}
             >
               {view.archivedProjects.length} archived project
@@ -204,13 +207,21 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
             onClick={() => setFilter({ kind: 'hidden' })}
             className={`block w-full px-4 pb-2 text-left ${
               view.archivedProjects.length === 0 ? 'pt-2' : ''
-            } ${filter.kind === 'hidden' ? 'text-amber-300' : 'text-zinc-500 hover:text-zinc-300'}`}
+            } ${filter.kind === 'hidden' ? 'text-ask' : 'text-t4 hover:text-t2'}`}
           >
             {view.hidden.length} hidden sessions
           </button>
+          <button
+            onClick={() => setFilter({ kind: 'appearance' })}
+            className={`block w-full px-4 pb-2 text-left ${
+              filter.kind === 'appearance' ? 'text-ach' : 'text-t4 hover:text-t2'
+            }`}
+          >
+            ⚙ appearance
+          </button>
           {snapshot.hodorVersion !== undefined && (
             <p
-              className="px-4 pb-2 font-mono text-[10px] text-zinc-700"
+              className="px-4 pb-2 font-mono text-[10px] text-t6"
               title="the build serving this UI"
             >
               {snapshot.hodorVersion}
@@ -220,19 +231,21 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
       </aside>
 
       <main className="flex min-w-0 flex-1 flex-col">
-        {filter.kind === 'archived' ? (
+        {filter.kind === 'appearance' ? (
+          <Appearance />
+        ) : filter.kind === 'archived' ? (
           <ArchivedList view={view} mutateProject={mutateProject} />
         ) : (
           <>
-            <header className="border-b border-zinc-800 px-4 py-2">
+            <header className="border-b border-b1 px-4 py-2">
               <div className="flex items-center gap-3">
                 <input
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   placeholder="search titles, prompts, paths, ids… (has:agents, is:fork)"
-                  className="w-full max-w-md rounded border border-zinc-800 bg-zinc-900 px-3 py-1.5 text-sm outline-none placeholder:text-zinc-600 focus:border-zinc-600"
+                  className="w-full max-w-md rounded border border-b1 bg-s3 px-3 py-1.5 text-sm outline-none placeholder:text-t5 focus:border-b6"
                 />
-                <span className="ml-auto whitespace-nowrap text-xs text-zinc-500">
+                <span className="ml-auto whitespace-nowrap text-xs text-t4">
                   {sessions.length + cloudShown.length} session
                   {sessions.length + cloudShown.length === 1 ? '' : 's'}
                 </span>
@@ -244,8 +257,8 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
                     }}
                     className={`whitespace-nowrap rounded border px-2 py-1 text-xs ${
                       settingsOpen
-                        ? 'border-zinc-500 text-zinc-100'
-                        : 'border-zinc-700 text-zinc-400 hover:text-zinc-100'
+                        ? 'border-acb text-fg'
+                        : 'border-b4 text-t3 hover:text-fg'
                     }`}
                   >
                     settings
@@ -280,7 +293,7 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
                   }}
                 />
               ) : null}
-              <ul className="min-w-0 flex-1 divide-y divide-zinc-900">
+              <ul className="min-w-0 flex-1 divide-y divide-b2">
                 {sessions.map((s) => (
                   <SessionRow
                     key={s.id}
@@ -302,7 +315,7 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
                   />
                 ))}
                 {sessions.length === 0 && cloudShown.length === 0 && (
-                  <li className="px-4 py-8 text-center text-zinc-600">nothing here</li>
+                  <li className="px-4 py-8 text-center text-t5">nothing here</li>
                 )}
               </ul>
               </div>
@@ -336,7 +349,7 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
 
 function RailHeading(props: { children: React.ReactNode }) {
   return (
-    <div className="mt-4 mb-1 flex items-center justify-between px-3 text-[11px] font-medium tracking-wider text-zinc-500 uppercase">
+    <div className="mt-4 mb-1 flex items-center justify-between px-3 text-[11px] font-medium tracking-wider text-t4 uppercase">
       {props.children}
     </div>
   )
@@ -347,11 +360,11 @@ function RailItem(props: { label: string; count: number; active: boolean; onClic
     <button
       onClick={props.onClick}
       className={`flex w-full items-center justify-between rounded px-3 py-1.5 text-left ${
-        props.active ? 'bg-zinc-800 text-zinc-50' : 'text-zinc-200 hover:bg-zinc-900'
+        props.active ? 'bg-s5 text-fg' : 'text-t1 hover:bg-s3'
       }`}
     >
       <span className="truncate">{props.label}</span>
-      <span className="ml-2 shrink-0 text-xs text-zinc-500">{props.count}</span>
+      <span className="ml-2 shrink-0 text-xs text-t4">{props.count}</span>
     </button>
   )
 }
@@ -369,22 +382,22 @@ function ProjectStats(props: {
   const cost = project.sessions.reduce((sum, s) => sum + (s.costUsd ?? 0), 0)
   const roots = cwdsOf(project.sessions)
   return (
-    <div className="mt-1.5 flex items-center gap-3 text-xs text-zinc-500">
-      <span className="font-medium text-zinc-300">{project.name}</span>
+    <div className="mt-1.5 flex items-center gap-3 text-xs text-t4">
+      <span className="font-medium text-t2">{project.name}</span>
       {newSession !== undefined && (
         <button
           onClick={() => void launchOrCopy({ kind: 'new', ...newSession })}
-          className="text-emerald-500 hover:text-emerald-300"
+          className="text-run hover:text-run"
           title={`open a terminal running claude in ${newSession.root}`}
         >
           + new session
         </button>
       )}
-      {active > 0 && <span className="text-emerald-400">{active} active</span>}
+      {active > 0 && <span className="text-run">{active} active</span>}
       {latest !== '' && <span>last {formatAge(nowMs, latest)}</span>}
-      {cost >= 0.005 && <span className="text-zinc-400">~{formatUsd(cost)}</span>}
+      {cost >= 0.005 && <span className="text-t3">~{formatUsd(cost)}</span>}
       {roots.length > 0 && (
-        <span className="truncate text-zinc-600">
+        <span className="truncate text-t5">
           {roots[0]}
           {roots.length > 1 ? ` +${roots.length - 1} more` : ''}
         </span>
@@ -421,9 +434,9 @@ function BulkBar(props: {
   }
 
   return (
-    <div className="flex items-center gap-3 border-b border-zinc-800 bg-zinc-900/60 px-4 py-1.5 text-xs">
-      <span className="text-zinc-300">{ids.length} selected</span>
-      <button onClick={() => void archiveAll()} className="text-zinc-400 hover:text-zinc-100">
+    <div className="flex items-center gap-3 border-b border-b1 bg-s3/60 px-4 py-1.5 text-xs">
+      <span className="text-t2">{ids.length} selected</span>
+      <button onClick={() => void archiveAll()} className="text-t3 hover:text-fg">
         archive
       </button>
       <select
@@ -432,7 +445,7 @@ function BulkBar(props: {
           void addTo(e.target.value)
           e.target.value = ''
         }}
-        className="rounded border border-zinc-700 bg-zinc-900 px-1 py-0.5 text-zinc-400"
+        className="rounded border border-b4 bg-s3 px-1 py-0.5 text-t3"
       >
         <option value="">add to…</option>
         {rail.map((p) => (
@@ -442,11 +455,11 @@ function BulkBar(props: {
         ))}
       </select>
       {currentProject !== undefined && (
-        <button onClick={() => void excludeHere()} className="text-zinc-400 hover:text-zinc-100">
+        <button onClick={() => void excludeHere()} className="text-t3 hover:text-fg">
           exclude from {currentProject.name}
         </button>
       )}
-      <button onClick={clear} className="ml-auto text-zinc-500 hover:text-zinc-300">
+      <button onClick={clear} className="ml-auto text-t4 hover:text-t2">
         clear
       </button>
     </div>
@@ -459,19 +472,19 @@ function ArchivedList(props: {
 }) {
   const { view, mutateProject } = props
   return (
-    <ul className="flex-1 divide-y divide-zinc-900 overflow-y-auto">
+    <ul className="flex-1 divide-y divide-b2 overflow-y-auto">
       {view.archivedProjects.map((p) => {
         const count = (view.sessionsOfArchived.get(p.id) ?? []).length
         return (
           <li key={p.id} className="flex items-center gap-3 px-4 py-2.5">
-            <span className="font-medium text-zinc-300">{p.name}</span>
-            <span className="text-xs text-zinc-500">
+            <span className="font-medium text-t2">{p.name}</span>
+            <span className="text-xs text-t4">
               {count} session{count === 1 ? '' : 's'} hidden with it
             </span>
             <span className="ml-auto flex gap-3 text-xs">
               <button
                 onClick={() => void mutateProject({ op: 'archive-project', id: p.id, archived: false })}
-                className="text-zinc-400 hover:text-zinc-100"
+                className="text-t3 hover:text-fg"
               >
                 unarchive
               </button>
@@ -482,7 +495,7 @@ function ArchivedList(props: {
                       void mutateProject({ op: 'delete-project', id: p.id })
                     }
                   }}
-                  className="text-zinc-500 hover:text-zinc-300"
+                  className="text-t4 hover:text-t2"
                 >
                   revert to auto
                 </button>
@@ -492,7 +505,7 @@ function ArchivedList(props: {
         )
       })}
       {view.archivedProjects.length === 0 && (
-        <li className="px-4 py-8 text-center text-zinc-600">no archived projects</li>
+        <li className="px-4 py-8 text-center text-t5">no archived projects</li>
       )}
     </ul>
   )
@@ -538,7 +551,7 @@ function SessionRow(props: {
   return (
     <li
       onClick={open}
-      className={`group cursor-pointer px-4 py-2 ${inspecting ? 'bg-zinc-900' : 'hover:bg-zinc-900/60'}`}
+      className={`group cursor-pointer px-4 py-2 ${inspecting ? 'bg-s3' : 'hover:bg-s3/60'}`}
     >
       <div className="flex items-center gap-2">
         <input
@@ -546,16 +559,16 @@ function SessionRow(props: {
           checked={checked}
           onChange={toggle}
           onClick={stop}
-          className={`h-3 w-3 shrink-0 accent-indigo-500 ${
+          className={`h-3 w-3 shrink-0 accent-ac ${
             anySelected ? '' : 'opacity-0 transition group-hover:opacity-100'
           }`}
         />
-        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${active ? 'bg-emerald-400' : 'bg-zinc-700'}`} />
-        <span className="truncate font-medium text-zinc-100">{titleOf(s)}</span>
+        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${active ? 'bg-run' : 'bg-b4'}`} />
+        <span className="truncate font-medium text-fg">{titleOf(s)}</span>
         {claims.map((id) => (
           <span
             key={id}
-            className="shrink-0 rounded-full bg-indigo-950 px-2 py-0.5 text-[11px] text-indigo-300"
+            className="shrink-0 rounded-full bg-ac/15 px-2 py-0.5 text-[11px] text-acb"
           >
             {customNames.get(id) ?? id}
           </span>
@@ -570,7 +583,7 @@ function SessionRow(props: {
               void addTo(e.target.value)
               e.target.value = ''
             }}
-            className="rounded border border-zinc-700 bg-zinc-900 px-1 py-0.5 text-[11px] text-zinc-400"
+            className="rounded border border-b4 bg-s3 px-1 py-0.5 text-[11px] text-t3"
           >
             <option value="">add to…</option>
             {rail
@@ -583,54 +596,54 @@ function SessionRow(props: {
           </select>
           <button
             onClick={() => void launchOrCopy({ kind: 'resume', sessionId: s.id })}
-            className="text-[11px] text-emerald-500 hover:text-emerald-300"
+            className="text-[11px] text-run hover:text-run"
             title="open a terminal resuming this session"
           >
             resume
           </button>
           <button
             onClick={() => void launchOrCopy({ kind: 'fork', sessionId: s.id })}
-            className="text-[11px] text-zinc-500 hover:text-zinc-200"
+            className="text-[11px] text-t4 hover:text-t1"
             title="resume as a new forked session"
           >
             fork
           </button>
-          <button onClick={() => void rename()} className="text-[11px] text-zinc-500 hover:text-zinc-200">
+          <button onClick={() => void rename()} className="text-[11px] text-t4 hover:text-t1">
             rename
           </button>
           {s.hiddenBy === 'archived' ? (
-            <button onClick={() => void setArchived(false)} className="text-[11px] text-zinc-500 hover:text-zinc-200">
+            <button onClick={() => void setArchived(false)} className="text-[11px] text-t4 hover:text-t1">
               unarchive
             </button>
           ) : (
-            <button onClick={() => void setArchived(true)} className="text-[11px] text-zinc-500 hover:text-zinc-200">
+            <button onClick={() => void setArchived(true)} className="text-[11px] text-t4 hover:text-t1">
               archive
             </button>
           )}
         </span>
       </div>
-      <div className="mt-0.5 flex items-center gap-2 pl-7 text-xs text-zinc-500">
+      <div className="mt-0.5 flex items-center gap-2 pl-7 text-xs text-t4">
         <span className="font-mono">{s.id.slice(0, 8)}</span>
         <span>{formatAge(nowMs, s.lastActivityAt)}</span>
         {s.costUsd !== undefined && s.costUsd >= 0.01 && (
-          <span className="text-zinc-400" title="estimated cost">
+          <span className="text-t3" title="estimated cost">
             {formatUsd(s.costUsd)}
           </span>
         )}
         {s.counts.sidechains > 0 && (
-          <span className="rounded bg-zinc-800 px-1.5 text-[11px] text-zinc-400" title="subagent runs">
+          <span className="rounded bg-s5 px-1.5 text-[11px] text-t3" title="subagent runs">
             ⑂ {s.counts.sidechains}
           </span>
         )}
         {s.forkedFrom !== undefined && (
-          <span className="rounded bg-zinc-800 px-1.5 text-[11px] text-zinc-400" title="forked session">
+          <span className="rounded bg-s5 px-1.5 text-[11px] text-t3" title="forked session">
             fork
           </span>
         )}
-        {derived !== undefined && <span className="truncate text-zinc-600">{derived.name}</span>}
+        {derived !== undefined && <span className="truncate text-t5">{derived.name}</span>}
         <span className="truncate">{s.cwd}</span>
         {showHiddenBy && s.hiddenBy !== undefined && (
-          <span className="rounded bg-amber-950 px-1.5 text-[11px] text-amber-300">{s.hiddenBy}</span>
+          <span className="rounded bg-ask/15 px-1.5 text-[11px] text-ask">{s.hiddenBy}</span>
         )}
       </div>
     </li>
@@ -680,27 +693,27 @@ function DetailPane(props: {
   }
 
   return (
-    <div className="w-96 shrink-0 overflow-y-auto border-l border-zinc-800 px-4 py-3 text-xs">
+    <div className="w-96 shrink-0 overflow-y-auto border-l border-b1 px-4 py-3 text-xs">
       <div className="mb-1 flex items-start gap-2">
-        <h2 className="min-w-0 flex-1 text-sm font-semibold break-words text-zinc-100">
+        <h2 className="min-w-0 flex-1 text-sm font-semibold break-words text-fg">
           {titleOf(s)}
         </h2>
-        <button onClick={close} className="shrink-0 px-1 text-zinc-500 hover:text-zinc-200">
+        <button onClick={close} className="shrink-0 px-1 text-t4 hover:text-t1">
           ✕
         </button>
       </div>
-      <div className="mb-3 flex flex-wrap items-center gap-2 text-zinc-500">
+      <div className="mb-3 flex flex-wrap items-center gap-2 text-t4">
         <span className="font-mono">{s.id.slice(0, 8)}</span>
         <button
           onClick={() => void launchOrCopy({ kind: 'resume', sessionId: s.id })}
-          className="text-emerald-500 hover:text-emerald-300"
+          className="text-run hover:text-run"
           title="open a terminal resuming this session"
         >
           resume
         </button>
         <button
           onClick={() => void launchOrCopy({ kind: 'fork', sessionId: s.id })}
-          className="text-zinc-500 hover:text-zinc-200"
+          className="text-t4 hover:text-t1"
           title="resume as a new forked session"
         >
           fork
@@ -711,18 +724,18 @@ function DetailPane(props: {
               .writeText(`cd ${JSON.stringify(s.cwds[0] ?? s.cwd ?? '.')} && claude --resume ${s.id}`)
               .catch(() => {})
           }
-          className="text-zinc-600 hover:text-zinc-300"
+          className="text-t5 hover:text-t2"
           title="copy the resume command"
         >
           copy cmd
         </button>
         <button
           onClick={() => void navigator.clipboard.writeText(s.id).catch(() => {})}
-          className="text-zinc-600 hover:text-zinc-300"
+          className="text-t5 hover:text-t2"
         >
           copy id
         </button>
-        <button onClick={() => void rename()} className="text-zinc-600 hover:text-zinc-300">
+        <button onClick={() => void rename()} className="text-t5 hover:text-t2">
           rename
         </button>
         {s.hiddenBy === 'archived' ? (
@@ -730,7 +743,7 @@ function DetailPane(props: {
             onClick={() =>
               void postMutation('/api/session', { op: 'archive-session', sessionId: s.id, archived: false })
             }
-            className="text-zinc-600 hover:text-zinc-300"
+            className="text-t5 hover:text-t2"
           >
             unarchive
           </button>
@@ -739,7 +752,7 @@ function DetailPane(props: {
             onClick={() =>
               void postMutation('/api/session', { op: 'archive-session', sessionId: s.id, archived: true })
             }
-            className="text-zinc-600 hover:text-zinc-300"
+            className="text-t5 hover:text-t2"
           >
             archive
           </button>
@@ -747,7 +760,7 @@ function DetailPane(props: {
       </div>
 
       {s.hiddenBy !== undefined && (
-        <p className="mb-3 rounded bg-amber-950/60 px-2 py-1 text-amber-300">
+        <p className="mb-3 rounded bg-ask/10 px-2 py-1 text-ask">
           hidden — {s.hiddenBy}
         </p>
       )}
@@ -801,8 +814,8 @@ function DetailPane(props: {
         <Fact label="cwd" value={s.cwd ?? '-'} mono />
         {s.apiErrors !== undefined && (
           <div className="flex justify-between gap-3 py-0.5">
-            <span className="shrink-0 text-zinc-600">api errors</span>
-            <span className="text-amber-300">{s.apiErrors}</span>
+            <span className="shrink-0 text-t5">api errors</span>
+            <span className="text-ask">{s.apiErrors}</span>
           </div>
         )}
       </Section>
@@ -813,16 +826,16 @@ function DetailPane(props: {
         <Section title="hooks">
           {Object.entries(s.hooks).map(([command, h]) => (
             <div key={command} className="flex items-center justify-between gap-2 py-0.5">
-              <span className="min-w-0 truncate font-mono text-zinc-400" title={command}>
+              <span className="min-w-0 truncate font-mono text-t3" title={command}>
                 {command.split('/').pop()}
               </span>
-              <span className="shrink-0 text-zinc-600">
+              <span className="shrink-0 text-t5">
                 {h.runs}× · {h.totalMs >= 1000 ? `${(h.totalMs / 1000).toFixed(1)}s` : `${h.totalMs}ms`}
               </span>
             </div>
           ))}
           {(s.hookErrors !== undefined || s.hookBlocks !== undefined) && (
-            <p className="mt-1 text-amber-400">
+            <p className="mt-1 text-ask">
               {s.hookErrors !== undefined ? `${s.hookErrors} error${s.hookErrors === 1 ? '' : 's'}` : ''}
               {s.hookErrors !== undefined && s.hookBlocks !== undefined ? ' · ' : ''}
               {s.hookBlocks !== undefined ? `blocked continuation ${s.hookBlocks}×` : ''}
@@ -835,8 +848,8 @@ function DetailPane(props: {
         <Section title="usage">
           {Object.entries(s.usage).map(([model, u]) => (
             <div key={model} className="py-0.5">
-              <div className="text-zinc-300">{model.replace(/^claude-/, '')}</div>
-              <div className="pl-2 text-zinc-500">
+              <div className="text-t2">{model.replace(/^claude-/, '')}</div>
+              <div className="pl-2 text-t4">
                 in {formatTokens(u.input)} · out {formatTokens(u.output)}
                 {u.thinking > 0 && <> (think {formatTokens(u.thinking)})</>} · cache read{' '}
                 {formatTokens(u.cacheRead)} · cache write {formatTokens(u.cacheWrite5m + u.cacheWrite1h)}
@@ -844,10 +857,10 @@ function DetailPane(props: {
             </div>
           ))}
           {s.costUsd !== undefined && (
-            <div className="mt-1 border-t border-zinc-800 pt-1 text-zinc-300">
+            <div className="mt-1 border-t border-b1 pt-1 text-t2">
               est. cost {formatUsd(s.costUsd)}
               {(s.costUnpriced ?? []).length > 0 && (
-                <span className="text-amber-400"> + unpriced: {s.costUnpriced!.join(', ')}</span>
+                <span className="text-ask"> + unpriced: {s.costUnpriced!.join(', ')}</span>
               )}
             </div>
           )}
@@ -860,18 +873,18 @@ function DetailPane(props: {
             <div className="py-0.5">
               forked from{' '}
               {ancestor !== undefined ? (
-                <button onClick={() => jump(ancestor.id)} className="text-indigo-300 hover:underline">
+                <button onClick={() => jump(ancestor.id)} className="text-acb hover:underline">
                   {titleOf(ancestor)}
                 </button>
               ) : (
-                <span className="font-mono text-zinc-500">{s.forkedFrom.slice(0, 8)} (gone)</span>
+                <span className="font-mono text-t4">{s.forkedFrom.slice(0, 8)} (gone)</span>
               )}
             </div>
           )}
           {forks.map((fork) => (
             <div key={fork.id} className="py-0.5">
               fork:{' '}
-              <button onClick={() => jump(fork.id)} className="text-indigo-300 hover:underline">
+              <button onClick={() => jump(fork.id)} className="text-acb hover:underline">
                 {titleOf(fork)}
               </button>
             </div>
@@ -883,17 +896,17 @@ function DetailPane(props: {
         <Section title={`subagents (${sidechains.length})`}>
           {sidechains.map((t) => (
             <div key={t.id} className="py-0.5">
-              <div className="flex items-center justify-between text-zinc-400">
+              <div className="flex items-center justify-between text-t3">
                 <span>
                   ⑂ {t.agentType ?? 'agent'} · {t.messageCount} message{t.messageCount === 1 ? '' : 's'}
                   {t.costUsd !== undefined && t.costUsd >= 0.005 && (
-                    <span className="text-zinc-500"> · {formatUsd(t.costUsd)}</span>
+                    <span className="text-t4"> · {formatUsd(t.costUsd)}</span>
                   )}
                 </span>
-                <span className="text-zinc-600">{formatAge(nowMs, t.lastTs)}</span>
+                <span className="text-t5">{formatAge(nowMs, t.lastTs)}</span>
               </div>
               {t.description !== undefined && (
-                <div className="truncate pl-4 text-zinc-600">{t.description}</div>
+                <div className="truncate pl-4 text-t5">{t.description}</div>
               )}
             </div>
           ))}
@@ -903,9 +916,9 @@ function DetailPane(props: {
       <Section title="projects">
         {placements.map((p) => (
           <div key={p.customProjectId} className="py-0.5">
-            <span className="text-zinc-300">{projectName(p.customProjectId)}</span>
-            {isArchivedProject(p.customProjectId) && <span className="text-amber-400"> (archived)</span>}
-            <span className="text-zinc-600">
+            <span className="text-t2">{projectName(p.customProjectId)}</span>
+            {isArchivedProject(p.customProjectId) && <span className="text-ask"> (archived)</span>}
+            <span className="text-t5">
               {' — '}
               {p.via === 'include'
                 ? 'pinned by you'
@@ -916,9 +929,9 @@ function DetailPane(props: {
           </div>
         ))}
         {derived !== undefined && (
-          <div className="py-0.5 text-zinc-500">
+          <div className="py-0.5 text-t4">
             auto: {derived.name}
-            <span className="text-zinc-600">
+            <span className="text-t5">
               {' — '}
               {derived.identity.kind === 'git-remote'
                 ? `remote ${derived.identity.url}`
@@ -927,26 +940,26 @@ function DetailPane(props: {
           </div>
         )}
         {placements.length === 0 && derived === undefined && (
-          <p className="text-zinc-600">not grouped anywhere</p>
+          <p className="text-t5">not grouped anywhere</p>
         )}
       </Section>
 
       <Section title="conversation">
-        {tail === undefined && <p className="text-zinc-600">loading…</p>}
+        {tail === undefined && <p className="text-t5">loading…</p>}
         {tail !== undefined && tail.length === 0 && (
-          <p className="text-zinc-600">nothing readable in the transcript</p>
+          <p className="text-t5">nothing readable in the transcript</p>
         )}
         {tail?.map((entry, i) => (
           <div key={i} className={`py-1 ${entry.isSidechain ? 'opacity-60' : ''}`}>
             <span
               className={`mr-1.5 font-medium ${
-                entry.type === 'user' ? 'text-indigo-300' : 'text-emerald-300'
+                entry.type === 'user' ? 'text-acb' : 'text-run'
               }`}
             >
               {entry.isSidechain ? '⑂ ' : ''}
               {entry.type === 'user' ? 'you' : 'claude'}
             </span>
-            <span className="text-zinc-400">{entry.text}</span>
+            <span className="text-t3">{entry.text}</span>
           </div>
         ))}
       </Section>
@@ -963,17 +976,17 @@ function ToolsSection(props: { toolCounts: Record<string, number> }) {
     <Section title="tools">
       {shown.map(([name, n]) => (
         <div key={name} className="flex items-center gap-2 py-0.5">
-          <span className="w-36 shrink-0 truncate text-zinc-400">{name}</span>
-          <div className="h-1.5 min-w-0 flex-1 rounded bg-zinc-900">
+          <span className="w-36 shrink-0 truncate text-t3">{name}</span>
+          <div className="h-1.5 min-w-0 flex-1 rounded bg-s3">
             <div
-              className="h-1.5 rounded bg-indigo-900"
+              className="h-1.5 rounded bg-ac/40"
               style={{ width: `${Math.max(3, Math.round((n / max) * 100))}%` }}
             />
           </div>
-          <span className="w-10 shrink-0 text-right text-zinc-500">{n}</span>
+          <span className="w-10 shrink-0 text-right text-t4">{n}</span>
         </div>
       ))}
-      {rest > 0 && <p className="text-zinc-600">+{rest} more</p>}
+      {rest > 0 && <p className="text-t5">+{rest} more</p>}
     </Section>
   )
 }
@@ -981,8 +994,8 @@ function ToolsSection(props: { toolCounts: Record<string, number> }) {
 function Fact(props: { label: string; value: string; mono?: boolean }) {
   return (
     <div className="flex justify-between gap-3 py-0.5">
-      <span className="shrink-0 text-zinc-600">{props.label}</span>
-      <span className={`truncate text-zinc-300 ${props.mono === true ? 'font-mono' : ''}`}>
+      <span className="shrink-0 text-t5">{props.label}</span>
+      <span className={`truncate text-t2 ${props.mono === true ? 'font-mono' : ''}`}>
         {props.value}
       </span>
     </div>
@@ -1035,15 +1048,15 @@ function SettingsPanel(props: {
   const [name, setName] = useState(project.name)
 
   return (
-    <div className="w-80 shrink-0 overflow-y-auto border-l border-zinc-800 px-4 py-3 text-xs">
-      <p className="mb-3 text-zinc-500">{statusOf(project)}</p>
+    <div className="w-80 shrink-0 overflow-y-auto border-l border-b1 px-4 py-3 text-xs">
+      <p className="mb-3 text-t4">{statusOf(project)}</p>
 
       <Section title="name">
         <div className="flex gap-2">
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            className="w-full rounded border border-zinc-800 bg-zinc-900 px-2 py-1 outline-none focus:border-zinc-600"
+            className="w-full rounded border border-b1 bg-s3 px-2 py-1 outline-none focus:border-b6"
           />
           <button
             onClick={() => {
@@ -1051,7 +1064,7 @@ function SettingsPanel(props: {
                 void mutateProject({ op: 'rename-project', id: project.id, name: name.trim() })
               }
             }}
-            className="rounded border border-zinc-700 px-2 text-zinc-400 hover:text-zinc-100"
+            className="rounded border border-b4 px-2 text-t3 hover:text-fg"
           >
             save
           </button>
@@ -1068,10 +1081,10 @@ function SettingsPanel(props: {
             />
           ))}
         {custom !== undefined && custom.matchers.length === 0 && (
-          <p className="text-zinc-600">none — only pinned sessions</p>
+          <p className="text-t5">none — only pinned sessions</p>
         )}
         {project.kind === 'auto' && project.auto !== undefined && (
-          <p className="text-zinc-600">
+          <p className="text-t5">
             grouped by{' '}
             {project.auto.identity.kind === 'git-remote'
               ? `remote ${project.auto.identity.url}`
@@ -1099,12 +1112,12 @@ function SettingsPanel(props: {
         <Section title="pinned sessions">
           {custom.include.map((id) => (
             <div key={id} className="flex items-center justify-between py-0.5">
-              <span className="font-mono text-zinc-400">{id.slice(0, 8)}</span>
+              <span className="font-mono text-t3">{id.slice(0, 8)}</span>
               <button
                 onClick={() =>
                   void mutateProject({ op: 'remove-include', id: project.id, sessionIds: [id] })
                 }
-                className="text-zinc-600 hover:text-zinc-300"
+                className="text-t5 hover:text-t2"
               >
                 unpin
               </button>
@@ -1117,12 +1130,12 @@ function SettingsPanel(props: {
         <Section title="excluded sessions">
           {custom.exclude.map((id) => (
             <div key={id} className="flex items-center justify-between py-0.5">
-              <span className="font-mono text-zinc-400">{id.slice(0, 8)}</span>
+              <span className="font-mono text-t3">{id.slice(0, 8)}</span>
               <button
                 onClick={() =>
                   void mutateProject({ op: 'remove-exclude', id: project.id, sessionIds: [id] })
                 }
-                className="text-zinc-600 hover:text-zinc-300"
+                className="text-t5 hover:text-t2"
               >
                 allow back
               </button>
@@ -1137,7 +1150,7 @@ function SettingsPanel(props: {
         <div className="flex flex-wrap gap-3">
           <button
             onClick={() => void mutateProject({ op: 'archive-project', id: project.id, archived: true })}
-            className="text-zinc-400 hover:text-amber-300"
+            className="text-t3 hover:text-ask"
           >
             archive project
           </button>
@@ -1148,13 +1161,13 @@ function SettingsPanel(props: {
                   void mutateProject({ op: 'delete-project', id: project.id })
                 }
               }}
-              className="text-zinc-500 hover:text-zinc-300"
+              className="text-t4 hover:text-t2"
             >
               revert to auto
             </button>
           )}
         </div>
-        <p className="mt-1 text-zinc-600">
+        <p className="mt-1 text-t5">
           Archiving hides its sessions unless another project claims them. Nothing is deleted.
         </p>
       </Section>
@@ -1165,7 +1178,7 @@ function SettingsPanel(props: {
 function Section(props: { title: string; children: React.ReactNode }) {
   return (
     <div className="mb-4">
-      <div className="mb-1 text-[11px] font-medium tracking-wider text-zinc-500 uppercase">
+      <div className="mb-1 text-[11px] font-medium tracking-wider text-t4 uppercase">
         {props.title}
       </div>
       {props.children}
@@ -1176,11 +1189,11 @@ function Section(props: { title: string; children: React.ReactNode }) {
 function MatcherRow(props: { matcher: Matcher; onRemove: () => void }) {
   return (
     <div className="flex items-center justify-between py-0.5">
-      <span className="truncate text-zinc-300">
-        <span className="text-zinc-500">{props.matcher.kind}=</span>
+      <span className="truncate text-t2">
+        <span className="text-t4">{props.matcher.kind}=</span>
         {matcherValue(props.matcher)}
       </span>
-      <button onClick={props.onRemove} className="ml-2 shrink-0 text-zinc-600 hover:text-zinc-300">
+      <button onClick={props.onRemove} className="ml-2 shrink-0 text-t5 hover:text-t2">
         remove
       </button>
     </div>
@@ -1237,7 +1250,7 @@ function AddMatcher(props: {
             setKind(e.target.value as typeof kind)
             setPreview(undefined)
           }}
-          className="rounded border border-zinc-700 bg-zinc-900 px-1 py-1 text-zinc-400"
+          className="rounded border border-b4 bg-s3 px-1 py-1 text-t3"
         >
           <option value="remote">remote</option>
           <option value="root">root</option>
@@ -1252,26 +1265,26 @@ function AddMatcher(props: {
             setPreview(undefined)
           }}
           placeholder={kind === 'remote' ? 'github.com/org/repo' : '/path'}
-          className="w-full rounded border border-zinc-800 bg-zinc-900 px-2 py-1 outline-none focus:border-zinc-600"
+          className="w-full rounded border border-b1 bg-s3 px-2 py-1 outline-none focus:border-b6"
         />
       </div>
       <div className="mt-1 flex items-center gap-3">
         <button
           onClick={() => void runPreview()}
           disabled={value.trim().length === 0}
-          className="text-zinc-400 hover:text-zinc-100 disabled:text-zinc-700"
+          className="text-t3 hover:text-fg disabled:text-t6"
         >
           preview
         </button>
         <button
           onClick={() => void save()}
           disabled={value.trim().length === 0}
-          className="text-zinc-400 hover:text-emerald-300 disabled:text-zinc-700"
+          className="text-t3 hover:text-run disabled:text-t6"
         >
           add matcher
         </button>
         {preview !== undefined && (
-          <span className={preview.length > 0 ? 'text-emerald-400' : 'text-amber-400'}>
+          <span className={preview.length > 0 ? 'text-run' : 'text-ask'}>
             would claim {preview.length} session{preview.length === 1 ? '' : 's'}
           </span>
         )}
@@ -1293,16 +1306,16 @@ function MergeSplit(props: {
   return (
     <Section title="merge / split">
       <div className="flex items-center gap-2">
-        <span className="text-zinc-600">absorb another project:</span>
+        <span className="text-t5">absorb another project:</span>
         <MergeSelect project={project} rail={rail} mutateProject={mutateProject} />
       </div>
-      <div className="mt-2 text-zinc-600">carve a folder into its own project:</div>
+      <div className="mt-2 text-t5">carve a folder into its own project:</div>
       <input
         list={`roots-${project.id}`}
         value={splitRoot}
         onChange={(e) => setSplitRoot(e.target.value)}
         placeholder="/path/to/carve/out"
-        className="mt-1 w-full rounded border border-zinc-800 bg-zinc-900 px-2 py-1 outline-none focus:border-zinc-600"
+        className="mt-1 w-full rounded border border-b1 bg-s3 px-2 py-1 outline-none focus:border-b6"
       />
       <datalist id={`roots-${project.id}`}>
         {roots.map((r) => (
@@ -1314,7 +1327,7 @@ function MergeSplit(props: {
           value={splitName}
           onChange={(e) => setSplitName(e.target.value)}
           placeholder="new project name"
-          className="w-full rounded border border-zinc-800 bg-zinc-900 px-2 py-1 outline-none focus:border-zinc-600"
+          className="w-full rounded border border-b1 bg-s3 px-2 py-1 outline-none focus:border-b6"
         />
         <button
           onClick={() => {
@@ -1331,7 +1344,7 @@ function MergeSplit(props: {
               }
             })
           }}
-          className="rounded border border-zinc-700 px-2 text-zinc-400 hover:text-zinc-100"
+          className="rounded border border-b4 px-2 text-t3 hover:text-fg"
         >
           split
         </button>
@@ -1363,7 +1376,7 @@ function MergeSelect(props: {
           void mutateProject({ op: 'merge-projects', id: project.id, from })
         }
       }}
-      className="rounded border border-zinc-700 bg-zinc-900 px-1 py-0.5 text-zinc-400"
+      className="rounded border border-b4 bg-s3 px-1 py-0.5 text-t3"
     >
       <option value="">choose…</option>
       {others.map((p) => (

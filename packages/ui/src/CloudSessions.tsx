@@ -11,21 +11,21 @@ import { formatAge, formatTokens, formatUsd, launchOrCopy, sendCloudMessage } fr
  */
 
 const BUCKETS: Record<string, { label: string; className: string }> = {
-  working: { label: 'working', className: 'text-emerald-300' },
-  blocked: { label: 'needs you', className: 'text-amber-300' },
+  working: { label: 'working', className: 'text-run' },
+  blocked: { label: 'needs you', className: 'text-ask' },
   'review-ready': { label: 'review ready', className: 'text-sky-300' },
-  completed: { label: 'done', className: 'text-zinc-500' },
+  completed: { label: 'done', className: 'text-t4' },
 }
 
 function bucketBadge(s: CloudSession) {
   const bucket = BUCKETS[s.bucket ?? ''] ?? {
     label: s.bucket ?? s.status,
-    className: 'text-zinc-400',
+    className: 'text-t3',
   }
   return (
     <span className={`shrink-0 text-[11px] ${bucket.className}`}>
       {s.status === 'running' ? (
-        <span className="mr-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400 align-middle" />
+        <span className="mr-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-run align-middle" />
       ) : null}
       {bucket.label}
     </span>
@@ -52,11 +52,11 @@ export function CloudSessionList(props: {
   const [open, setOpen] = useState<string | undefined>(undefined)
   if (sessions.length === 0) return null
   return (
-    <div className="border-b border-zinc-800/70 bg-zinc-900/30">
-      <div className="px-4 pt-2 pb-1 text-[11px] font-medium tracking-wider text-zinc-500 uppercase">
+    <div className="border-b border-b1/70 bg-s3/30">
+      <div className="px-4 pt-2 pb-1 text-[11px] font-medium tracking-wider text-t4 uppercase">
         cloud
       </div>
-      <ul className="divide-y divide-zinc-900">
+      <ul className="divide-y divide-b2">
         {sessions.map((s) => (
           <li key={s.id} className="group px-4 py-1.5">
             <div className="flex items-center gap-3">
@@ -66,7 +66,7 @@ export function CloudSessionList(props: {
               >
                 <span className="flex items-center gap-3">
                   {bucketBadge(s)}
-                  <span className="min-w-0 truncate text-zinc-200">
+                  <span className="min-w-0 truncate text-t1">
                     {s.title ?? s.id.slice(0, 12)}
                   </span>
                   {projectOf?.get(s.id) !== undefined ? (
@@ -75,20 +75,20 @@ export function CloudSessionList(props: {
                         e.stopPropagation()
                         openProject?.(projectOf.get(s.id)!.id)
                       }}
-                      className="shrink-0 cursor-pointer rounded bg-zinc-800 px-1.5 text-[11px] text-zinc-400 hover:text-zinc-200"
+                      className="shrink-0 cursor-pointer rounded bg-s5 px-1.5 text-[11px] text-t3 hover:text-t1"
                       title="open project"
                     >
                       {projectOf.get(s.id)!.name}
                     </span>
                   ) : (
-                    <span className="shrink-0 text-xs text-zinc-600">{s.repo ?? ''}</span>
+                    <span className="shrink-0 text-xs text-t5">{s.repo ?? ''}</span>
                   )}
-                  <span className="shrink-0 text-xs text-zinc-600">
+                  <span className="shrink-0 text-xs text-t5">
                     {formatAge(nowMs, s.updatedAt)}
                   </span>
                 </span>
                 {s.needsAction !== undefined && (
-                  <span className="mt-0.5 block truncate text-xs text-amber-200/80">
+                  <span className="mt-0.5 block truncate text-xs text-ask/80">
                     → {s.needsAction}
                   </span>
                 )}
@@ -96,14 +96,14 @@ export function CloudSessionList(props: {
               <span className="hidden shrink-0 items-center gap-2 text-xs group-hover:flex">
                 <button
                   onClick={() => void launchOrCopy({ kind: 'teleport', sessionId: s.id })}
-                  className="rounded border border-zinc-700 px-2 py-0.5 text-zinc-300 hover:border-zinc-500 hover:text-zinc-100"
+                  className="rounded border border-b4 px-2 py-0.5 text-t2 hover:border-acb hover:text-fg"
                   title="pull this session into a terminal (web copy goes read-only)"
                 >
                   teleport
                 </button>
                 <button
                   onClick={() => void messageCloud(s)}
-                  className="rounded border border-zinc-700 px-2 py-0.5 text-zinc-300 hover:border-zinc-500 hover:text-zinc-100"
+                  className="rounded border border-b4 px-2 py-0.5 text-t2 hover:border-acb hover:text-fg"
                   title="queue a message; the session keeps running in the cloud"
                 >
                   message
@@ -112,16 +112,16 @@ export function CloudSessionList(props: {
                   href={s.url}
                   target="_blank"
                   rel="noreferrer"
-                  className="rounded border border-zinc-700 px-2 py-0.5 text-zinc-300 hover:border-zinc-500 hover:text-zinc-100"
+                  className="rounded border border-b4 px-2 py-0.5 text-t2 hover:border-acb hover:text-fg"
                 >
                   web ↗
                 </a>
               </span>
             </div>
             {open === s.id && (
-              <div className="mt-1 grid gap-x-6 gap-y-0.5 pb-1 text-xs text-zinc-500 sm:grid-cols-2">
+              <div className="mt-1 grid gap-x-6 gap-y-0.5 pb-1 text-xs text-t4 sm:grid-cols-2">
                 {s.statusDetail !== undefined && (
-                  <div className="sm:col-span-2 text-zinc-400">{s.statusDetail}</div>
+                  <div className="sm:col-span-2 text-t3">{s.statusDetail}</div>
                 )}
                 {s.recentAction !== undefined && (
                   <div className="sm:col-span-2">last: {s.recentAction}</div>
@@ -142,7 +142,7 @@ export function CloudSessionList(props: {
                     <span className="font-mono">{s.branches.join(' · ')}</span>
                     {s.branchGone === true && (
                       <span
-                        className="ml-2 text-amber-500/90"
+                        className="ml-2 text-ask"
                         title="This branch was deleted (usually after its PR merged). Claude will print 'Session resumed without branch' and continue on whatever branch you're on — the session content is unaffected."
                       >
                         branch gone — opens on your current branch

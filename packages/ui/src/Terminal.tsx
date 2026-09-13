@@ -3,6 +3,7 @@ import { Terminal as Xterm } from '@xterm/xterm'
 import { useEffect, useRef } from 'react'
 import '@xterm/xterm/css/xterm.css'
 import { desktop } from './desktop.js'
+import { activeFont, activeTerminalTheme, onThemeChange } from './theme.js'
 
 /**
  * One attached PTY view. The PTY lives in the desktop main process; this
@@ -18,17 +19,18 @@ export function TerminalView({ ptyId, visible }: { ptyId: string; visible: boole
     if (host === null || desktop === undefined) return
     const bridge = desktop
 
+    // The terminal shares the app's colorscheme: the same 16 ANSI slots
+    // the UI derives its tokens from ARE the terminal palette.
     const term = new Xterm({
       fontSize: 13,
-      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+      fontFamily: activeFont().mono,
       cursorBlink: true,
       scrollback: 8000,
-      theme: {
-        background: '#0a0a0b',
-        foreground: '#d4d4d8',
-        cursor: '#a1a1aa',
-        selectionBackground: '#3f3f46',
-      },
+      theme: activeTerminalTheme(),
+    })
+    const offTheme = onThemeChange(() => {
+      term.options.theme = activeTerminalTheme()
+      term.options.fontFamily = activeFont().mono
     })
     const fit = new FitAddon()
     fitRef.current = fit
@@ -66,6 +68,7 @@ export function TerminalView({ ptyId, visible }: { ptyId: string; visible: boole
     return () => {
       disposed = true
       observer.disconnect()
+      offTheme()
       offData()
       onInput.dispose()
       bridge.detach(ptyId)

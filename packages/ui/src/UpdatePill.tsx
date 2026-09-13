@@ -25,7 +25,7 @@ export function UpdatePill() {
     return (
       <button
         onClick={() => void bridge.installUpdate()}
-        className="mx-3 mb-2 rounded border border-emerald-800 bg-emerald-950/50 px-2 py-1 text-left text-xs text-emerald-300 hover:border-emerald-600"
+        className="mx-3 mb-2 rounded border border-run/50 bg-run/10 px-2 py-1 text-left text-xs text-run hover:border-run"
         title={`version ${update.version} downloaded — restarts the app`}
       >
         ↻ restart to update

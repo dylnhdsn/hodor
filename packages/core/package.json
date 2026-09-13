@@ -13,6 +13,10 @@
     "./urls": {
       "types": "./dist/urls.d.ts",
       "default": "./dist/urls.js"
+    },
+    "./colorscheme": {
+      "types": "./dist/colorscheme.d.ts",
+      "default": "./dist/colorscheme.js"
     }
   },
   "scripts": {
