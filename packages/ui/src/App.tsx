@@ -22,6 +22,7 @@ import { CloudRow, cloudNeedsYou, cloudRunning } from './CloudSessions.js'
 import { Desk, deskState, SESSION_DRAG_MIME, setDeskTurnStates, subscribeDesk } from './Desk.js'
 import { Stack, stackQueue } from './Stack.js'
 import { desktop } from './desktop.js'
+import { fetchPrefs, savePref } from './prefs.js'
 import { activeScheme, onThemeChange } from './theme.js'
 import { UpdatePill } from './UpdatePill.js'
 import { useSnapshot } from './useSnapshot.js'
@@ -64,6 +65,8 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set())
   // Rail collapse (artifact a1edae46): icons-only strip, badges intact.
+  // localStorage seeds first paint; ~/.hodor/ui.json is the durable copy
+  // (the desktop's origin is a random port — browser storage forgets).
   const [railOpen, setRailOpen] = useState<boolean>(() => {
     try {
       return window.localStorage.getItem('hodor-rail') !== 'closed'
@@ -71,12 +74,19 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
       return true
     }
   })
+  useEffect(() => {
+    void fetchPrefs().then((prefs) => {
+      if (prefs['rail'] === 'closed') setRailOpen(false)
+      else if (prefs['rail'] === 'open') setRailOpen(true)
+    })
+  }, [])
   const toggleRail = (open: boolean) => {
     setRailOpen(open)
+    savePref({ rail: open ? 'open' : 'closed' })
     try {
       window.localStorage.setItem('hodor-rail', open ? 'open' : 'closed')
     } catch {
-      // per-viewer convenience only
+      // cache only — the server copy is what matters
     }
   }
   const [settingsOpen, setSettingsOpen] = useState(false)

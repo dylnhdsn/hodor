@@ -6,6 +6,7 @@ import {
   terminalThemeOf,
   type Colorscheme,
 } from '@hodor/core/colorscheme'
+import { fetchPrefs, savePref } from './prefs.js'
 
 /**
  * Theme runtime: applies a colorscheme's derived tokens as CSS variables
@@ -81,7 +82,7 @@ function apply(): void {
   for (const handler of listeners) handler()
 }
 
-function persist(): void {
+function persistLocal(): void {
   try {
     localStorage.setItem('hodor-theme', current.schemeId)
     localStorage.setItem('hodor-font', current.fontId)
@@ -89,8 +90,19 @@ function persist(): void {
       localStorage.setItem('hodor-custom-scheme', JSON.stringify(current.custom))
     }
   } catch {
-    // private windows etc. — the session just won't remember
+    // private windows etc. — the durable copy is on the server anyway
   }
+}
+
+function persist(): void {
+  persistLocal()
+  // The durable copy: ~/.hodor/ui.json outlives the desktop's random-port
+  // origin, restarts and updates. localStorage is just the boot cache.
+  savePref({
+    theme: current.schemeId,
+    font: current.fontId,
+    ...(current.custom !== undefined ? { customScheme: current.custom } : {}),
+  })
 }
 
 export function loadTheme(): void {
@@ -105,6 +117,31 @@ export function loadTheme(): void {
     // fall through to defaults
   }
   apply()
+}
+
+/** Overlay the durable server prefs onto the localStorage first guess. */
+export async function hydrateTheme(): Promise<void> {
+  const prefs = await fetchPrefs()
+  let changed = false
+  const custom = prefs['customScheme']
+  if (typeof custom === 'object' && custom !== null && !Array.isArray(custom)) {
+    current = { ...current, custom: custom as Colorscheme }
+    changed = true
+  }
+  const scheme = prefs['theme']
+  if (typeof scheme === 'string' && scheme !== current.schemeId) {
+    current = { ...current, schemeId: scheme }
+    changed = true
+  }
+  const font = prefs['font']
+  if (typeof font === 'string' && font !== current.fontId) {
+    current = { ...current, fontId: font }
+    changed = true
+  }
+  if (changed) {
+    persistLocal() // refresh the cache only — no write-back loop
+    apply()
+  }
 }
 
 export function setScheme(id: string): void {

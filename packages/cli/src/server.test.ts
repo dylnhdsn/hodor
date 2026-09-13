@@ -498,6 +498,42 @@ describe('cloud sessions', () => {
   })
 })
 
+describe('ui prefs', () => {
+  it('round-trips through /api/prefs with merge semantics', async () => {
+    const { deps, fs } = serverDeps()
+    const server = await start(fs, deps)
+
+    expect(await (await fetch(`${server.url}/api/prefs`)).json()).toEqual({})
+
+    const post = (body: unknown) =>
+      fetch(`${server.url}/api/prefs`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+
+    expect(await (await post({ theme: 'gruvbox' })).json()).toEqual({ theme: 'gruvbox' })
+    // merge: a second writer must not clobber the first key
+    expect(await (await post({ font: 'system' })).json()).toEqual({
+      theme: 'gruvbox',
+      font: 'system',
+    })
+    // null deletes
+    expect(await (await post({ theme: null })).json()).toEqual({ font: 'system' })
+    // persisted where the rest of the user plane lives
+    expect(await fs.readFile('/home/u/.hodor/ui.json')).toContain('"font"')
+
+    for (const bad of ['not json', '[1,2]', '"str"']) {
+      const res = await fetch(`${server.url}/api/prefs`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: bad,
+      })
+      expect(res.status).toBe(400)
+    }
+  })
+})
+
 describe('workspace document', () => {
   it('round-trips through /api/workspace and starts empty', async () => {
     const { deps, fs } = serverDeps()

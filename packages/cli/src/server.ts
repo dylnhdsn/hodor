@@ -39,6 +39,7 @@ import {
   parseWorkspaceDoc,
   saveWorkspaces,
 } from './workspace.js'
+import { loadPrefs, PREFS_LIMIT, savePrefs } from './prefs.js'
 
 /**
  * The local UI/API server: the same pipeline the CLI runs, kept warm and
@@ -516,6 +517,34 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
 
       if (req.method === 'POST' && path === '/api/cloud/message') {
         await handleCloudMessage(res, await readBody(req))
+        return
+      }
+
+      // UI preferences (theme, font, rail) — cosmetic state that must
+      // outlive the desktop's random-port origin, restarts and updates.
+      if (reads && path === '/api/prefs') {
+        sendJson(res, 200, await loadPrefs(deps, files.home))
+        return
+      }
+
+      if (req.method === 'POST' && path === '/api/prefs') {
+        const body = await readBody(req)
+        if (body.length > PREFS_LIMIT) {
+          sendJson(res, 400, { error: 'prefs too large' })
+          return
+        }
+        let parsed: unknown
+        try {
+          parsed = JSON.parse(body)
+        } catch {
+          sendJson(res, 400, { error: 'body must be JSON' })
+          return
+        }
+        if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+          sendJson(res, 400, { error: 'prefs must be an object' })
+          return
+        }
+        sendJson(res, 200, await savePrefs(deps, files.home, parsed as Record<string, unknown>))
         return
       }
 
