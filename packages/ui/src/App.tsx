@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { CustomProject, Matcher, Session, Snapshot } from '@hodor/core'
+import type { CloudSession, CustomProject, Matcher, Session, Snapshot } from '@hodor/core'
 import {
   byRecency,
   cwdsOf,
@@ -18,7 +18,7 @@ import {
   type View,
 } from './data.js'
 import { Appearance } from './Appearance.js'
-import { CloudSessionList } from './CloudSessions.js'
+import { CloudRow, cloudNeedsYou, cloudRunning } from './CloudSessions.js'
 import { Desk, deskState, SESSION_DRAG_MIME, setDeskTurnStates, subscribeDesk } from './Desk.js'
 import { Stack, stackQueue } from './Stack.js'
 import { desktop } from './desktop.js'
@@ -26,6 +26,15 @@ import { activeScheme, onThemeChange } from './theme.js'
 import { UpdatePill } from './UpdatePill.js'
 import { useSnapshot } from './useSnapshot.js'
 import { BootSplash, Wordmark } from './Wordmark.js'
+
+/** One list, two origins: local transcripts and cloud sessions interleave
+ * as equal rows, sorted by the same recency key. */
+type Row = { kind: 'local'; session: Session } | { kind: 'cloud'; cloud: CloudSession }
+
+const rowAt = (r: Row): string =>
+  r.kind === 'local'
+    ? (r.session.lastActivityAt ?? '')
+    : (r.cloud.updatedAt ?? r.cloud.createdAt ?? '')
 
 type Filter =
   | { kind: 'all' }
@@ -72,7 +81,9 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
   useEffect(() => onThemeChange(() => setThemeTick((t) => t + 1)), [])
   const stackN = desktop !== undefined ? stackQueue(view.byId, nowMs).length : 0
   const waitingN = useMemo(
-    () => view.visible.filter((s) => s.turn?.state === 'waiting').length,
+    () =>
+      view.visible.filter((s) => s.turn?.state === 'waiting').length +
+      view.cloud.filter(cloudNeedsYou).length,
     [view],
   )
 
@@ -170,6 +181,16 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
     )
   }, [view, filter, query])
 
+  // The list itself: one element, both origins, one recency order.
+  const rows = useMemo<Row[]>(
+    () =>
+      [
+        ...sessions.map((session) => ({ kind: 'local' as const, session })),
+        ...cloudShown.map((cloud) => ({ kind: 'cloud' as const, cloud })),
+      ].sort((a, b) => rowAt(b).localeCompare(rowAt(a))),
+    [sessions, cloudShown],
+  )
+
   const customNames = new Map(
     snapshot.customProjects.filter((p) => p.archived !== true).map((p) => [p.id, p.name]),
   )
@@ -236,6 +257,22 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
       mutateProject={mutateProject}
     />
   )
+
+  const renderAny = (r: Row) =>
+    r.kind === 'local' ? (
+      renderRow(r.session)
+    ) : (
+      <CloudRow
+        key={`cloud-${r.cloud.id}`}
+        session={r.cloud}
+        nowMs={nowMs}
+        projectOf={filter.kind !== 'project' ? view.cloudProjectOf : undefined}
+        openProject={(id) => {
+          setFilter({ kind: 'project', id })
+          setSelected(new Set())
+        }}
+      />
+    )
 
   return (
     <div className="flex h-full flex-col bg-app font-mono text-[12px] text-t1">
@@ -313,11 +350,14 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
             </button>
           </RailHeading>
           {view.rail.map((p) => {
-            const wait = p.sessions.filter((s) => s.turn?.state === 'waiting').length
-            const run = p.sessions.filter(
-              (s) => s.turn?.state === 'working' || s.runtime.kind !== 'idle',
-            ).length
-            const total = p.sessions.length + (view.cloudByProject.get(p.id)?.length ?? 0)
+            const cloudHere = view.cloudByProject.get(p.id) ?? []
+            const wait =
+              p.sessions.filter((s) => s.turn?.state === 'waiting').length +
+              cloudHere.filter(cloudNeedsYou).length
+            const run =
+              p.sessions.filter((s) => s.turn?.state === 'working' || s.runtime.kind !== 'idle')
+                .length + cloudHere.filter(cloudRunning).length
+            const total = p.sessions.length + cloudHere.length
             return (
               <RailItem
                 key={p.id}
@@ -495,30 +535,18 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
 
             <div className="flex min-h-0 flex-1">
               <div className="flex min-w-0 flex-1 flex-col overflow-y-auto">
-              {filter.kind === 'all' || filter.kind === 'home' || filter.kind === 'project' ? (
-                <CloudSessionList
-                  sessions={cloudShown}
-                  nowMs={nowMs}
-                  projectOf={filter.kind !== 'project' ? view.cloudProjectOf : undefined}
-                  openProject={(id) => {
-                    setFilter({ kind: 'project', id })
-                    setSelected(new Set())
-                  }}
-                />
-              ) : null}
               {filter.kind === 'home' ? (
                 <HomeList
-                  sessions={sessions}
-                  renderRow={renderRow}
-                  showEmpty={cloudShown.length === 0}
+                  rows={rows}
+                  render={renderAny}
                   openStack={
                     desktop !== undefined ? () => setFilter({ kind: 'stack' }) : undefined
                   }
                 />
               ) : (
                 <ul className="min-w-0 flex-1 divide-y divide-b2">
-                  {sessions.map(renderRow)}
-                  {sessions.length === 0 && cloudShown.length === 0 && (
+                  {rows.map(renderAny)}
+                  {rows.length === 0 && (
                     <li className="px-4 py-8 text-center text-t5">nothing here</li>
                   )}
                 </ul>
@@ -632,24 +660,32 @@ function RailItem(props: {
   )
 }
 
-/** The Home lens: the library grouped by whose turn it is. */
+/** The Home lens: the (unified) list grouped by whose turn it is. */
 function HomeList(props: {
-  sessions: Session[]
-  renderRow: (s: Session) => React.ReactNode
-  showEmpty: boolean
+  rows: Row[]
+  render: (r: Row) => React.ReactNode
   openStack?: (() => void) | undefined
 }) {
-  const wait: Session[] = []
-  const run: Session[] = []
-  const rest: Session[] = []
-  for (const s of props.sessions) {
-    if (s.turn?.state === 'waiting') wait.push(s)
-    else if (s.turn?.state === 'working' || s.runtime.kind !== 'idle') run.push(s)
-    else rest.push(s)
+  const wait: Row[] = []
+  const run: Row[] = []
+  const rest: Row[] = []
+  for (const r of props.rows) {
+    const needsYou =
+      r.kind === 'local' ? r.session.turn?.state === 'waiting' : cloudNeedsYou(r.cloud)
+    const running =
+      r.kind === 'local'
+        ? r.session.turn?.state === 'working' || r.session.runtime.kind !== 'idle'
+        : cloudRunning(r.cloud)
+    if (needsYou) wait.push(r)
+    else if (running) run.push(r)
+    else rest.push(r)
   }
-  // Needs-you mirrors the turn stack: longest wait first.
-  wait.sort((a, b) => (a.turn?.since ?? '').localeCompare(b.turn?.since ?? ''))
-  const group = (title: string, cls: string, list: Session[], action?: React.ReactNode) =>
+  // Needs-you mirrors the turn stack: longest wait first (a cloud row's
+  // best "since" is its last movement).
+  const sinceOf = (r: Row): string =>
+    r.kind === 'local' ? (r.session.turn?.since ?? '') : (r.cloud.updatedAt ?? '')
+  wait.sort((a, b) => sinceOf(a).localeCompare(sinceOf(b)))
+  const group = (title: string, cls: string, list: Row[], action?: React.ReactNode) =>
     list.length === 0 ? null : (
       <div key={title}>
         <div
@@ -660,7 +696,7 @@ function HomeList(props: {
           </span>
           {action}
         </div>
-        <ul className="divide-y divide-b2 border-t border-b2">{list.map(props.renderRow)}</ul>
+        <ul className="divide-y divide-b2 border-t border-b2">{list.map(props.render)}</ul>
       </div>
     )
   return (
@@ -680,9 +716,7 @@ function HomeList(props: {
       )}
       {group('● RUNNING', 'text-run', run)}
       {group('RECENT', 'text-t5', rest)}
-      {props.sessions.length === 0 && props.showEmpty && (
-        <p className="px-4 py-8 text-center text-t5">nothing here</p>
-      )}
+      {props.rows.length === 0 && <p className="px-4 py-8 text-center text-t5">nothing here</p>}
     </div>
   )
 }
