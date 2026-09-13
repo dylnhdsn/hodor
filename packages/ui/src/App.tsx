@@ -91,6 +91,7 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
   }
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [detailId, setDetailId] = useState<string | undefined>(undefined)
+  const [railMenu, setRailMenu] = useState(false)
 
   const view = useMemo(() => deriveView(snapshot), [snapshot])
   const nowMs = Date.parse(snapshot.generatedAt)
@@ -307,14 +308,15 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
           platform === 'darwin' ? 'pl-[78px]' : ''
         }`}
       >
-        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-[6px] bg-ac font-ui text-[12px] font-bold text-ink">
-          h
-        </span>
         <Wordmark height={14} />
-        <span
-          className={`h-1.5 w-1.5 rounded-full ${connected ? 'bg-run' : 'bg-b6'}`}
-          title={connected ? 'live' : 'reconnecting'}
-        />
+        {!connected && (
+          <span
+            className="font-mono text-[10px] text-ask"
+            title="connection to the local server lost"
+          >
+            reconnecting…
+          </span>
+        )}
         <span className="text-t6">/</span>
         <span className="font-ui text-[12.5px] font-bold text-fg">{crumb.title}</span>
         {crumb.meta !== undefined && <span className="text-[11px] text-t4">{crumb.meta}</span>}
@@ -509,13 +511,63 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
             />
           </>
         )}
-        <button
-          onClick={() => toggleRail(true)}
-          title="expand the rail"
-          className="mt-auto mb-2 px-1.5 text-[11px] text-t6 hover:text-fg"
-        >
-          »
-        </button>
+        <span className="relative mt-auto flex flex-col items-center">
+          <button
+            onClick={() => setRailMenu((o) => !o)}
+            title="more — settings, archived, hidden"
+            className={`mb-1 px-1.5 text-[13px] ${railMenu ? 'text-fg' : 'text-t4 hover:text-fg'}`}
+          >
+            ☰
+          </button>
+          {railMenu && (
+            <>
+              <div className="fixed inset-0 z-10" onClick={() => setRailMenu(false)} />
+              <div className="absolute bottom-8 left-7 z-20 flex w-48 flex-col rounded border border-b5 bg-s5 py-1 shadow-xl">
+                <UpdatePill />
+                <button
+                  onClick={() => {
+                    setFilter({ kind: 'appearance' })
+                    setRailMenu(false)
+                  }}
+                  className="px-3 py-1.5 text-left font-ui text-[12px] text-t2 hover:bg-ac/12 hover:text-fg"
+                >
+                  ⚙ appearance
+                </button>
+                {view.archivedProjects.length > 0 && (
+                  <button
+                    onClick={() => {
+                      setFilter({ kind: 'archived' })
+                      setRailMenu(false)
+                    }}
+                    className="px-3 py-1.5 text-left font-ui text-[12px] text-t2 hover:bg-ac/12 hover:text-fg"
+                  >
+                    {view.archivedProjects.length} archived project
+                    {view.archivedProjects.length === 1 ? '' : 's'}
+                  </button>
+                )}
+                <button
+                  onClick={() => {
+                    setFilter({ kind: 'hidden' })
+                    setRailMenu(false)
+                  }}
+                  className="px-3 py-1.5 text-left font-ui text-[12px] text-t2 hover:bg-ac/12 hover:text-fg"
+                >
+                  {view.hidden.length} hidden sessions
+                </button>
+                {snapshot.hodorVersion !== undefined && (
+                  <p className="px-3 pt-1 pb-0.5 text-[10px] text-t6">{snapshot.hodorVersion}</p>
+                )}
+              </div>
+            </>
+          )}
+          <button
+            onClick={() => toggleRail(true)}
+            title="expand the rail"
+            className="mb-2 px-1.5 text-[11px] text-t6 hover:text-fg"
+          >
+            »
+          </button>
+        </span>
       </aside>
       ))}
 
