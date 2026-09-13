@@ -53,6 +53,8 @@ const stateFile = (): string => join(app.getPath('home'), '.hodor', 'desktop.jso
 
 interface DesktopState {
   mainBounds?: Electron.Rectangle
+  /** Chromium zoom level (0 = 100%; each step is 0.5). */
+  zoomLevel?: number
 }
 
 function loadState(): DesktopState {
@@ -76,6 +78,47 @@ function broadcast(channel: string, payload: unknown): void {
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed()) win.webContents.send(channel, payload)
   }
+}
+
+const ZOOM_MIN = -3
+const ZOOM_MAX = 4
+
+/**
+ * Zoom that actually works both ways. The hidden default menu's zoomIn
+ * role only answers Ctrl+Shift+= — plain Ctrl+=/Ctrl++ (and numpad +)
+ * fall through, so Ctrl+- shrank the app and nothing grew it back.
+ * before-input-event runs ahead of the menu AND the focused terminal,
+ * so the shortcut never types into the PTY either. Ctrl+0 resets,
+ * Ctrl+wheel zooms too, and the level is remembered across launches.
+ */
+function wireZoom(win: BrowserWindow, persist: boolean): void {
+  const apply = (level: number): void => {
+    const clamped = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, level))
+    win.webContents.setZoomLevel(clamped)
+    if (persist) saveState({ ...loadState(), zoomLevel: clamped })
+  }
+  win.webContents.on('did-finish-load', () => {
+    const saved = loadState().zoomLevel
+    if (saved !== undefined && saved !== 0) win.webContents.setZoomLevel(saved)
+  })
+  win.webContents.on('before-input-event', (event, input) => {
+    // key presses arrive as keyDown or rawKeyDown depending on the path
+    if ((input.type !== 'keyDown' && input.type !== 'rawKeyDown') || input.alt) return
+    if (!(input.control || input.meta)) return
+    if (input.key === '+' || input.key === '=') {
+      event.preventDefault()
+      apply(win.webContents.getZoomLevel() + 0.5)
+    } else if (input.key === '-') {
+      event.preventDefault()
+      apply(win.webContents.getZoomLevel() - 0.5)
+    } else if (input.key === '0') {
+      event.preventDefault()
+      apply(0)
+    }
+  })
+  win.webContents.on('zoom-changed', (_event, direction) => {
+    apply(win.webContents.getZoomLevel() + (direction === 'in' ? 0.5 : -0.5))
+  })
 }
 
 function termSummary(term: Term): { id: string; title: string; target: OpenTarget; exited?: number } {
@@ -170,6 +213,7 @@ function popOut(id: string): void {
   })
   term.popout = win
   win.setMenuBarVisibility(false)
+  wireZoom(win, false)
   void win.loadURL(`${server.url}/#pty=${id}`)
   win.on('page-title-updated', (event) => event.preventDefault())
   broadcast('pty:event', { type: 'popped', id })
@@ -342,6 +386,7 @@ function createMainWindow(): void {
     },
   })
   mainWindow.setMenuBarVisibility(false)
+  wireZoom(mainWindow, true)
   const sendWinState = (): void => {
     if (mainWindow !== undefined && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('win:state', { maximized: mainWindow.isMaximized() })
