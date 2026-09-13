@@ -135,7 +135,11 @@ function refreshEntries(api: DockviewApi): void {
     return {
       panelId: p.id,
       title: p.title ?? p.id,
-      ...(params.target?.sessionId !== undefined && params.target.kind === 'resume'
+      // A tile knows its session when opened via resume, or when hodor
+      // minted the id at spawn (kind 'new'). Teleport ids are CLOUD ids
+      // and fork targets carry the PARENT id — neither binds here.
+      ...(params.target?.sessionId !== undefined &&
+      (params.target.kind === 'resume' || params.target.kind === 'new')
         ? { sessionId: params.target.sessionId }
         : {}),
       ...(params.ptyId !== undefined ? { ptyId: params.ptyId } : {}),
@@ -487,7 +491,11 @@ export function Desk({ inspect }: { inspect?: (sessionId: string) => void }) {
     [save],
   )
 
-  /** Resume a dead slot's session back into its own tile. */
+  /** Resume a dead slot's session back into its own tile. A slot that
+   * knows its session id (opened via resume, or a 'new' tile whose id
+   * hodor minted at spawn) resumes THAT conversation; only if the
+   * session never materialized (died before the first prompt) does the
+   * slot fall back to its original rule and start over. */
   const resumePanel = useCallback((panelId: string): Promise<void> => {
     const api = apiRef.current
     const bridge = desktop
@@ -500,8 +508,20 @@ export function Desk({ inspect }: { inspect?: (sessionId: string) => void }) {
       claim.panelId = panelId
       claim.resolve = resolve
     })
+    const preferResume =
+      target.sessionId !== undefined && (target.kind === 'resume' || target.kind === 'new')
+    const attempt: OpenTarget = preferResume
+      ? { kind: 'resume', sessionId: target.sessionId! }
+      : target
     return bridge
-      .openTerminal(target)
+      .openTerminal(attempt)
+      .then((res) => {
+        if (res.id === undefined && preferResume && target.kind === 'new') {
+          // unused tile: no transcript to resume — re-run the slot rule
+          return bridge.openTerminal(target)
+        }
+        return res
+      })
       .then((res) => {
         if (res.id === undefined) {
           claim.panelId = undefined

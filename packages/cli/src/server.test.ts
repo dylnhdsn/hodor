@@ -368,7 +368,11 @@ describe('startServer', () => {
       body: JSON.stringify({ kind: 'new', storeId: 'local', root: '/r/app' }),
     })
     expect(good.status).toBe(200)
-    expect((await good.json()) as object).toMatchObject({ ok: true, command: 'claude' })
+    const newBody = (await good.json()) as { ok: boolean; command: string; sessionId?: string }
+    expect(newBody.ok).toBe(true)
+    // the session id is minted at birth so the tile can truly resume later
+    expect(newBody.sessionId).toMatch(/^[0-9a-f-]{36}$/)
+    expect(newBody.command).toBe(`claude --session-id ${newBody.sessionId}`)
 
     const bad = await fetch(`${server.url}/api/launch`, {
       method: 'POST',

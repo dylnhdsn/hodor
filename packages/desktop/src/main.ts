@@ -151,6 +151,8 @@ async function openTerminal(
     command?: string
     cwd?: string
     error?: string
+    /** kind 'new': the session id the server minted (claude --session-id). */
+    sessionId?: string
   }
   if (body.spec === null || body.spec === undefined) {
     return {
@@ -158,6 +160,12 @@ async function openTerminal(
       ...(body.command !== undefined ? { command: body.command } : {}),
       ...(body.cwd !== undefined ? { cwd: body.cwd } : {}),
     }
+  }
+
+  // A minted id makes the slot rule identity-carrying: the tile knows
+  // which session it runs, so restores resume instead of starting over.
+  if (body.sessionId !== undefined && target.sessionId === undefined) {
+    target = { ...target, sessionId: body.sessionId }
   }
 
   const id = `t${bootTag}-${nextTermId++}`

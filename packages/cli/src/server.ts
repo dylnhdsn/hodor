@@ -1,4 +1,5 @@
 import { Buffer } from 'node:buffer'
+import { randomUUID } from 'node:crypto'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import {
   StoreTailer,
@@ -339,6 +340,10 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
 
     let title: string
     let target: LaunchTarget
+    /** For kind 'new': the session id minted at birth (claude --session-id),
+     * so the tile's slot rule knows WHICH session it ran — a desk restore
+     * can then truly resume it instead of starting over. */
+    let mintedId: string | undefined
     if (payload.kind === 'teleport') {
       const cloud = snapshot?.cloudSessions.find((s) => s.id === payload.sessionId)
       if (cloud === undefined) return sendJson(res, 404, { error: `no cloud session "${payload.sessionId}"` })
@@ -396,7 +401,13 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
       if (!known || payload.root === undefined) {
         return sendJson(res, 400, { error: 'root is not a known project root' })
       }
-      target = { cwd: payload.root, flavor: store.pathFlavor, origin: store.origin, claudeArgs: [] }
+      mintedId = randomUUID()
+      target = {
+        cwd: payload.root,
+        flavor: store.pathFlavor,
+        origin: store.origin,
+        claudeArgs: ['--session-id', mintedId],
+      }
       title = payload.root.split(/[/\\]/).filter(Boolean).pop() ?? payload.root
     } else {
       return sendJson(res, 400, { error: 'kind must be resume, fork, new, or teleport' })
@@ -413,11 +424,15 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
         title,
         command: plan.command,
         cwd: plan.cwd,
+        ...(mintedId !== undefined ? { sessionId: mintedId } : {}),
       })
     }
 
     const result = await runLaunch(deps, target)
-    return sendJson(res, result.ok ? 200 : 500, result)
+    return sendJson(res, result.ok ? 200 : 500, {
+      ...result,
+      ...(mintedId !== undefined ? { sessionId: mintedId } : {}),
+    })
   }
 
   /** Send one message into a cloud session without taking it over:
