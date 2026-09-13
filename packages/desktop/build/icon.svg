@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- hodor app icon: the wordmark's stroke-drawn 'h' on the accent chip
+       (matches the in-app logo chip: bg accent, glyph ink). -->
+  <rect x="0" y="0" width="1024" height="1024" rx="224" fill="#b78af7"/>
+  <g fill="none" stroke="#0b0a10" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"
+     transform="translate(512 512) scale(23.5) translate(-8 -12.9)">
+    <path d="M3 1.8 L3 24"/>
+    <path d="M3 13.5 C3 9.2 5.8 8 8 8 C10.6 8 13 9.4 13 13.5 L13 24"/>
+  </g>
+</svg>

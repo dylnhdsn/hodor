@@ -4,7 +4,7 @@
 // electron and node-pty stay external: electron is the runtime itself, and
 // node-pty is a native module electron-builder packs (asar-unpacked) and
 // rebuilds against the Electron ABI.
-import { readFileSync, writeFileSync } from 'node:fs'
+import { copyFileSync, readFileSync, writeFileSync } from 'node:fs'
 import { build } from 'esbuild'
 import { collectUiAssets, embedUiAssetsPlugin } from './embed-ui.mjs'
 
@@ -38,6 +38,14 @@ await build({
   external: ['electron'],
   logLevel: 'info',
 })
+
+// The window icon rides next to main.cjs (BrowserWindow { icon } on
+// win/linux); electron-builder picks the same art up from build/ for the
+// exe, dock and installers.
+copyFileSync(
+  new URL('../packages/desktop/build/icon.png', import.meta.url),
+  new URL('../packages/desktop/dist/icon.png', import.meta.url),
+)
 
 // Stamp an INCREASING semver from the CI run number: the auto-updater
 // compares versions, so a fixed version would mean no update ever fires.

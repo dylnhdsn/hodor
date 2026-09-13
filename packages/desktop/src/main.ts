@@ -205,6 +205,7 @@ function popOut(id: string): void {
     height: 640,
     title: term.title,
     backgroundColor: '#0a0a0b',
+    ...(process.platform !== 'darwin' ? { icon: join(__dirname, 'icon.png') } : {}),
     webPreferences: {
       preload: join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -378,7 +379,7 @@ function createMainWindow(): void {
     // else the renderer draws its own — ❐ ✕ controls.
     ...(process.platform === 'darwin'
       ? { titleBarStyle: 'hidden' as const, trafficLightPosition: { x: 12, y: 13 } }
-      : { frame: false }),
+      : { frame: false, icon: join(__dirname, 'icon.png') }),
     webPreferences: {
       preload: join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -414,6 +415,13 @@ function createMainWindow(): void {
 }
 
 app.whenReady().then(async () => {
+  // macOS About panel says hodor, not Electron.
+  if (process.platform === 'darwin') {
+    app.setAboutPanelOptions({
+      applicationName: 'hodor',
+      applicationVersion: typeof __HODOR_VERSION__ === 'string' ? __HODOR_VERSION__ : 'dev',
+    })
+  }
   server = await startServer(
     {
       ...baseNodeDeps(),
