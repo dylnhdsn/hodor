@@ -24,6 +24,12 @@ brainstorm doc when they get built. Living file — prune on completion.
   them user config; a global OS hotkey to summon the stack from
   anywhere; surface cloud sessions awaiting input once the API exposes
   that cleanly.
+- **Mint session ids for teleport and fork tiles** — 'new' tiles get
+  `claude --session-id <uuid>` at spawn (build 58), so desk restore
+  truly resumes them. Teleport tiles still re-teleport (stored id is
+  the CLOUD id) and fork tiles re-fork (stored id is the parent's);
+  mint ids for both so every tile restores its own conversation —
+  verify `--teleport`/`--fork-session` accept `--session-id` first.
 - **Full transcript viewer** — today only the conversation tail.
 - **Live-leaf conversation tail** — the tail renders in timestamp
   order, so dead branches (from double-resume or rewinds) interleave;
