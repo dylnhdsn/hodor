@@ -19,7 +19,15 @@ import {
 } from './data.js'
 import { Appearance } from './Appearance.js'
 import { CloudRow, cloudNeedsYou, cloudRunning } from './CloudSessions.js'
-import { Desk, deskState, SESSION_DRAG_MIME, setDeskTurnStates, subscribeDesk } from './Desk.js'
+import {
+  Desk,
+  deskState,
+  getDeskOps,
+  isDeferred,
+  SESSION_DRAG_MIME,
+  setDeskTurnStates,
+  subscribeDesk,
+} from './Desk.js'
 import { Stack, stackQueue } from './Stack.js'
 import { desktop } from './desktop.js'
 import { fetchPrefs, savePref } from './prefs.js'
@@ -97,7 +105,7 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
   const nowMs = Date.parse(snapshot.generatedAt)
 
   // Desk membership drives the turn-stack badge; re-render on any change.
-  const [, setDeskTick] = useState(0)
+  const [deskTick, setDeskTick] = useState(0)
   useEffect(() => subscribeDesk(() => setDeskTick((t) => t + 1)), [])
   // The frameless window needs to know where the native controls live.
   const [platform, setPlatform] = useState<string | undefined>(undefined)
@@ -107,11 +115,16 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
   const [, setThemeTick] = useState(0)
   useEffect(() => onThemeChange(() => setThemeTick((t) => t + 1)), [])
   const stackN = desktop !== undefined ? stackQueue(view.byId, nowMs).length : 0
+  // Needs-you counts honor skips (deferrals): a skipped session stays
+  // quiet until its transcript moves again.
   const waitingN = useMemo(
     () =>
-      view.visible.filter((s) => s.turn?.state === 'waiting').length +
-      view.cloud.filter(cloudNeedsYou).length,
-    [view],
+      view.visible.filter(
+        (s) => s.turn?.state === 'waiting' && !isDeferred(s.id, s.lastActivityAt, nowMs),
+      ).length +
+      view.cloud.filter((c) => cloudNeedsYou(c) && !isDeferred(c.id, c.updatedAt, nowMs)).length,
+    // deskTick: skips live in the desk store, not the snapshot
+    [view, nowMs, deskTick],
   )
 
   // Feed turn states to the desk's tabs (they live in separate React roots).
@@ -396,8 +409,11 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
           {view.rail.map((p) => {
             const cloudHere = view.cloudByProject.get(p.id) ?? []
             const wait =
-              p.sessions.filter((s) => s.turn?.state === 'waiting').length +
-              cloudHere.filter(cloudNeedsYou).length
+              p.sessions.filter(
+                (s) => s.turn?.state === 'waiting' && !isDeferred(s.id, s.lastActivityAt, nowMs),
+              ).length +
+              cloudHere.filter((c) => cloudNeedsYou(c) && !isDeferred(c.id, c.updatedAt, nowMs))
+                .length
             const run =
               p.sessions.filter((s) => s.turn?.state === 'working' || s.runtime.kind !== 'idle')
                 .length + cloudHere.filter(cloudRunning).length
@@ -675,6 +691,7 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
                 <HomeList
                   rows={rows}
                   render={renderAny}
+                  nowMs={nowMs}
                   openStack={
                     desktop !== undefined ? () => setFilter({ kind: 'stack' }) : undefined
                   }
@@ -826,14 +843,19 @@ function RailIcon(props: {
 function HomeList(props: {
   rows: Row[]
   render: (r: Row) => React.ReactNode
+  nowMs: number
   openStack?: (() => void) | undefined
 }) {
   const wait: Row[] = []
   const run: Row[] = []
   const rest: Row[] = []
   for (const r of props.rows) {
+    // Skipped rows leave NEEDS YOU for RECENT until the session moves.
     const needsYou =
-      r.kind === 'local' ? r.session.turn?.state === 'waiting' : cloudNeedsYou(r.cloud)
+      r.kind === 'local'
+        ? r.session.turn?.state === 'waiting' &&
+          !isDeferred(r.session.id, r.session.lastActivityAt, props.nowMs)
+        : cloudNeedsYou(r.cloud) && !isDeferred(r.cloud.id, r.cloud.updatedAt, props.nowMs)
     const running =
       r.kind === 'local'
         ? r.session.turn?.state === 'working' || r.session.runtime.kind !== 'idle'
@@ -1029,6 +1051,8 @@ function SessionRow(props: {
   const { checked, anySelected, inspecting, toggle, open, mutateProject } = props
   const active = s.runtime.kind !== 'idle'
   const turn = s.turn?.state
+  /** Waiting, but skipped: quiet until the transcript moves again. */
+  const skipped = turn === 'waiting' && isDeferred(s.id, s.lastActivityAt, nowMs)
   const claims = view.claimsBySession.get(s.id) ?? []
   const derived = view.derivedOf.get(s.id)
   const deskEntry = deskState.entries.find((e) => e.sessionId === s.id)
@@ -1102,14 +1126,20 @@ function SessionRow(props: {
         <div className="flex items-center gap-2">
           <span
             className={`shrink-0 text-[9px] ${
-              turn === 'waiting'
+              turn === 'waiting' && !skipped
                 ? 'text-ask'
                 : turn === 'working' || active
                   ? 'text-run'
                   : 'text-b6'
             }`}
             title={
-              turn === 'waiting' ? 'your turn' : turn === 'working' ? 'agent working' : undefined
+              skipped
+                ? 'skipped — wakes when it moves'
+                : turn === 'waiting'
+                  ? 'your turn'
+                  : turn === 'working'
+                    ? 'agent working'
+                    : undefined
             }
           >
             ●
@@ -1167,6 +1197,26 @@ function SessionRow(props: {
                   </option>
                 ))}
             </select>
+            {turn === 'waiting' && getDeskOps() !== undefined && (
+              <button
+                onClick={() =>
+                  getDeskOps()?.setDefer(
+                    s.id,
+                    skipped
+                      ? undefined
+                      : { untilMoves: s.lastActivityAt ?? new Date(nowMs).toISOString() },
+                  )
+                }
+                className="text-[10.5px] text-t4 hover:text-ask"
+                title={
+                  skipped
+                    ? 'bring its needs-you back'
+                    : 'quiet this one until the session moves again'
+                }
+              >
+                {skipped ? 'unskip' : '⏭ skip'}
+              </button>
+            )}
             <button
               onClick={() => void launchOrCopy({ kind: 'resume', sessionId: s.id })}
               className="text-[10.5px] text-run hover:text-run"
@@ -1203,7 +1253,7 @@ function SessionRow(props: {
         </div>
         <div
           className={`mt-0.5 truncate pl-[17px] text-[11px] ${
-            turn === 'waiting' ? 'text-ask/75' : 'text-t5'
+            turn === 'waiting' && !skipped ? 'text-ask/75' : 'text-t5'
           }`}
         >
           {line2}
@@ -1211,7 +1261,9 @@ function SessionRow(props: {
       </div>
 
       <span className="ml-2 shrink-0 whitespace-nowrap text-right text-[10.5px] text-t5">
-        {turn === 'waiting' ? (
+        {skipped ? (
+          <span title="wakes when the session moves">⏭ skipped</span>
+        ) : turn === 'waiting' ? (
           <span className="font-semibold text-ask">waiting {formatAge(nowMs, s.turn?.since)}</span>
         ) : (
           formatAge(nowMs, s.lastActivityAt)

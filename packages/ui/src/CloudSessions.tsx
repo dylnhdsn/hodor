@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { CloudSession } from '@hodor/core'
+import { getDeskOps, isDeferred } from './Desk.js'
 import { formatAge, formatTokens, formatUsd, launchOrCopy, sendCloudMessage } from './data.js'
 
 /**
@@ -51,7 +52,9 @@ export function CloudRow(props: {
   const { session: s, nowMs, projectOf, openProject } = props
   const [open, setOpen] = useState(false)
   const project = projectOf?.get(s.id)
-  const needsYou = cloudNeedsYou(s)
+  const wantsYou = cloudNeedsYou(s)
+  const skipped = wantsYou && isDeferred(s.id, s.updatedAt, nowMs)
+  const needsYou = wantsYou && !skipped
   const bucket = BUCKETS[s.bucket ?? ''] // undefined for unknown buckets
   const line2 =
     s.needsAction ?? s.statusDetail ?? s.recentAction ?? s.repo ?? s.branches.join(' · ')
@@ -110,6 +113,22 @@ export function CloudRow(props: {
               onClick={stop}
               className="ml-auto flex shrink-0 items-center gap-2 opacity-0 transition group-hover:opacity-100"
             >
+              {wantsYou && getDeskOps() !== undefined && (
+                <button
+                  onClick={() =>
+                    getDeskOps()?.setDefer(
+                      s.id,
+                      skipped ? undefined : { untilMoves: s.updatedAt ?? '' },
+                    )
+                  }
+                  className="text-[10.5px] text-t4 hover:text-ask"
+                  title={
+                    skipped ? 'bring its needs-you back' : 'quiet this one until it moves again'
+                  }
+                >
+                  {skipped ? 'unskip' : '⏭ skip'}
+                </button>
+              )}
               <button
                 onClick={() => void launchOrCopy({ kind: 'teleport', sessionId: s.id })}
                 className="text-[10.5px] text-run hover:text-run"
@@ -149,7 +168,9 @@ export function CloudRow(props: {
         </div>
 
         <span className="ml-2 shrink-0 whitespace-nowrap text-right text-[10.5px] text-t5">
-          {needsYou ? (
+          {skipped ? (
+            <span title="wakes when the session moves">⏭ skipped</span>
+          ) : needsYou ? (
             <span className="font-semibold text-ask">waiting {formatAge(nowMs, s.updatedAt)}</span>
           ) : (
             formatAge(nowMs, s.updatedAt)

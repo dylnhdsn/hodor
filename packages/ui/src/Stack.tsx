@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { Session, Snapshot } from '@hodor/core'
 import { desktop } from './desktop.js'
-import { deskState, getDeskOps, subscribeDesk, type DeskEntry } from './Desk.js'
+import { deskState, getDeskOps, isDeferred, subscribeDesk, type DeskEntry } from './Desk.js'
 import { TerminalView } from './Terminal.js'
 import { titleOf, type View } from './data.js'
 
@@ -44,13 +44,8 @@ export function stackQueue(byId: Map<string, Session>, nowMs: number): QueueItem
     const session = byId.get(entry.sessionId)
     if (session?.turn?.state !== 'waiting') continue
     seen.add(entry.sessionId)
-    const defer = deskState.defer[entry.sessionId]
-    if (defer !== undefined) {
-      const moved =
-        (defer.untilMoves !== undefined || defer.phone === true) &&
-        (session.lastActivityAt ?? '') > (defer.untilMoves ?? '')
-      const timedOut = defer.until !== undefined && Date.parse(defer.until) <= nowMs
-      if (!moved && !timedOut && (defer.until !== undefined ? !timedOut : true)) continue
+    if (deskState.defer[entry.sessionId] !== undefined) {
+      if (isDeferred(entry.sessionId, session.lastActivityAt, nowMs)) continue
       // expired deferral: clean it up so the badge math stays honest
       getDeskOps()?.setDefer(entry.sessionId, undefined)
     }

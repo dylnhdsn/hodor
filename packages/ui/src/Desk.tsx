@@ -97,6 +97,24 @@ function notifyDesk(): void {
   for (const fn of deskListeners) fn()
 }
 
+/** Is this session's needs-you currently silenced by a deferral?
+ * (skip / snooze / sent-to-phone). Pure — expiry cleanup stays in
+ * stackQueue. `lastMoveIso` is the session's latest activity: an
+ * "until it moves" deferral lifts the moment the transcript advances. */
+export function isDeferred(
+  sessionId: string,
+  lastMoveIso: string | undefined,
+  nowMs: number,
+): boolean {
+  const defer = deskState.defer[sessionId]
+  if (defer === undefined) return false
+  const moved =
+    (defer.untilMoves !== undefined || defer.phone === true) &&
+    (lastMoveIso ?? '') > (defer.untilMoves ?? '')
+  const timedOut = defer.until !== undefined && Date.parse(defer.until) <= nowMs
+  return !moved && !timedOut
+}
+
 /** Zone metas mirrored at module scope so entries can carry zone names. */
 let zoneMetas: Record<string, ZoneMeta> = {}
 
