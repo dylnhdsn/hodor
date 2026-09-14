@@ -682,6 +682,21 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
                 rail={view.rail}
                 currentProject={project}
                 mutateProject={mutateProject}
+                skipSelected={
+                  getDeskOps() !== undefined
+                    ? () => {
+                        const ops = getDeskOps()
+                        for (const id of selected) {
+                          const s = view.byId.get(id)
+                          if (s?.turn?.state === 'waiting') {
+                            ops?.setDefer(id, {
+                              untilMoves: s.lastActivityAt ?? new Date(nowMs).toISOString(),
+                            })
+                          }
+                        }
+                      }
+                    : undefined
+                }
               />
             )}
 
@@ -694,6 +709,23 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
                   nowMs={nowMs}
                   openStack={
                     desktop !== undefined ? () => setFilter({ kind: 'stack' }) : undefined
+                  }
+                  onSkipAll={
+                    getDeskOps() !== undefined
+                      ? (waiting) => {
+                          const ops = getDeskOps()
+                          for (const r of waiting) {
+                            const id = r.kind === 'local' ? r.session.id : r.cloud.id
+                            const lastMove =
+                              r.kind === 'local'
+                                ? r.session.lastActivityAt
+                                : r.cloud.updatedAt
+                            ops?.setDefer(id, {
+                              untilMoves: lastMove ?? new Date(nowMs).toISOString(),
+                            })
+                          }
+                        }
+                      : undefined
                   }
                 />
               ) : (
@@ -845,6 +877,8 @@ function HomeList(props: {
   render: (r: Row) => React.ReactNode
   nowMs: number
   openStack?: (() => void) | undefined
+  /** Quiet EVERYTHING currently in NEEDS YOU (until each moves again). */
+  onSkipAll?: ((rows: Row[]) => void) | undefined
 }) {
   const wait: Row[] = []
   const run: Row[] = []
@@ -889,14 +923,25 @@ function HomeList(props: {
         '▲ NEEDS YOU',
         'text-ask',
         wait,
-        props.openStack !== undefined ? (
-          <button
-            onClick={props.openStack}
-            className="font-normal tracking-normal text-t5 hover:text-t2"
-          >
-            open the turn stack →
-          </button>
-        ) : undefined,
+        <>
+          {props.openStack !== undefined && (
+            <button
+              onClick={props.openStack}
+              className="font-normal tracking-normal text-t5 hover:text-t2"
+            >
+              open the turn stack →
+            </button>
+          )}
+          {props.onSkipAll !== undefined && wait.length > 1 && (
+            <button
+              onClick={() => props.onSkipAll!(wait)}
+              className="ml-auto font-normal tracking-normal text-t5 hover:text-ask"
+              title="quiet all of these until each one moves again"
+            >
+              ⏭ skip all {wait.length}
+            </button>
+          )}
+        </>,
       )}
       {group('● RUNNING', 'text-run', run)}
       {group('RECENT', 'text-t5', rest)}
@@ -934,8 +979,9 @@ function BulkBar(props: {
   rail: RailProject[]
   currentProject: RailProject | undefined
   mutateProject: (body: Record<string, unknown>) => Promise<boolean>
+  skipSelected?: (() => void) | undefined
 }) {
-  const { selected, clear, rail, currentProject, mutateProject } = props
+  const { selected, clear, rail, currentProject, mutateProject, skipSelected } = props
   const ids = [...selected]
 
   async function archiveAll() {
@@ -958,6 +1004,18 @@ function BulkBar(props: {
   return (
     <div className="flex items-center gap-3 border-b border-b1 bg-s3/60 px-4 py-1.5 text-xs">
       <span className="text-t2">{ids.length} selected</span>
+      {skipSelected !== undefined && (
+        <button
+          onClick={() => {
+            skipSelected()
+            clear()
+          }}
+          className="text-t3 hover:text-ask"
+          title="quiet the waiting ones until each moves again"
+        >
+          ⏭ skip
+        </button>
+      )}
       <button onClick={() => void archiveAll()} className="text-t3 hover:text-fg">
         archive
       </button>
