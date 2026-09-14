@@ -35,6 +35,7 @@ const api = {
     return () => ipcRenderer.removeListener('win:state', listener)
   },
   updateState: () => ipcRenderer.invoke('update:state'),
+  updateCheck: () => ipcRenderer.invoke('update:check'),
   installUpdate: () => ipcRenderer.invoke('update:install'),
   onUpdateEvent: (handler: (payload: unknown) => void) => {
     const listener = (_event: unknown, payload: unknown): void => handler(payload)

@@ -33,6 +33,9 @@ export interface OpenResult {
 export type UpdateState =
   | { state: 'ready'; version: string }
   | { state: 'available-manual'; version: string; url: string }
+  | { state: 'checking' }
+  | { state: 'none'; checkedAt: string }
+  | { state: 'error'; message: string; checkedAt: string }
 
 export interface HodorDesktop {
   openTerminal(target: OpenTarget): Promise<OpenResult>
@@ -58,6 +61,8 @@ export interface HodorDesktop {
    * key handling (zoom) steps aside and every key reaches the PTY. */
   setTermFocus?(focused: boolean): void
   updateState(): Promise<UpdateState | undefined>
+  /** Kick an update check now (absent in older desktop builds). */
+  updateCheck?(): Promise<UpdateState | undefined>
   installUpdate(): Promise<void>
   onUpdateEvent(handler: (payload: UpdateState) => void): () => void
   onData(handler: (payload: { id: string; data: string }) => void): () => void

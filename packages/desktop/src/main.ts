@@ -366,6 +366,10 @@ function wireIpc(): void {
   })
 
   ipcMain.handle('update:state', () => updateState)
+  ipcMain.handle('update:check', () => {
+    runUpdateCheck()
+    return updateState
+  })
   ipcMain.handle('update:install', () => {
     if (updateState?.state === 'ready') autoUpdater.quitAndInstall()
   })
@@ -379,16 +383,31 @@ declare const __HODOR_VERSION__: string | undefined
  * publishes latest.yml / latest-linux.yml next to the installers.
  * Unsigned macOS can't be auto-installed (Squirrel refuses), so darwin
  * only compares build numbers against version.json and shows a notice.
- * Every failure here is quiet: the rolling release replaces assets one
- * by one, so a mid-upload check can mismatch — the next check heals it.
+ * Failures never nag, but they're no longer invisible: the last check's
+ * outcome (up to date / failed and why) is kept in updateState so the UI
+ * can show it next to its "check for updates" button — a mid-upload
+ * mismatch on the rolling release reads as one failed check that the
+ * next check heals.
  */
 type UpdateState =
   | { state: 'ready'; version: string }
   | { state: 'available-manual'; version: string; url: string }
+  | { state: 'checking' }
+  | { state: 'none'; checkedAt: string }
+  | { state: 'error'; message: string; checkedAt: string }
 
 let updateState: UpdateState | undefined
+let updateChecking = false
+let lastUpdateCheckAt = 0
 
 function announceUpdate(next: UpdateState): void {
+  // never bury a found update under a later quiet state
+  if (
+    (updateState?.state === 'ready' || updateState?.state === 'available-manual') &&
+    (next.state === 'checking' || next.state === 'none' || next.state === 'error')
+  ) {
+    return
+  }
   updateState = next
   broadcast('update:event', next)
 }
@@ -396,10 +415,11 @@ function announceUpdate(next: UpdateState): void {
 const buildNumberOf = (version: string): number =>
   Number(/-build\.(\d+)\./.exec(version)?.[1] ?? 0)
 
-async function checkMacUpdate(): Promise<void> {
+/** Returns true when a newer build was found (darwin manual path). */
+async function checkMacUpdate(): Promise<boolean> {
   const local = typeof __HODOR_VERSION__ === 'string' ? __HODOR_VERSION__ : ''
   const res = await fetch('https://github.com/dylnhdsn/hodor/releases/download/latest/version.json')
-  if (!res.ok) return
+  if (!res.ok) throw new Error(`version.json: HTTP ${res.status}`)
   const remote = ((await res.json()) as { version?: string }).version ?? ''
   if (buildNumberOf(remote) > buildNumberOf(local)) {
     announceUpdate({
@@ -407,27 +427,64 @@ async function checkMacUpdate(): Promise<void> {
       version: remote,
       url: 'https://github.com/dylnhdsn/hodor/releases/download/latest/hodor-desktop-mac-arm64.dmg',
     })
+    return true
+  }
+  return false
+}
+
+function runUpdateCheck(): void {
+  if (!app.isPackaged || updateChecking) return
+  updateChecking = true
+  lastUpdateCheckAt = Date.now()
+  announceUpdate({ state: 'checking' })
+  if (process.platform === 'darwin') {
+    void checkMacUpdate()
+      .then((found) => {
+        if (!found) announceUpdate({ state: 'none', checkedAt: new Date().toISOString() })
+      })
+      .catch((error) =>
+        announceUpdate({
+          state: 'error',
+          message: String(error instanceof Error ? error.message : error),
+          checkedAt: new Date().toISOString(),
+        }),
+      )
+      .finally(() => {
+        updateChecking = false
+      })
+  } else {
+    // outcome arrives via the update-not-available / downloaded / error
+    // events wired in setupUpdater
+    void autoUpdater
+      .checkForUpdates()
+      .catch(() => {})
+      .finally(() => {
+        updateChecking = false
+      })
   }
 }
 
 function setupUpdater(): void {
   if (!app.isPackaged) return
-  const check =
-    process.platform === 'darwin'
-      ? (): void => void checkMacUpdate().catch(() => {})
-      : (): void => void autoUpdater.checkForUpdates().catch(() => {})
   if (process.platform !== 'darwin') {
     autoUpdater.autoDownload = true
     autoUpdater.autoInstallOnAppQuit = true
     autoUpdater.on('update-downloaded', (info) => {
       announceUpdate({ state: 'ready', version: info.version })
     })
-    autoUpdater.on('error', () => {
-      // quiet by design; see the doc comment above
+    autoUpdater.on('update-not-available', () => {
+      announceUpdate({ state: 'none', checkedAt: new Date().toISOString() })
+    })
+    autoUpdater.on('error', (error) => {
+      announceUpdate({
+        state: 'error',
+        message: String(error?.message ?? error),
+        checkedAt: new Date().toISOString(),
+      })
     })
   }
-  setTimeout(check, 15_000)
-  setInterval(check, 30 * 60_000)
+  setTimeout(runUpdateCheck, 15_000)
+  setInterval(runUpdateCheck, 30 * 60_000)
 }
 
 function createMainWindow(): void {
@@ -463,6 +520,11 @@ function createMainWindow(): void {
   }
   mainWindow.on('maximize', sendWinState)
   mainWindow.on('unmaximize', sendWinState)
+  // Coming back to the app is the moment an update matters: a machine
+  // that slept through the 30-minute ticks catches up on focus.
+  mainWindow.on('focus', () => {
+    if (Date.now() - lastUpdateCheckAt > 10 * 60_000) runUpdateCheck()
+  })
   if (state.mainMaximized === true) mainWindow.maximize()
   // Instant paint: the local splash shows the moment the process is up —
   // the real UI navigates in via connectMainWindow once the embedded
