@@ -535,6 +535,28 @@ export function Desk({ inspect }: { inspect?: (sessionId: string) => void }) {
     if (apiRef.current !== null) refreshEntries(apiRef.current)
   }, [zones])
 
+  // Keep panel titles converged on the session's LIVE name: the tab
+  // renders deskSessionTitles itself, but syncing the panel title too
+  // covers every other consumer (saved layouts, dead-slot restores).
+  useEffect(
+    () =>
+      subscribeDesk(() => {
+        const api = apiRef.current
+        if (api === null) return
+        for (const panel of api.panels) {
+          const target = paramsOf(panel).target
+          const sessionId =
+            target !== undefined && (target.kind === 'resume' || target.kind === 'new')
+              ? target.sessionId
+              : undefined
+          if (sessionId === undefined) continue
+          const live = deskSessionTitles[sessionId]
+          if (live !== undefined && live !== panel.title) panel.api.setTitle(live)
+        }
+      }),
+    [],
+  )
+
   const save = useCallback(() => {
     if (unloading) return
     if (saveTimer.current !== undefined) window.clearTimeout(saveTimer.current)

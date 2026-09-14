@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 /**
  * The app's context menu: right-click verbs on rows and tabs, so hover
@@ -54,7 +55,9 @@ export function ContextMenu(props: { menu: MenuState; close: () => void }) {
     })
   }, [menu])
 
-  return (
+  // Portal to <body>: a fixed-position menu inside a dockview tab (or any
+  // transformed/overflow-clipped ancestor) renders clipped and invisible.
+  return createPortal(
     <>
       <div
         className="fixed inset-0 z-40"
@@ -94,6 +97,7 @@ export function ContextMenu(props: { menu: MenuState; close: () => void }) {
           ),
         )}
       </div>
-    </>
+    </>,
+    document.body,
   )
 }
