@@ -16,6 +16,8 @@ export interface TermInfo {
   id: string
   title: string
   target?: OpenTarget
+  /** Where the shell actually runs: "wsl · Ubuntu", "cmd", "bash"… */
+  env?: string
   exited?: number
 }
 
@@ -48,6 +50,13 @@ export interface HodorDesktop {
   winClose?(): void
   winIsMaximized?(): Promise<boolean>
   onWinState?(handler: (payload: { maximized: boolean }) => void): () => void
+  /** Clipboard via the main process — reliable where the renderer's
+   * navigator.clipboard needs permissions it may not have. */
+  clipboardText?(): Promise<string>
+  clipboardWrite?(text: string): void
+  /** Tell the main process a terminal owns the keyboard, so app-level
+   * key handling (zoom) steps aside and every key reaches the PTY. */
+  setTermFocus?(focused: boolean): void
   updateState(): Promise<UpdateState | undefined>
   installUpdate(): Promise<void>
   onUpdateEvent(handler: (payload: UpdateState) => void): () => void
@@ -59,6 +68,7 @@ export interface HodorDesktop {
       title?: string
       code?: number
       target?: OpenTarget
+      env?: string
     }) => void,
   ): () => void
 }

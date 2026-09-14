@@ -26,6 +26,9 @@ const api = {
   winMaximize: () => ipcRenderer.send('win:maximize'),
   winClose: () => ipcRenderer.send('win:close'),
   winIsMaximized: () => ipcRenderer.invoke('win:isMaximized'),
+  clipboardText: () => ipcRenderer.invoke('win:clipboardText'),
+  clipboardWrite: (text: string) => ipcRenderer.send('win:clipboardWrite', { text }),
+  setTermFocus: (focused: boolean) => ipcRenderer.send('win:termFocus', { focused }),
   onWinState: (handler: (payload: { maximized: boolean }) => void) => {
     const listener = (_event: unknown, payload: { maximized: boolean }): void => handler(payload)
     ipcRenderer.on('win:state', listener)
@@ -51,11 +54,19 @@ const api = {
       title?: string
       code?: number
       target?: OpenTarget
+      env?: string
     }) => void,
   ) => {
     const listener = (
       _event: unknown,
-      payload: { type: string; id: string; title?: string; code?: number; target?: OpenTarget },
+      payload: {
+        type: string
+        id: string
+        title?: string
+        code?: number
+        target?: OpenTarget
+        env?: string
+      },
     ): void => handler(payload)
     ipcRenderer.on('pty:event', listener)
     return () => ipcRenderer.removeListener('pty:event', listener)

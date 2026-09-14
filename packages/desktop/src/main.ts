@@ -9,7 +9,7 @@
  */
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { BrowserWindow, app, ipcMain, shell } from 'electron'
+import { BrowserWindow, app, clipboard, ipcMain, shell } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import type { IPty } from 'node-pty'
 import { spawn as ptySpawn } from 'node-pty'
@@ -30,6 +30,8 @@ interface Term {
   title: string
   /** How this terminal was opened — the workspace slot rule (doc 022). */
   target: OpenTarget
+  /** Where the shell runs: "wsl · Ubuntu", "cmd", "bash"… */
+  env?: string
   pty: IPty
   /** Bounded scrollback for re-attach; chunks trimmed from the front. */
   backlog: Buffer[]
@@ -85,6 +87,11 @@ function broadcast(channel: string, payload: unknown): void {
 const ZOOM_MIN = -3
 const ZOOM_MAX = 4
 
+/** WebContents whose focused element is a terminal right now. While a
+ * terminal owns the keyboard, app-level KEY handling (zoom) steps aside so
+ * the PTY sees every keystroke; ctrl+wheel zoom stays (it's the mouse). */
+const termFocused = new Set<number>()
+
 /**
  * Zoom that actually works both ways. The hidden default menu's zoomIn
  * role only answers Ctrl+Shift+= — plain Ctrl+=/Ctrl++ (and numpad +)
@@ -107,6 +114,8 @@ function wireZoom(win: BrowserWindow, persist: boolean): void {
     // key presses arrive as keyDown or rawKeyDown depending on the path
     if ((input.type !== 'keyDown' && input.type !== 'rawKeyDown') || input.alt) return
     if (!(input.control || input.meta)) return
+    // a focused terminal gets EVERY key — no app shortcuts over a PTY
+    if (termFocused.has(win.webContents.id)) return
     if (input.key === '+' || input.key === '=') {
       event.preventDefault()
       apply(win.webContents.getZoomLevel() + 0.5)
@@ -123,11 +132,18 @@ function wireZoom(win: BrowserWindow, persist: boolean): void {
   })
 }
 
-function termSummary(term: Term): { id: string; title: string; target: OpenTarget; exited?: number } {
+function termSummary(term: Term): {
+  id: string
+  title: string
+  target: OpenTarget
+  env?: string
+  exited?: number
+} {
   return {
     id: term.id,
     title: term.title,
     target: term.target,
+    ...(term.env !== undefined ? { env: term.env } : {}),
     ...(term.exited !== undefined ? { exited: term.exited } : {}),
   }
 }
@@ -136,6 +152,20 @@ interface PtySpec {
   file: string
   args: string[]
   cwd?: string
+}
+
+/** Human tag for where a spec's shell actually runs — the tab shows it so
+ * a WSL claude and a cmd claude are tellable at a glance. */
+function envLabelOf(spec: PtySpec): string {
+  const base = spec.file.split(/[/\\]/).pop()?.toLowerCase() ?? spec.file
+  if (base === 'wsl.exe') {
+    const d = spec.args.indexOf('-d')
+    const distro = d >= 0 ? spec.args[d + 1] : undefined
+    return distro !== undefined ? `wsl · ${distro}` : 'wsl'
+  }
+  if (base === 'cmd.exe') return 'cmd'
+  if (base === 'powershell.exe' || base === 'pwsh.exe' || base === 'pwsh') return 'powershell'
+  return base.replace(/\.exe$/, '')
 }
 
 async function openTerminal(
@@ -172,6 +202,7 @@ async function openTerminal(
 
   const id = `t${bootTag}-${nextTermId++}`
   const title = body.title ?? id
+  const env = envLabelOf(body.spec)
   const pty = ptySpawn(body.spec.file, body.spec.args, {
     name: 'xterm-256color',
     cols: 120,
@@ -179,7 +210,16 @@ async function openTerminal(
     cwd: body.spec.cwd ?? app.getPath('home'),
     env: { ...process.env, TERM: 'xterm-256color' } as Record<string, string>,
   })
-  const term: Term = { id, title, target, pty, backlog: [], backlogBytes: 0, subscribers: new Set() }
+  const term: Term = {
+    id,
+    title,
+    target,
+    env,
+    pty,
+    backlog: [],
+    backlogBytes: 0,
+    subscribers: new Set(),
+  }
   terms.set(id, term)
 
   pty.onData((data) => {
@@ -199,7 +239,7 @@ async function openTerminal(
     broadcast('pty:event', { type: 'exit', id, code: exitCode })
   })
 
-  broadcast('pty:event', { type: 'opened', id, title, target })
+  broadcast('pty:event', { type: 'opened', id, title, target, env })
   return { id, title }
 }
 
@@ -233,7 +273,13 @@ function popOut(id: string): void {
     // The PTY survives its window: hand the terminal back to the dock,
     // unless it already exited and nobody is watching.
     if (terms.has(id)) {
-      broadcast('pty:event', { type: 'returned', id, title: term.title, target: term.target })
+      broadcast('pty:event', {
+        type: 'returned',
+        id,
+        title: term.title,
+        target: term.target,
+        env: term.env,
+      })
     }
   })
 }
@@ -309,6 +355,15 @@ function wireIpc(): void {
     'win:isMaximized',
     (event) => BrowserWindow.fromWebContents(event.sender)?.isMaximized() ?? false,
   )
+  ipcMain.handle('win:clipboardText', () => clipboard.readText())
+  ipcMain.on('win:clipboardWrite', (_event, { text }: { text: string }) => {
+    if (typeof text === 'string' && text.length > 0) clipboard.writeText(text)
+  })
+  ipcMain.on('win:termFocus', (event, { focused }: { focused: boolean }) => {
+    if (focused === true) termFocused.add(event.sender.id)
+    else termFocused.delete(event.sender.id)
+    event.sender.once('destroyed', () => termFocused.delete(event.sender.id))
+  })
 
   ipcMain.handle('update:state', () => updateState)
   ipcMain.handle('update:install', () => {
@@ -436,6 +491,10 @@ function connectMainWindow(): void {
   if (server === undefined || mainWindow === undefined || mainWindow.isDestroyed()) return
   void mainWindow.loadURL(server.url)
 }
+
+// Windows ties toast notifications and taskbar grouping to this id; it must
+// match the installer's appId or renderer Notifications never show.
+app.setAppUserModelId('dev.dylnhdsn.hodor')
 
 app.whenReady().then(async () => {
   // macOS About panel says hodor, not Electron.

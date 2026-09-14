@@ -2,6 +2,7 @@
 import {
   COLORSCHEMES,
   deriveTheme,
+  mixHex,
   parseColorscheme,
   terminalThemeOf,
   type Colorscheme,
@@ -41,14 +42,37 @@ export const FONT_PACKS: FontPack[] = [
   },
 ]
 
+/** Terminal typefaces worth offering: the bundled ones always work; the
+ * rest are common system installs, checked at render time. Any family the
+ * user types works too — xterm falls back down the stack if it's absent. */
+export interface TermFontOption {
+  name: string
+  bundled?: boolean
+}
+export const TERM_FONTS: TermFontOption[] = [
+  { name: 'JetBrains Mono', bundled: true },
+  { name: 'Fira Code', bundled: true },
+  { name: 'IBM Plex Mono', bundled: true },
+  { name: 'Source Code Pro', bundled: true },
+  { name: 'Cascadia Code' },
+  { name: 'Cascadia Mono' },
+  { name: 'Consolas' },
+  { name: 'Menlo' },
+  { name: 'SF Mono' },
+  { name: 'Ubuntu Mono' },
+]
+
 export interface ThemeState {
   schemeId: string
   fontId: string
   custom?: Colorscheme
+  /** Terminal font family ('' = follow the font pack's mono). */
+  termFont: string
+  termSize: number
 }
 
 const listeners = new Set<() => void>()
-let current: ThemeState = { schemeId: 'hodor', fontId: 'hodor' }
+let current: ThemeState = { schemeId: 'hodor', fontId: 'hodor', termFont: '', termSize: 13 }
 
 export const allSchemes = (): Colorscheme[] =>
   current.custom !== undefined ? [...COLORSCHEMES, current.custom] : COLORSCHEMES
@@ -61,8 +85,32 @@ export const activeFont = (): FontPack =>
 
 export const themeState = (): ThemeState => current
 
+/** The terminal's own background: a shade OFF the app background, so the
+ * screen-within-a-screen reads as its own surface (dark schemes go darker,
+ * light schemes go slightly gray). */
+export function terminalBg(): string {
+  const scheme = activeScheme()
+  const bg = '#' + scheme.bg
+  const n = parseInt(scheme.bg, 16)
+  const lum = (((n >> 16) & 255) * 299 + ((n >> 8) & 255) * 587 + (n & 255) * 114) / 255_000
+  return lum < 0.5 ? mixHex(bg, '#000000', 0.45) : mixHex(bg, '#000000', 0.05)
+}
+
 /** The xterm theme for the ACTIVE scheme. */
-export const activeTerminalTheme = (): Record<string, string> => terminalThemeOf(activeScheme())
+export const activeTerminalTheme = (): Record<string, string> => ({
+  ...terminalThemeOf(activeScheme()),
+  background: terminalBg(),
+})
+
+/** Resolved terminal typography: the chosen family in front of the font
+ * pack's mono stack (so a missing family degrades sanely), plus size. */
+export const activeTermFont = (): { family: string; size: number } => ({
+  family:
+    current.termFont.trim() !== ''
+      ? `'${current.termFont.trim().replace(/'/g, '')}', ${activeFont().mono}`
+      : activeFont().mono,
+  size: current.termSize,
+})
 
 export function onThemeChange(handler: () => void): () => void {
   listeners.add(handler)
@@ -79,6 +127,7 @@ function apply(): void {
   // The mock set BOTH font vars to the mono face — chrome is the UI face.
   el.style.setProperty('--h-font-ui', font.ui)
   el.style.setProperty('--h-font-mono', font.mono)
+  el.style.setProperty('--h-term-bg', terminalBg())
   for (const handler of listeners) handler()
 }
 
@@ -86,6 +135,8 @@ function persistLocal(): void {
   try {
     localStorage.setItem('hodor-theme', current.schemeId)
     localStorage.setItem('hodor-font', current.fontId)
+    localStorage.setItem('hodor-term-font', current.termFont)
+    localStorage.setItem('hodor-term-size', String(current.termSize))
     if (current.custom !== undefined) {
       localStorage.setItem('hodor-custom-scheme', JSON.stringify(current.custom))
     }
@@ -101,6 +152,8 @@ function persist(): void {
   savePref({
     theme: current.schemeId,
     font: current.fontId,
+    termFont: current.termFont,
+    termSize: current.termSize,
     ...(current.custom !== undefined ? { customScheme: current.custom } : {}),
   })
 }
@@ -113,6 +166,10 @@ export function loadTheme(): void {
     if (scheme !== null) current.schemeId = scheme
     const font = localStorage.getItem('hodor-font')
     if (font !== null) current.fontId = font
+    const termFont = localStorage.getItem('hodor-term-font')
+    if (termFont !== null) current.termFont = termFont
+    const termSize = Number(localStorage.getItem('hodor-term-size'))
+    if (Number.isFinite(termSize) && termSize >= 8 && termSize <= 28) current.termSize = termSize
   } catch {
     // fall through to defaults
   }
@@ -138,6 +195,16 @@ export async function hydrateTheme(): Promise<void> {
     current = { ...current, fontId: font }
     changed = true
   }
+  const termFont = prefs['termFont']
+  if (typeof termFont === 'string' && termFont !== current.termFont) {
+    current = { ...current, termFont }
+    changed = true
+  }
+  const termSize = prefs['termSize']
+  if (typeof termSize === 'number' && termSize >= 8 && termSize <= 28 && termSize !== current.termSize) {
+    current = { ...current, termSize }
+    changed = true
+  }
   if (changed) {
     persistLocal() // refresh the cache only — no write-back loop
     apply()
@@ -152,6 +219,18 @@ export function setScheme(id: string): void {
 
 export function setFont(id: string): void {
   current = { ...current, fontId: id }
+  persist()
+  apply()
+}
+
+export function setTermFont(family: string): void {
+  current = { ...current, termFont: family }
+  persist()
+  apply()
+}
+
+export function setTermSize(size: number): void {
+  current = { ...current, termSize: Math.max(8, Math.min(28, size)) }
   persist()
   apply()
 }
