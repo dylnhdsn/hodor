@@ -374,7 +374,7 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
               origin: { kind: 'native' },
               claudeArgs: ['--teleport', cloud.id],
             }
-      title = `☁ ${cloud.title ?? cloud.repo ?? cloud.id.slice(0, 12)}`
+      title = cloud.title ?? cloud.repo ?? cloud.id.slice(0, 12)
     } else if (payload.kind === 'resume' || payload.kind === 'fork') {
       const session = snapshot?.sessions.find((s) => s.id === payload.sessionId)
       if (session === undefined) return sendJson(res, 404, { error: `no session "${payload.sessionId}"` })

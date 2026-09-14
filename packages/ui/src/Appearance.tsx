@@ -1,11 +1,15 @@
 import { useState } from 'react'
 import { deriveTheme, mixHex, type Colorscheme } from '@hodor/core/colorscheme'
+import { notifyEnabled, setNotifyEnabled } from './notify.js'
 import {
   FONT_PACKS,
+  TERM_FONTS,
   allSchemes,
   importScheme,
   setFont,
   setScheme,
+  setTermFont,
+  setTermSize,
   themeState,
 } from './theme.js'
 
@@ -103,10 +107,7 @@ export function Appearance() {
         <div>
           <h2 className="font-ui text-[15px] font-semibold text-fg">Settings</h2>
           <p className="mt-1 max-w-2xl text-xs leading-relaxed text-t3">
-            every color in hodor is calculated from a terminal colorscheme — surfaces and borders
-            are background→foreground mixes; needs-you is ANSI yellow, running is green,
-            review-ready is blue, errors are red, the accent is magenta; picks that fail contrast
-            are auto-corrected. The embedded terminals share the same palette.
+            every color derives from a terminal colorscheme; the embedded terminals share it.
           </p>
         </div>
 
@@ -157,6 +158,120 @@ export function Appearance() {
             </button>
           ))}
         </div>
+
+        <div className="mt-1 font-mono text-[9.5px] font-semibold tracking-[.14em] text-t5">
+          TERMINAL FONT
+        </div>
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-2">
+          <button
+            onClick={() => {
+              setTermFont('')
+              rerender()
+            }}
+            className={`flex flex-col gap-0.5 rounded border bg-s1 px-3 py-2 text-left ${
+              state.termFont === '' ? 'border-ac' : 'border-b3 hover:border-ac'
+            }`}
+          >
+            <span className="text-[12px] font-semibold">follow the font pack</span>
+            <span className="font-mono text-[10.5px] text-t4">❯ claude --resume · 0O1lI</span>
+          </button>
+          {TERM_FONTS.map((f) => {
+            const installed =
+              f.bundled === true ||
+              (typeof document.fonts?.check === 'function' &&
+                document.fonts.check(`12px "${f.name}"`))
+            return (
+              <button
+                key={f.name}
+                onClick={() => {
+                  setTermFont(f.name)
+                  rerender()
+                }}
+                className={`flex flex-col gap-0.5 rounded border bg-s1 px-3 py-2 text-left ${
+                  state.termFont === f.name ? 'border-ac' : 'border-b3 hover:border-ac'
+                } ${installed ? '' : 'opacity-45'}`}
+                title={installed ? undefined : 'not installed on this machine'}
+              >
+                <span className="flex items-center gap-1.5 text-[12px] font-semibold">
+                  {f.name}
+                  {f.bundled === true && (
+                    <span className="rounded border border-b4 px-1 text-[8.5px] font-normal text-t5">
+                      ships with hodor
+                    </span>
+                  )}
+                </span>
+                <span
+                  className="font-mono text-[10.5px] text-t4"
+                  style={{ fontFamily: `'${f.name}', monospace` }}
+                >
+                  ❯ claude --resume · 0O1lI
+                </span>
+              </button>
+            )
+          })}
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <input
+            defaultValue={
+              TERM_FONTS.some((f) => f.name === state.termFont) ? '' : state.termFont
+            }
+            placeholder="any installed family…"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                setTermFont((e.target as HTMLInputElement).value)
+                rerender()
+              }
+            }}
+            onBlur={(e) => {
+              if (e.target.value.trim() !== '') {
+                setTermFont(e.target.value)
+                rerender()
+              }
+            }}
+            className="w-56 rounded border border-b1 bg-s1 px-2.5 py-1 text-[11px] outline-none placeholder:text-t6 focus:border-b6"
+          />
+          <span className="flex items-center gap-1.5 text-[11px] text-t3">
+            size
+            <button
+              onClick={() => {
+                setTermSize(state.termSize - 1)
+                rerender()
+              }}
+              className="rounded border border-b4 px-2 py-0.5 hover:border-b6 hover:text-fg"
+            >
+              −
+            </button>
+            <span className="w-6 text-center font-mono">{state.termSize}</span>
+            <button
+              onClick={() => {
+                setTermSize(state.termSize + 1)
+                rerender()
+              }}
+              className="rounded border border-b4 px-2 py-0.5 hover:border-b6 hover:text-fg"
+            >
+              +
+            </button>
+          </span>
+        </div>
+
+        <div className="mt-1 font-mono text-[9.5px] font-semibold tracking-[.14em] text-t5">
+          NOTIFICATIONS
+        </div>
+        <label className="flex w-fit cursor-pointer items-center gap-2.5 rounded border border-b3 bg-s1 px-3 py-2">
+          <input
+            type="checkbox"
+            checked={notifyEnabled()}
+            onChange={(e) => {
+              setNotifyEnabled(e.target.checked)
+              rerender()
+            }}
+            className="h-3.5 w-3.5 accent-ac"
+          />
+          <span className="text-[12px]">
+            notify me when a session flips to <span className="font-semibold text-ask">needs you</span>{' '}
+            while the window is in the background
+          </span>
+        </label>
 
         <div className="mt-1 font-mono text-[9.5px] font-semibold tracking-[.14em] text-t5">
           IMPORT — FROM THE FILES YOUR TERMINAL ALREADY USES

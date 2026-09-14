@@ -13,7 +13,9 @@ import {
   type SerializedDockview,
 } from 'dockview-react'
 import 'dockview/dist/styles/dockview.css'
+import { postMutation } from './data.js'
 import { desktop, type OpenTarget } from './desktop.js'
+import { ContextMenu, useContextMenu } from './menu.js'
 import { TerminalView } from './Terminal.js'
 
 /**
@@ -31,6 +33,8 @@ import { TerminalView } from './Terminal.js'
 export interface SlotParams {
   ptyId?: string
   target?: OpenTarget
+  /** Where the shell runs ("wsl · Ubuntu", "cmd") — the tab shows it. */
+  env?: string
 }
 
 interface ZoneMeta {
@@ -49,8 +53,21 @@ interface WorkspaceDoc {
 }
 
 export interface DeferState {
+  /** Timed snooze: quiet until this instant. */
   until?: string
+  /** Legacy "until it moves": quiet while lastActivity <= this timestamp.
+   * Replaced by `sig` — timestamps churn on background noise (task
+   * notifications, cloud listing refreshes) and un-skipped things nobody
+   * touched. Kept so old saved defers keep working. */
   untilMoves?: string
+  /** "Until it moves", done right: a snapshot of WHAT the session was
+   * asking when skipped (its waiting signature). It stays quiet while the
+   * ask reads the same and wakes when the ask actually changes. */
+  sig?: string
+  /** No wake condition at all — quiet until the user unskips. */
+  hold?: boolean
+  /** Why you skipped it — shown on the row so future-you reorients. */
+  note?: string
   phone?: boolean
 }
 
@@ -98,22 +115,30 @@ function notifyDesk(): void {
 }
 
 /** Is this session's needs-you currently silenced by a deferral?
- * (skip / snooze / sent-to-phone). Pure — expiry cleanup stays in
- * stackQueue. `lastMoveIso` is the session's latest activity: an
- * "until it moves" deferral lifts the moment the transcript advances. */
+ * (skip / snooze / hold / sent-to-phone). Pure — expiry cleanup stays in
+ * stackQueue. `currentSig` is the session's waiting signature right now
+ * (what it's asking); a sig deferral lifts when the ask changes.
+ * `lastMoveIso` only serves legacy timestamp deferrals. */
 export function isDeferred(
   sessionId: string,
+  currentSig: string | undefined,
   lastMoveIso: string | undefined,
   nowMs: number,
 ): boolean {
   const defer = deskState.defer[sessionId]
   if (defer === undefined) return false
-  const moved =
-    (defer.untilMoves !== undefined || defer.phone === true) &&
-    (lastMoveIso ?? '') > (defer.untilMoves ?? '')
-  const timedOut = defer.until !== undefined && Date.parse(defer.until) <= nowMs
-  return !moved && !timedOut
+  if (defer.until !== undefined) return Date.parse(defer.until) > nowMs
+  if (defer.hold === true) return true
+  if (defer.sig !== undefined) return defer.sig === (currentSig ?? '')
+  if (defer.untilMoves !== undefined || defer.phone === true) {
+    return (lastMoveIso ?? '') <= (defer.untilMoves ?? '')
+  }
+  return true
 }
+
+/** The note attached to a deferral, if any. */
+export const deferNoteOf = (sessionId: string): string | undefined =>
+  deskState.defer[sessionId]?.note
 
 /** Zone metas mirrored at module scope so entries can carry zone names. */
 let zoneMetas: Record<string, ZoneMeta> = {}
@@ -133,16 +158,25 @@ if (typeof window !== 'undefined') {
   })
 }
 
-/** Turn states by session id, pushed in by the App from each snapshot so
- * the desk's tabs (separate React roots) can color their status dots. */
+/** Turn states + display titles by session id, pushed in by the App from
+ * each snapshot so the desk's tabs (separate React roots) can color their
+ * status dots and carry the session's actual name. */
 export const deskTurnStates: Record<string, 'working' | 'waiting' | 'idle'> = {}
-export function setDeskTurnStates(next: Record<string, 'working' | 'waiting' | 'idle'>): void {
+export const deskSessionTitles: Record<string, string> = {}
+export function setDeskSessions(
+  states: Record<string, 'working' | 'waiting' | 'idle'>,
+  titles: Record<string, string>,
+): void {
   const changed =
-    Object.keys(next).length !== Object.keys(deskTurnStates).length ||
-    Object.entries(next).some(([id, state]) => deskTurnStates[id] !== state)
+    Object.keys(states).length !== Object.keys(deskTurnStates).length ||
+    Object.entries(states).some(([id, state]) => deskTurnStates[id] !== state) ||
+    Object.keys(titles).length !== Object.keys(deskSessionTitles).length ||
+    Object.entries(titles).some(([id, title]) => deskSessionTitles[id] !== title)
   if (!changed) return
   for (const id of Object.keys(deskTurnStates)) delete deskTurnStates[id]
-  Object.assign(deskTurnStates, next)
+  Object.assign(deskTurnStates, states)
+  for (const id of Object.keys(deskSessionTitles)) delete deskSessionTitles[id]
+  Object.assign(deskSessionTitles, titles)
   notifyDesk()
 }
 
@@ -270,7 +304,7 @@ function TerminalPanel(props: IDockviewPanelProps<SlotParams>) {
       <p className="max-w-md truncate font-semibold text-t2">{describeTarget(target)}</p>
       {target?.sessionId !== undefined && (
         <p className="font-mono text-[10.5px] text-t6">
-          claude --resume {target.sessionId.slice(0, 8)}… — restores losslessly from the transcript
+          claude --resume {target.sessionId.slice(0, 8)}…
         </p>
       )}
       {isBusy ? (
@@ -364,14 +398,17 @@ function GroupActions(props: IDockviewHeaderActionsProps) {
   )
 }
 
-/** Mock tab anatomy: status dot + ❯ + title, active = amber underline. */
+/** Tab anatomy: status dot + ❯ + the SESSION's name (live from the
+ * snapshot once the tile knows its session), plus a where-it-runs tag for
+ * cross-boundary shells (wsl/cmd). Right-click for the tab's verbs. */
 function SlotTab(props: IDockviewPanelHeaderProps<SlotParams>) {
   const [active, setActive] = useState(props.api.isActive)
-  const [title, setTitle] = useState(props.api.title ?? props.api.id)
+  const [panelTitle, setPanelTitle] = useState(props.api.title ?? props.api.id)
   const [, force] = useState(0)
+  const { menu, openMenu, closeMenu } = useContextMenu()
   useEffect(() => {
     const d1 = props.api.onDidActiveChange((e) => setActive(e.isActive))
-    const d2 = props.api.onDidTitleChange((e) => setTitle(e.title))
+    const d2 = props.api.onDidTitleChange((e) => setPanelTitle(e.title))
     const off = subscribeDesk(() => force((t) => t + 1))
     return () => {
       d1.dispose()
@@ -379,14 +416,54 @@ function SlotTab(props: IDockviewPanelHeaderProps<SlotParams>) {
       off()
     }
   }, [props.api])
+  const target = props.params.target
   const sessionId =
-    props.params.target?.kind === 'resume' ? props.params.target.sessionId : undefined
+    target !== undefined && (target.kind === 'resume' || target.kind === 'new')
+      ? target.sessionId
+      : undefined
+  // The session's own name wins over the launch-time panel title.
+  const title = (sessionId !== undefined ? deskSessionTitles[sessionId] : undefined) ?? panelTitle
   const turn = sessionId !== undefined ? deskTurnStates[sessionId] : undefined
   const dead = props.params.ptyId === undefined
-  const dot =
-    turn === 'waiting' ? 'text-ask' : dead ? 'text-b6' : 'text-run'
+  const dot = turn === 'waiting' ? 'text-ask' : dead ? 'text-b6' : 'text-run'
+  // Only cross-boundary shells earn a tag — a native shell is the default.
+  const env = props.params.env
+  const envTag = env !== undefined && (env.startsWith('wsl') || env === 'cmd' || env === 'powershell')
+    ? env
+    : undefined
+
+  const rename = (): void => {
+    const name = window.prompt('Rename session', title)
+    if (name === null || name.trim().length === 0) return
+    if (sessionId !== undefined) {
+      // the durable name — every view shows it, not just this tab
+      void postMutation('/api/session', {
+        op: 'rename-session',
+        sessionId,
+        name: name.trim(),
+      })
+    } else {
+      props.api.setTitle(name.trim())
+    }
+  }
+
   return (
     <div
+      onContextMenu={(e) =>
+        openMenu(e, [
+          { label: title, heading: true },
+          { label: 'rename', onClick: rename },
+          ...(props.params.ptyId !== undefined && desktop !== undefined
+            ? [
+                {
+                  label: 'open in its own window',
+                  onClick: () => void desktop!.popOut(props.params.ptyId!),
+                },
+              ]
+            : []),
+          { label: 'close tab', onClick: () => props.api.close(), danger: true },
+        ])
+      }
       className={`group flex h-full items-center gap-1.5 px-2.5 font-mono text-[11px] ${
         active
           ? 'text-fg shadow-[inset_0_-2px_0_0_var(--h-ask)]'
@@ -396,6 +473,14 @@ function SlotTab(props: IDockviewPanelHeaderProps<SlotParams>) {
       <span className={`text-[8px] ${dot}`}>●</span>
       <span className="text-t6">❯</span>
       <span className="max-w-[160px] truncate font-ui text-[11.5px] font-semibold">{title}</span>
+      {envTag !== undefined && (
+        <span
+          className="rounded border border-b4 px-1 text-[8.5px] leading-[13px] text-t5"
+          title={`runs in ${envTag}`}
+        >
+          {envTag}
+        </span>
+      )}
       <button
         onClick={(e) => {
           e.stopPropagation()
@@ -406,6 +491,7 @@ function SlotTab(props: IDockviewPanelHeaderProps<SlotParams>) {
       >
         ×
       </button>
+      {menu !== undefined && <ContextMenu menu={menu} close={closeMenu} />}
     </div>
   )
 }
@@ -682,7 +768,7 @@ export function Desk({ inspect }: { inspect?: (sessionId: string) => void }) {
         if (api === null) return
         for (const t of list) {
           if (findPanelByPty(api, t.id) === undefined) {
-            addPtyPanel(api, t.id, t.title, t.target)
+            addPtyPanel(api, t.id, t.title, t.target, t.env)
           }
         }
       })
@@ -692,7 +778,13 @@ export function Desk({ inspect }: { inspect?: (sessionId: string) => void }) {
       return id !== undefined && api.groups.some((g) => g.id === id) ? id : undefined
     }
 
-    function addPtyPanel(api: DockviewApi, ptyId: string, title?: string, target?: OpenTarget) {
+    function addPtyPanel(
+      api: DockviewApi,
+      ptyId: string,
+      title?: string,
+      target?: OpenTarget,
+      env?: string,
+    ) {
       const dropped =
         pendingOpen.groupId !== undefined && api.groups.some((g) => g.id === pendingOpen.groupId)
           ? pendingOpen.groupId
@@ -703,7 +795,11 @@ export function Desk({ inspect }: { inspect?: (sessionId: string) => void }) {
         id: `pty-${ptyId}`,
         component: 'terminal',
         title: title ?? ptyId,
-        params: { ptyId, ...(target !== undefined ? { target } : {}) },
+        params: {
+          ptyId,
+          ...(target !== undefined ? { target } : {}),
+          ...(env !== undefined ? { env } : {}),
+        },
         ...(group !== undefined ? { position: { referenceGroup: group } } : {}),
       })
     }
@@ -721,6 +817,7 @@ export function Desk({ inspect }: { inspect?: (sessionId: string) => void }) {
             panel.api.updateParameters({
               ptyId: event.id,
               ...(event.target !== undefined ? { target: event.target } : {}),
+              ...(event.env !== undefined ? { env: event.env } : {}),
             })
             if (event.title !== undefined) panel.api.setTitle(event.title)
             save()
@@ -731,7 +828,7 @@ export function Desk({ inspect }: { inspect?: (sessionId: string) => void }) {
           resolve?.()
         }
         if (findPanelByPty(api, event.id) === undefined) {
-          addPtyPanel(api, event.id, event.title, event.target)
+          addPtyPanel(api, event.id, event.title, event.target, event.env)
         }
       } else if (event.type === 'popped' || event.type === 'closed') {
         const panel = findPanelByPty(api, event.id)
@@ -773,11 +870,10 @@ export function Desk({ inspect }: { inspect?: (sessionId: string) => void }) {
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {restore !== undefined && (
           <div className="mx-3 mt-2.5 flex flex-none items-center gap-2.5 rounded border border-ac/50 bg-ac/8 px-3.5 py-2 text-[12.5px]">
-            <span className="text-[15px]">⚡</span>
             <span className="font-bold">Restore your desk?</span>
             <span className="text-xs text-t3">
               {restore.dead} session{restore.dead === 1 ? '' : 's'} across {restore.zones} zone
-              {restore.zones === 1 ? '' : 's'} — every tile resumes claude --resume into its place
+              {restore.zones === 1 ? '' : 's'}
             </span>
             <button
               onClick={() => void restoreAll()}

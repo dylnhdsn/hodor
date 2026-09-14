@@ -1,7 +1,9 @@
 import { useState } from 'react'
 import type { CloudSession } from '@hodor/core'
-import { getDeskOps, isDeferred } from './Desk.js'
-import { formatAge, formatTokens, formatUsd, launchOrCopy, sendCloudMessage } from './data.js'
+import { deferNoteOf, getDeskOps, isDeferred } from './Desk.js'
+import { formatAge, formatTokens, formatUsd, launchOrCopy, sendCloudMessage, sigOfCloud } from './data.js'
+import { CloudIcon } from './icons.js'
+import { ContextMenu, useContextMenu, type MenuItem } from './menu.js'
 
 /**
  * A cloud session (claude.ai/code) rendered as an ORDINARY session row —
@@ -25,7 +27,7 @@ export const cloudNeedsYou = (s: CloudSession): boolean =>
 export const cloudRunning = (s: CloudSession): boolean =>
   s.status === 'running' || s.bucket === 'working'
 
-async function messageCloud(s: CloudSession): Promise<void> {
+export async function messageCloud(s: CloudSession): Promise<void> {
   const text = window.prompt(
     `Message to "${s.title ?? s.id.slice(0, 12)}" (queued, keeps running in the cloud):`,
   )
@@ -48,30 +50,76 @@ export function CloudRow(props: {
   /** All-view only: which rail project this session joined, for chips. */
   projectOf?: Map<string, { id: string; name: string }> | undefined
   openProject?: ((id: string) => void) | undefined
+  checked?: boolean
+  anySelected?: boolean
+  toggle?: (() => void) | undefined
 }) {
   const { session: s, nowMs, projectOf, openProject } = props
   const [open, setOpen] = useState(false)
+  const { menu, openMenu, closeMenu } = useContextMenu()
   const project = projectOf?.get(s.id)
   const wantsYou = cloudNeedsYou(s)
-  const skipped = wantsYou && isDeferred(s.id, s.updatedAt, nowMs)
+  const skipped = wantsYou && isDeferred(s.id, sigOfCloud(s), s.updatedAt, nowMs)
+  const skipNote = skipped ? deferNoteOf(s.id) : undefined
   const needsYou = wantsYou && !skipped
   const bucket = BUCKETS[s.bucket ?? ''] // undefined for unknown buckets
   const line2 =
     s.needsAction ?? s.statusDetail ?? s.recentAction ?? s.repo ?? s.branches.join(' · ')
   const model = s.model?.replace(/^claude-/, '').replace(/-\d{8}$/, '')
   const stop = (e: React.SyntheticEvent) => e.stopPropagation()
+  const anySelected = props.anySelected === true
+
+  const skip = (note?: string): void =>
+    getDeskOps()?.setDefer(s.id, {
+      sig: sigOfCloud(s),
+      ...(note !== undefined && note.trim() !== '' ? { note: note.trim() } : {}),
+    })
+
+  const menuItems: MenuItem[] = [
+    { label: s.title ?? s.id.slice(0, 12), heading: true },
+    { label: 'teleport into a terminal', onClick: () => void launchOrCopy({ kind: 'teleport', sessionId: s.id }) },
+    { label: 'message', onClick: () => void messageCloud(s) },
+    { label: 'open on the web', onClick: () => window.open(s.url, '_blank', 'noreferrer') },
+    ...(wantsYou && getDeskOps() !== undefined
+      ? skipped
+        ? [{ label: 'unskip', onClick: () => getDeskOps()?.setDefer(s.id, undefined) }]
+        : [
+            { label: 'skip', onClick: () => skip() },
+            {
+              label: 'skip with a note…',
+              onClick: () => {
+                const note = window.prompt('Note to self (why are you skipping this?)')
+                if (note !== null) skip(note)
+              },
+            },
+          ]
+      : []),
+    { label: 'copy session id', onClick: () => void navigator.clipboard.writeText(s.id).catch(() => {}) },
+  ]
 
   return (
     <li
       onClick={() => setOpen(!open)}
+      onContextMenu={(e) => openMenu(e, menuItems)}
       className={`group cursor-pointer px-4 py-2 ${open ? 'bg-s3' : 'hover:bg-s1/70'}`}
     >
       <div className="flex items-center gap-2.5">
         <span
-          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[4px] border border-b4 bg-s1 text-[11px] text-t6"
+          onClick={stop}
+          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[4px] border border-b4 bg-s1 text-t6"
           title="cloud session — lives on claude.ai/code"
         >
-          ☁
+          <span className={anySelected ? 'hidden' : 'block group-hover:hidden'}>
+            <CloudIcon />
+          </span>
+          {props.toggle !== undefined && (
+            <input
+              type="checkbox"
+              checked={props.checked === true}
+              onChange={props.toggle}
+              className={`h-3 w-3 accent-ac ${anySelected ? 'block' : 'hidden group-hover:block'}`}
+            />
+          )}
         </span>
 
         <div className="min-w-0 flex-1">
@@ -115,18 +163,18 @@ export function CloudRow(props: {
             >
               {wantsYou && getDeskOps() !== undefined && (
                 <button
-                  onClick={() =>
-                    getDeskOps()?.setDefer(
-                      s.id,
-                      skipped ? undefined : { untilMoves: s.updatedAt ?? '' },
-                    )
-                  }
+                  onClick={() => {
+                    if (skipped) getDeskOps()?.setDefer(s.id, undefined)
+                    else skip()
+                  }}
                   className="text-[10.5px] text-t4 hover:text-ask"
                   title={
-                    skipped ? 'bring its needs-you back' : 'quiet this one until it moves again'
+                    skipped
+                      ? 'bring its needs-you back'
+                      : 'quiet this one until its ask changes (right-click to add a note)'
                   }
                 >
-                  {skipped ? 'unskip' : '⏭ skip'}
+                  {skipped ? 'unskip' : 'skip'}
                 </button>
               )}
               <button
@@ -158,7 +206,11 @@ export function CloudRow(props: {
               needsYou ? 'text-ask/75' : 'text-t5'
             }`}
           >
-            {s.needsAction !== undefined ? `"${s.needsAction}"` : line2}
+            {skipNote !== undefined
+              ? `note: ${skipNote}`
+              : s.needsAction !== undefined
+                ? `"${s.needsAction}"`
+                : line2}
           </div>
           {s.branchGone === true && (
             <div className="mt-0.5 truncate pl-[17px] text-[10.5px] text-ask/80">
@@ -169,7 +221,7 @@ export function CloudRow(props: {
 
         <span className="ml-2 shrink-0 whitespace-nowrap text-right text-[10.5px] text-t5">
           {skipped ? (
-            <span title="wakes when the session moves">⏭ skipped</span>
+            <span title={skipNote ?? 'wakes when its ask changes'}>skipped</span>
           ) : needsYou ? (
             <span className="font-semibold text-ask">waiting {formatAge(nowMs, s.updatedAt)}</span>
           ) : (
@@ -206,6 +258,7 @@ export function CloudRow(props: {
           )}
         </div>
       )}
+      {menu !== undefined && <ContextMenu menu={menu} close={closeMenu} />}
     </li>
   )
 }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { CloudSession, CustomProject, Matcher, Session, Snapshot } from '@hodor/core'
 import {
   byRecency,
@@ -12,6 +12,8 @@ import {
   launchOrCopy,
   matchesQuery,
   postMutation,
+  sigOfCloud,
+  sigOfSession,
   titleOf,
   type RailProject,
   type TranscriptEntry,
@@ -21,13 +23,17 @@ import { Appearance } from './Appearance.js'
 import { CloudRow, cloudNeedsYou, cloudRunning } from './CloudSessions.js'
 import {
   Desk,
+  deferNoteOf,
   deskState,
   getDeskOps,
   isDeferred,
   SESSION_DRAG_MIME,
-  setDeskTurnStates,
+  setDeskSessions,
   subscribeDesk,
 } from './Desk.js'
+import { GearIcon } from './icons.js'
+import { ContextMenu, useContextMenu, type MenuItem } from './menu.js'
+import { notifyNeedsYou } from './notify.js'
 import { Stack, stackQueue } from './Stack.js'
 import { desktop } from './desktop.js'
 import { fetchPrefs, savePref } from './prefs.js'
@@ -44,6 +50,26 @@ const rowAt = (r: Row): string =>
   r.kind === 'local'
     ? (r.session.lastActivityAt ?? '')
     : (r.cloud.updatedAt ?? r.cloud.createdAt ?? '')
+
+/** Skip predicates, signature-aware (see sigOfSession/sigOfCloud). */
+const localSkipped = (s: Session, nowMs: number): boolean =>
+  isDeferred(s.id, sigOfSession(s), s.lastActivityAt, nowMs)
+const cloudSkipped = (c: CloudSession, nowMs: number): boolean =>
+  isDeferred(c.id, sigOfCloud(c), c.updatedAt, nowMs)
+
+/** Row identity + skip verbs shared by list rows and bulk actions. */
+function skipLocal(s: Session, note?: string): void {
+  getDeskOps()?.setDefer(s.id, {
+    sig: sigOfSession(s),
+    ...(note !== undefined && note.trim() !== '' ? { note: note.trim() } : {}),
+  })
+}
+function skipCloud(c: CloudSession, note?: string): void {
+  getDeskOps()?.setDefer(c.id, {
+    sig: sigOfCloud(c),
+    ...(note !== undefined && note.trim() !== '' ? { note: note.trim() } : {}),
+  })
+}
 
 type Filter =
   | { kind: 'all' }
@@ -114,46 +140,54 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
   }, [])
   const [, setThemeTick] = useState(0)
   useEffect(() => onThemeChange(() => setThemeTick((t) => t + 1)), [])
-  const stackN = desktop !== undefined ? stackQueue(view.byId, nowMs).length : 0
+  const stackN = desktop !== undefined ? stackQueue(view, nowMs).length : 0
   // Needs-you counts honor skips (deferrals): a skipped session stays
-  // quiet until its transcript moves again.
+  // quiet until its ask actually changes.
   const waitingN = useMemo(
     () =>
-      view.visible.filter(
-        (s) => s.turn?.state === 'waiting' && !isDeferred(s.id, s.lastActivityAt, nowMs),
-      ).length +
-      view.cloud.filter((c) => cloudNeedsYou(c) && !isDeferred(c.id, c.updatedAt, nowMs)).length,
+      view.visible.filter((s) => s.turn?.state === 'waiting' && !localSkipped(s, nowMs)).length +
+      view.cloud.filter((c) => cloudNeedsYou(c) && !cloudSkipped(c, nowMs)).length,
     // deskTick: skips live in the desk store, not the snapshot
     [view, nowMs, deskTick],
   )
 
-  // Feed turn states to the desk's tabs (they live in separate React roots).
+  // Feed turn states + names to the desk's tabs (separate React roots).
   useEffect(() => {
     if (desktop === undefined) return
     const states: Record<string, 'working' | 'waiting' | 'idle'> = {}
-    for (const s of view.visible) if (s.turn !== undefined) states[s.id] = s.turn.state
-    setDeskTurnStates(states)
+    const titles: Record<string, string> = {}
+    for (const s of view.visible) {
+      if (s.turn !== undefined) states[s.id] = s.turn.state
+      titles[s.id] = titleOf(s)
+    }
+    setDeskSessions(states, titles)
   }, [view])
 
-
-  // Enter anywhere neutral summons the turn stack (desktop only) — the
-  // "what needs me" reflex. Typing surfaces keep their Enter.
+  // A session flipping to "needs you" while the window is elsewhere pings
+  // the OS. First snapshot stays silent — booting isn't news.
+  const needsYouSeen = useRef<Set<string> | undefined>(undefined)
   useEffect(() => {
-    if (desktop === undefined) return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Enter' || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return
-      const el = e.target as HTMLElement | null
-      const tag = el?.tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'BUTTON') return
-      if (el !== null && el.closest('.xterm') !== null) return
-      // Swallow the keystroke: the stack autofocuses its terminal, and an
-      // unconsumed Enter would land there as an empty reply to the agent.
-      e.preventDefault()
-      setFilter({ kind: 'stack' })
+    const current = new Map<string, { title: string; body: string }>()
+    for (const s of view.visible) {
+      if (s.turn?.state === 'waiting' && !localSkipped(s, nowMs)) {
+        current.set(s.id, { title: titleOf(s), body: s.turn.preview ?? 'your turn' })
+      }
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [])
+    for (const c of view.cloud) {
+      if (cloudNeedsYou(c) && !cloudSkipped(c, nowMs)) {
+        current.set(c.id, {
+          title: c.title ?? c.repo ?? c.id.slice(0, 12),
+          body: c.needsAction ?? 'needs you',
+        })
+      }
+    }
+    const seen = needsYouSeen.current
+    needsYouSeen.current = new Set(current.keys())
+    if (seen === undefined || document.hasFocus()) return
+    for (const [id, n] of current) {
+      if (!seen.has(id)) notifyNeedsYou(n.title, n.body)
+    }
+  }, [view, nowMs])
 
   const project = filter.kind === 'project' ? view.rail.find((p) => p.id === filter.id) : undefined
 
@@ -170,18 +204,15 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
         return { title: project?.name ?? filter.id, meta: `${n} session${n === 1 ? '' : 's'}` }
       }
       case 'hidden':
-        return { title: 'hidden', meta: `${view.hidden.length} sessions kept out of the lists` }
+        return { title: 'hidden', meta: `${view.hidden.length} sessions` }
       case 'archived':
         return { title: 'archived', meta: `${view.archivedProjects.length} projects` }
       case 'appearance':
-        return {
-          title: 'Settings',
-          meta: `${activeScheme().name} · every color derived from the scheme`,
-        }
+        return { title: 'Settings', meta: activeScheme().name }
       case 'desk':
-        return { title: 'the desk', meta: 'autosaved · zones remember their sessions' }
+        return { title: 'the desk', meta: 'autosaved' }
       case 'stack':
-        return { title: 'Turn Stack', meta: `${stackN} waiting · longest first · cloud waits in Home` }
+        return { title: 'Turn Stack', meta: `${stackN} waiting` }
     }
   })()
 
@@ -311,6 +342,9 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
           setFilter({ kind: 'project', id })
           setSelected(new Set())
         }}
+        checked={selected.has(r.cloud.id)}
+        anySelected={selected.size > 0}
+        toggle={() => toggleSelected(r.cloud.id)}
       />
     )
 
@@ -339,7 +373,7 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
               onClick={() =>
                 setFilter(filter.kind === 'stack' ? { kind: 'desk' } : { kind: 'stack' })
               }
-              title="desk sessions waiting on you, longest first (Enter · esc closes)"
+              title="sessions waiting on you, longest first"
               className={
                 stackN > 0
                   ? 'flex items-center gap-1.5 rounded border border-ask/50 bg-ask/10 px-2.5 py-1 font-ui text-[11.5px] font-bold text-ask hover:bg-ask/15'
@@ -347,26 +381,25 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
               }
             >
               {stackN > 0 ? <>▲ {stackN} your turn — turn stack</> : <>turn stack</>}
-              <span className="rounded border border-current px-1 text-[9px] opacity-60">⏎</span>
             </button>
           )}
           <button
             onClick={() => setFilter({ kind: 'appearance' })}
-            title="settings — colorscheme, fonts"
-            className={`rounded border px-2 py-1 text-[11px] ${
+            title="settings — colorscheme, fonts, notifications"
+            className={`rounded border px-2 py-1 ${
               filter.kind === 'appearance'
                 ? 'border-acb text-ach'
                 : 'border-b3 text-t4 hover:border-b5 hover:text-fg'
             }`}
           >
-            ⚙
+            <GearIcon />
           </button>
           {platform !== undefined && platform !== 'darwin' && <WindowControls />}
         </span>
       </div>
       {(snapshot.organize?.errors.length ?? 0) > 0 && (
         <div className="flex items-center gap-2 border-b border-ask/40 bg-ask/8 px-3.5 py-1 text-[11px] text-ask">
-          <span>⚠</span>
+          <span className="font-bold">!</span>
           <span className="truncate">
             organize.js: {snapshot.organize!.errors[0]}
             {snapshot.organize!.errors.length > 1
@@ -409,11 +442,9 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
           {view.rail.map((p) => {
             const cloudHere = view.cloudByProject.get(p.id) ?? []
             const wait =
-              p.sessions.filter(
-                (s) => s.turn?.state === 'waiting' && !isDeferred(s.id, s.lastActivityAt, nowMs),
-              ).length +
-              cloudHere.filter((c) => cloudNeedsYou(c) && !isDeferred(c.id, c.updatedAt, nowMs))
-                .length
+              p.sessions.filter((s) => s.turn?.state === 'waiting' && !localSkipped(s, nowMs))
+                .length +
+              cloudHere.filter((c) => cloudNeedsYou(c) && !cloudSkipped(c, nowMs)).length
             const run =
               p.sessions.filter((s) => s.turn?.state === 'working' || s.runtime.kind !== 'idle')
                 .length + cloudHere.filter(cloudRunning).length
@@ -547,7 +578,7 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
                   }}
                   className="px-3 py-1.5 text-left font-ui text-[12px] text-t2 hover:bg-ac/12 hover:text-fg"
                 >
-                  ⚙ appearance
+                  appearance
                 </button>
                 {view.archivedProjects.length > 0 && (
                   <button
@@ -646,7 +677,7 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
                     settingsOpen ? 'border-acb text-fg' : 'border-b4 text-t3 hover:text-fg'
                   }`}
                 >
-                  ⚙ settings
+                  settings
                 </button>
               )}
               {project !== undefined && newSessionTarget !== undefined && (
@@ -669,6 +700,21 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
                   {sessions.length + cloudShown.length} session
                   {sessions.length + cloudShown.length === 1 ? '' : 's'}
                 </span>
+                {rows.length > 0 && (
+                  <button
+                    onClick={() =>
+                      setSelected(
+                        selected.size === rows.length
+                          ? new Set()
+                          : new Set(rows.map((r) => (r.kind === 'local' ? r.session.id : r.cloud.id))),
+                      )
+                    }
+                    className="whitespace-nowrap text-[10.5px] text-t5 hover:text-t2"
+                    title="select every session in this view for bulk edits"
+                  >
+                    {selected.size === rows.length ? 'clear selection' : 'select all'}
+                  </button>
+                )}
               </span>
             </header>
             {project !== undefined && (
@@ -685,14 +731,11 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
                 skipSelected={
                   getDeskOps() !== undefined
                     ? () => {
-                        const ops = getDeskOps()
                         for (const id of selected) {
                           const s = view.byId.get(id)
-                          if (s?.turn?.state === 'waiting') {
-                            ops?.setDefer(id, {
-                              untilMoves: s.lastActivityAt ?? new Date(nowMs).toISOString(),
-                            })
-                          }
+                          if (s?.turn?.state === 'waiting') skipLocal(s)
+                          const c = view.cloud.find((x) => x.id === id)
+                          if (c !== undefined && cloudNeedsYou(c)) skipCloud(c)
                         }
                       }
                     : undefined
@@ -713,16 +756,9 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
                   onSkipAll={
                     getDeskOps() !== undefined
                       ? (waiting) => {
-                          const ops = getDeskOps()
                           for (const r of waiting) {
-                            const id = r.kind === 'local' ? r.session.id : r.cloud.id
-                            const lastMove =
-                              r.kind === 'local'
-                                ? r.session.lastActivityAt
-                                : r.cloud.updatedAt
-                            ops?.setDefer(id, {
-                              untilMoves: lastMove ?? new Date(nowMs).toISOString(),
-                            })
+                            if (r.kind === 'local') skipLocal(r.session)
+                            else skipCloud(r.cloud)
                           }
                         }
                       : undefined
@@ -887,9 +923,8 @@ function HomeList(props: {
     // Skipped rows leave NEEDS YOU for RECENT until the session moves.
     const needsYou =
       r.kind === 'local'
-        ? r.session.turn?.state === 'waiting' &&
-          !isDeferred(r.session.id, r.session.lastActivityAt, props.nowMs)
-        : cloudNeedsYou(r.cloud) && !isDeferred(r.cloud.id, r.cloud.updatedAt, props.nowMs)
+        ? r.session.turn?.state === 'waiting' && !localSkipped(r.session, props.nowMs)
+        : cloudNeedsYou(r.cloud) && !cloudSkipped(r.cloud, props.nowMs)
     const running =
       r.kind === 'local'
         ? r.session.turn?.state === 'working' || r.session.runtime.kind !== 'idle'
@@ -936,9 +971,9 @@ function HomeList(props: {
             <button
               onClick={() => props.onSkipAll!(wait)}
               className="ml-auto font-normal tracking-normal text-t5 hover:text-ask"
-              title="quiet all of these until each one moves again"
+              title="quiet all of these until each one's ask changes"
             >
-              ⏭ skip all {wait.length}
+              skip all {wait.length}
             </button>
           )}
         </>,
@@ -1011,9 +1046,9 @@ function BulkBar(props: {
             clear()
           }}
           className="text-t3 hover:text-ask"
-          title="quiet the waiting ones until each moves again"
+          title="quiet the waiting ones until each one's ask changes"
         >
-          ⏭ skip
+          skip
         </button>
       )}
       <button onClick={() => void archiveAll()} className="text-t3 hover:text-fg">
@@ -1107,10 +1142,12 @@ function SessionRow(props: {
 }) {
   const { session: s, nowMs, view, customNames, rail, showHiddenBy } = props
   const { checked, anySelected, inspecting, toggle, open, mutateProject } = props
+  const { menu, openMenu, closeMenu } = useContextMenu()
   const active = s.runtime.kind !== 'idle'
   const turn = s.turn?.state
-  /** Waiting, but skipped: quiet until the transcript moves again. */
-  const skipped = turn === 'waiting' && isDeferred(s.id, s.lastActivityAt, nowMs)
+  /** Waiting, but skipped: quiet until its ask changes (or you unskip). */
+  const skipped = turn === 'waiting' && localSkipped(s, nowMs)
+  const skipNote = skipped ? deferNoteOf(s.id) : undefined
   const claims = view.claimsBySession.get(s.id) ?? []
   const derived = view.derivedOf.get(s.id)
   const deskEntry = deskState.entries.find((e) => e.sessionId === s.id)
@@ -1139,11 +1176,37 @@ function SessionRow(props: {
     await postMutation('/api/session', { op: 'archive-session', sessionId: s.id, archived })
   }
 
+  function skipWithNote() {
+    const note = window.prompt('Note to self (why are you skipping this?)')
+    if (note === null) return
+    skipLocal(s, note)
+  }
+
   const stop = (e: React.SyntheticEvent) => e.stopPropagation()
+
+  const menuItems: MenuItem[] = [
+    { label: titleOf(s), heading: true },
+    { label: 'resume in a terminal', onClick: () => void launchOrCopy({ kind: 'resume', sessionId: s.id }) },
+    { label: 'fork', onClick: () => void launchOrCopy({ kind: 'fork', sessionId: s.id }) },
+    { label: 'rename', onClick: () => void rename() },
+    ...(turn === 'waiting' && getDeskOps() !== undefined
+      ? skipped
+        ? [{ label: 'unskip', onClick: () => getDeskOps()?.setDefer(s.id, undefined) }]
+        : [
+            { label: 'skip', onClick: () => skipLocal(s) },
+            { label: 'skip with a note…', onClick: skipWithNote },
+          ]
+      : []),
+    { label: 'copy session id', onClick: () => void navigator.clipboard.writeText(s.id).catch(() => {}) },
+    s.hiddenBy === 'archived'
+      ? { label: 'unarchive', onClick: () => void setArchived(false) }
+      : { label: 'archive', onClick: () => void setArchived(true), danger: true },
+  ]
 
   return (
     <li
       onClick={open}
+      onContextMenu={(e) => openMenu(e, menuItems)}
       draggable={desktop !== undefined}
       onDragStart={(e) => {
         // Drop onto a desk zone to open the session there.
@@ -1257,22 +1320,18 @@ function SessionRow(props: {
             </select>
             {turn === 'waiting' && getDeskOps() !== undefined && (
               <button
-                onClick={() =>
-                  getDeskOps()?.setDefer(
-                    s.id,
-                    skipped
-                      ? undefined
-                      : { untilMoves: s.lastActivityAt ?? new Date(nowMs).toISOString() },
-                  )
-                }
+                onClick={() => {
+                  if (skipped) getDeskOps()?.setDefer(s.id, undefined)
+                  else skipLocal(s)
+                }}
                 className="text-[10.5px] text-t4 hover:text-ask"
                 title={
                   skipped
                     ? 'bring its needs-you back'
-                    : 'quiet this one until the session moves again'
+                    : 'quiet this one until its ask changes (right-click to add a note)'
                 }
               >
-                {skipped ? 'unskip' : '⏭ skip'}
+                {skipped ? 'unskip' : 'skip'}
               </button>
             )}
             <button
@@ -1314,13 +1373,17 @@ function SessionRow(props: {
             turn === 'waiting' && !skipped ? 'text-ask/75' : 'text-t5'
           }`}
         >
-          {line2}
+          {skipNote !== undefined ? (
+            <span title={String(line2)}>note: {skipNote}</span>
+          ) : (
+            line2
+          )}
         </div>
       </div>
 
       <span className="ml-2 shrink-0 whitespace-nowrap text-right text-[10.5px] text-t5">
         {skipped ? (
-          <span title="wakes when the session moves">⏭ skipped</span>
+          <span title={skipNote ?? 'wakes when its ask changes'}>skipped</span>
         ) : turn === 'waiting' ? (
           <span className="font-semibold text-ask">waiting {formatAge(nowMs, s.turn?.since)}</span>
         ) : (
@@ -1329,6 +1392,7 @@ function SessionRow(props: {
         {model !== undefined && ` · ${model}`}
         {s.costUsd !== undefined && s.costUsd >= 0.01 && ` · ${formatUsd(s.costUsd)}`}
       </span>
+      {menu !== undefined && <ContextMenu menu={menu} close={closeMenu} />}
     </li>
   )
 }

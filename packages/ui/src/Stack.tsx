@@ -1,23 +1,27 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { Session, Snapshot } from '@hodor/core'
+import type { CloudSession, Session, Snapshot } from '@hodor/core'
+import { cloudNeedsYou } from './CloudSessions.js'
+import {
+  launchOrCopy,
+  sendCloudMessage,
+  sigOfCloud,
+  sigOfSession,
+  titleOf,
+  type View,
+} from './data.js'
 import { desktop } from './desktop.js'
 import { deskState, getDeskOps, isDeferred, subscribeDesk, type DeskEntry } from './Desk.js'
+import { CloudIcon } from './icons.js'
 import { TerminalView } from './Terminal.js'
-import { titleOf, type View } from './data.js'
 
 /**
- * The Turn Stack (docs/brainstorm/023, settled): a stack of ACTUAL waiting
- * Claude terminals — desk sessions whose turn is yours, waiting-longest-
- * first. It takes the whole window: the top card IS the already-open
- * terminal (the same PTY its desk tile holds — views just attach), brought
- * forward here AND made the active tile in its zone behind. Take the turn
- * by typing; triage with one verb. Nothing resumes or spawns on its own —
- * a dead slot offers its resume button and waits for you.
- *
- * Quick-reply chips are honest about their source: structured options
- * (AskUserQuestion) are display-only context — the REAL dialog is on
- * screen in the terminal, pick there; preset chips (report-style endings)
- * write straight into the PTY.
+ * The Turn Stack (docs/brainstorm/023, settled): every session whose turn
+ * is yours — local AND cloud — waiting-longest-first, one card at a time.
+ * A local card IS the already-open terminal (the same PTY its desk tile
+ * holds; views just attach), brought forward here and made the active tile
+ * in its zone behind. A cloud card shows the session's ask with a reply
+ * box — same triage verbs, no terminal to steal. Nothing resumes or spawns
+ * on its own; a dead slot offers its resume button and waits for you.
  */
 
 const PRESETS = ['go ahead', 'use your judgment', 'looks good — proceed']
@@ -30,30 +34,45 @@ const formatWait = (sinceIso: string | undefined, nowMs: number): string => {
   return `${h}h ${mins % 60}m`
 }
 
-interface QueueItem {
-  entry: DeskEntry
-  session: Session
-}
+export type StackItem =
+  | { kind: 'desk'; entry: DeskEntry; session: Session }
+  | { kind: 'cloud'; cloud: CloudSession }
 
-/** Desk sessions waiting on the human, deferred ones excluded. */
-export function stackQueue(byId: Map<string, Session>, nowMs: number): QueueItem[] {
-  const items: QueueItem[] = []
+const itemId = (item: StackItem): string =>
+  item.kind === 'desk' ? item.session.id : item.cloud.id
+
+const itemSince = (item: StackItem): string =>
+  item.kind === 'desk' ? (item.session.turn?.since ?? '') : (item.cloud.updatedAt ?? '')
+
+/** Everything waiting on the human — desk terminals and cloud sessions in
+ * ONE queue — deferred ones excluded (and expired deferrals cleaned). */
+export function stackQueue(view: View, nowMs: number): StackItem[] {
+  const items: StackItem[] = []
   const seen = new Set<string>()
   for (const entry of deskState.entries) {
     if (entry.sessionId === undefined || seen.has(entry.sessionId)) continue
-    const session = byId.get(entry.sessionId)
+    const session = view.byId.get(entry.sessionId)
     if (session?.turn?.state !== 'waiting') continue
     seen.add(entry.sessionId)
     if (deskState.defer[entry.sessionId] !== undefined) {
-      if (isDeferred(entry.sessionId, session.lastActivityAt, nowMs)) continue
-      // expired deferral: clean it up so the badge math stays honest
+      if (isDeferred(entry.sessionId, sigOfSession(session), session.lastActivityAt, nowMs)) {
+        continue
+      }
+      // lifted deferral: clean it up so the badge math stays honest
       getDeskOps()?.setDefer(entry.sessionId, undefined)
     }
-    items.push({ entry, session })
+    items.push({ kind: 'desk', entry, session })
   }
-  return items.sort(
-    (a, b) => (a.session.turn?.since ?? '').localeCompare(b.session.turn?.since ?? ''),
-  )
+  for (const cloud of view.cloud) {
+    if (!cloudNeedsYou(cloud) || seen.has(cloud.id)) continue
+    seen.add(cloud.id)
+    if (deskState.defer[cloud.id] !== undefined) {
+      if (isDeferred(cloud.id, sigOfCloud(cloud), cloud.updatedAt, nowMs)) continue
+      getDeskOps()?.setDefer(cloud.id, undefined)
+    }
+    items.push({ kind: 'cloud', cloud })
+  }
+  return items.sort((a, b) => itemSince(a).localeCompare(itemSince(b)))
 }
 
 export function Stack(props: {
@@ -69,31 +88,40 @@ export function Stack(props: {
   const [rot, setRot] = useState<string[]>([])
   const [pick, setPick] = useState<string | undefined>(undefined)
   const [snoozeOpen, setSnoozeOpen] = useState(false)
+  const [snoozeNote, setSnoozeNote] = useState('')
   const [resuming, setResuming] = useState(false)
+  const [reply, setReply] = useState('')
+  const [sending, setSending] = useState(false)
 
   useEffect(() => subscribeDesk(() => setTick((t) => t + 1)), [])
 
-  let queue = stackQueue(view.byId, nowMs)
-  // skip = rotate to the bottom; an explicit pick jumps the line
+  let queue = stackQueue(view, nowMs)
+  // later = rotate to the bottom; an explicit pick jumps the line
   queue = [
-    ...queue.filter((q) => !rot.includes(q.session.id)),
+    ...queue.filter((q) => !rot.includes(itemId(q))),
     ...rot
-      .map((id) => queue.find((q) => q.session.id === id))
-      .filter((q): q is QueueItem => q !== undefined),
+      .map((id) => queue.find((q) => itemId(q) === id))
+      .filter((q): q is StackItem => q !== undefined),
   ]
   if (pick !== undefined) {
-    const picked = queue.find((q) => q.session.id === pick)
+    const picked = queue.find((q) => itemId(q) === pick)
     if (picked !== undefined) queue = [picked, ...queue.filter((q) => q !== picked)]
   }
   const top = queue[0]
-  const topPanelId = top?.entry.panelId
+  const topPanelId = top?.kind === 'desk' ? top.entry.panelId : undefined
+  const topId = top !== undefined ? itemId(top) : undefined
 
-  // The desk mirrors the stack: the top card's tile comes forward in its
-  // zone, so esc (or ⛶) lands on the session you were just dealing with.
+  // The desk mirrors the stack: a local top card's tile comes forward in
+  // its zone, so leaving the stack lands on the session just dealt with.
   useEffect(() => {
     setResuming(false)
     if (topPanelId !== undefined) getDeskOps()?.revealPanel(topPanelId)
   }, [topPanelId])
+  useEffect(() => {
+    setReply('')
+    setSnoozeOpen(false)
+    setSnoozeNote('')
+  }, [topId])
 
   const resumeTop = useCallback(() => {
     if (topPanelId === undefined) return
@@ -104,72 +132,66 @@ export function Stack(props: {
   }, [topPanelId])
 
   const act = useCallback(
-    (kind: 'skip' | 'snz30' | 'snz2' | 'snzMove' | 'phone' | 'done' | 'kill') => {
+    (kind: 'later' | 'snz30' | 'snz2' | 'snzMove' | 'hold' | 'phone' | 'done' | 'kill') => {
       if (top === undefined) return
       const ops = getDeskOps()
-      const id = top.session.id
+      const id = itemId(top)
+      const note = snoozeNote.trim() !== '' ? { note: snoozeNote.trim() } : {}
+      const sig = top.kind === 'desk' ? sigOfSession(top.session) : sigOfCloud(top.cloud)
       setSnoozeOpen(false)
+      setSnoozeNote('')
       setPick(undefined)
       switch (kind) {
-        case 'skip':
+        case 'later':
           setRot((r) => [...r.filter((x) => x !== id), id])
           break
         case 'snz30':
-          ops?.setDefer(id, { until: new Date(nowMs + 30 * 60_000).toISOString() })
+          ops?.setDefer(id, { until: new Date(nowMs + 30 * 60_000).toISOString(), ...note })
           break
         case 'snz2':
-          ops?.setDefer(id, { until: new Date(nowMs + 2 * 3600_000).toISOString() })
+          ops?.setDefer(id, { until: new Date(nowMs + 2 * 3600_000).toISOString(), ...note })
           break
         case 'snzMove':
-          ops?.setDefer(id, { untilMoves: top.session.lastActivityAt ?? new Date(nowMs).toISOString() })
+          ops?.setDefer(id, { sig, ...note })
+          break
+        case 'hold':
+          ops?.setDefer(id, { hold: true, ...note })
           break
         case 'phone':
-          if (top.entry.ptyId !== undefined && desktop !== undefined) {
+          if (top.kind === 'desk' && top.entry.ptyId !== undefined && desktop !== undefined) {
             desktop.write(top.entry.ptyId, '/remote-control\r')
-            ops?.setDefer(id, {
-              untilMoves: top.session.lastActivityAt ?? new Date(nowMs).toISOString(),
-              phone: true,
-            })
+            ops?.setDefer(id, { sig, phone: true, ...note })
           }
           break
         case 'done':
         case 'kill':
-          ops?.closePanel(top.entry.panelId)
+          if (top.kind === 'desk') ops?.closePanel(top.entry.panelId)
           break
       }
     },
-    [top, nowMs],
+    [top, nowMs, snoozeNote],
   )
 
-  // ⌘/Ctrl verbs — captured BEFORE xterm, or the focused terminal eats
-  // them (and ctrl+D would reach the shell as EOF). Escape stays the
-  // terminal's when it has focus: that's Claude's interrupt key; it only
-  // exits the stack from outside the terminal.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const el = e.target as HTMLElement | null
-      const inTerm = el?.classList.contains('xterm-helper-textarea') ?? false
-      if (e.key === 'Escape') {
-        if (!inTerm) onExit()
-        return
-      }
-      if (!(e.metaKey || e.ctrlKey)) return
-      if (!inTerm && (el?.tagName === 'INPUT' || el?.tagName === 'TEXTAREA')) return
-      const k = e.key.toLowerCase()
-      if (k === 's' || k === 'd' || k === 'z') {
-        e.preventDefault()
-        e.stopPropagation()
-        if (k === 's') act('skip')
-        else if (k === 'd') act('done')
-        else setSnoozeOpen((o) => !o)
-      }
-    }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [act, onExit])
+  const sendReply = useCallback(() => {
+    if (top?.kind !== 'cloud' || reply.trim() === '') return
+    const text = reply.trim()
+    const cloud = top.cloud
+    setSending(true)
+    void sendCloudMessage(cloud.id, text)
+      .then((result) => {
+        if (!result.ok) {
+          window.alert(`couldn't send: ${result.error ?? result.output ?? 'unknown error'}`)
+          return
+        }
+        setReply('')
+        // answered: quiet it until the session's ask actually changes
+        getDeskOps()?.setDefer(cloud.id, { sig: sigOfCloud(cloud) })
+      })
+      .finally(() => setSending(false))
+  }, [top, reply])
 
   const deferredN = Object.keys(deskState.defer).length
-  const structured = top?.session.turn?.pending
+  const structured = top?.kind === 'desk' ? top.session.turn?.pending : undefined
   const projectName = (s: Session): string => {
     const claim = view.claimsBySession.get(s.id)?.[0]
     if (claim !== undefined) {
@@ -179,6 +201,43 @@ export function Stack(props: {
     return view.derivedOf.get(s.id)?.name ?? 'no project'
   }
 
+  const snoozeMenu = (
+    <span className="relative">
+      <button
+        onClick={() => setSnoozeOpen((o) => !o)}
+        className="rounded border border-b4 px-2.5 py-1 text-[11px] text-t2 hover:border-ac hover:text-fg"
+      >
+        snooze ▾
+      </button>
+      {snoozeOpen && (
+        <span className="absolute bottom-full left-0 z-10 mb-1.5 flex w-56 flex-col gap-0.5 rounded border border-b5 bg-s5 p-1.5 shadow-xl">
+          <input
+            value={snoozeNote}
+            onChange={(e) => setSnoozeNote(e.target.value)}
+            placeholder="note to self (optional)"
+            className="mb-1 rounded border border-b4 bg-app px-2 py-1 text-[11px] outline-none placeholder:text-t6 focus:border-b6"
+          />
+          {(
+            [
+              ['30 minutes', 'snz30'],
+              ['2 hours', 'snz2'],
+              ['until its ask changes', 'snzMove'],
+              ['until I unskip it', 'hold'],
+            ] as const
+          ).map(([label, kind]) => (
+            <button
+              key={kind}
+              onClick={() => act(kind)}
+              className="rounded px-2.5 py-1 text-left text-[11.5px] hover:bg-ac/12"
+            >
+              {label}
+            </button>
+          ))}
+        </span>
+      )}
+    </span>
+  )
+
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2.5 px-6 pb-4 pt-3">
       <div className="flex shrink-0 items-center gap-2.5 text-[11px] text-t3">
@@ -186,30 +245,23 @@ export function Stack(props: {
         <span className="font-bold text-fg">
           {queue.length === 0 ? '0 waiting' : `1 of ${queue.length}`}
         </span>
-        <span className="font-mono text-[10px] text-t6">
-          waiting-longest-first · typing goes to the terminal · verbs are ⌘
-        </span>
         <button
           onClick={onExit}
           className="ml-auto font-mono text-[10px] text-t4 hover:text-fg"
         >
-          esc — back to the desk
+          back to the desk
         </button>
       </div>
 
       {top === undefined && (
         <div className="flex min-h-0 flex-1 items-center justify-center">
           <div className="rounded border border-b4 bg-s3 px-8 py-10 text-center text-sm text-t3">
-            all agents working — go get coffee ☕
-            <div className="mt-2 font-mono text-[11px] text-t6">
-              the stack refills the moment a turn flips to you — “until it moves” snoozes wake on
-              new transcript lines
-            </div>
+            nothing waiting on you
           </div>
         </div>
       )}
 
-      {top !== undefined && (
+      {top !== undefined && top.kind === 'desk' && (
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded border-[1.5px] border-ask/55 bg-s8 shadow-2xl">
           <div className="flex shrink-0 items-center gap-2 border-b border-b1 bg-s3 px-3.5 py-2.5">
             <span className="text-[9px] text-ask">●</span>
@@ -252,9 +304,7 @@ export function Stack(props: {
               <TerminalView key={top.entry.ptyId} ptyId={top.entry.ptyId} visible autoFocus />
             ) : (
               <div className="flex h-full flex-col items-center justify-center gap-3 text-center font-mono">
-                <span className="text-xs text-t5">
-                  ▢ its terminal is closed — the app restarted, or the tile was killed
-                </span>
+                <span className="text-xs text-t5">▢ its terminal is closed</span>
                 {resuming ? (
                   <span className="animate-pulse text-xs text-ac">resuming into its tile…</span>
                 ) : (
@@ -266,16 +316,13 @@ export function Stack(props: {
                       ⟳ reopen — claude --resume into its tile
                     </button>
                     <button
-                      onClick={() => act('skip')}
+                      onClick={() => act('later')}
                       className="rounded border border-b4 px-3.5 py-1.5 text-[11.5px] text-t3 hover:text-fg"
                     >
-                      ⇥ skip for now
+                      later
                     </button>
                   </div>
                 )}
-                <span className="text-[10px] text-t6">
-                  nothing reopens on its own — your call
-                </span>
               </div>
             )}
           </div>
@@ -283,9 +330,7 @@ export function Stack(props: {
           <div className="flex shrink-0 flex-col gap-2 border-t border-b1 bg-s1 px-3.5 py-2.5">
             <div className="flex flex-wrap items-center gap-2">
               <span className="font-mono text-[9px] font-semibold tracking-[.1em] text-t6">
-                {structured?.options !== undefined
-                  ? 'FROM THE SESSION — PICK IN THE DIALOG ABOVE'
-                  : 'YOUR PRESETS — SENT AS YOUR REPLY'}
+                {structured?.options !== undefined ? 'OPTIONS — PICK IN THE TERMINAL' : 'PRESETS'}
               </span>
               {(structured?.options ?? PRESETS).map((chip) => (
                 <button
@@ -309,50 +354,26 @@ export function Stack(props: {
             </div>
             <div className="flex flex-wrap items-center gap-1.5">
               <button
-                onClick={() => act('skip')}
+                onClick={() => act('later')}
+                title="rotate to the bottom of the stack"
                 className="rounded border border-b4 px-2.5 py-1 text-[11px] text-t2 hover:border-ac hover:text-fg"
               >
-                ⇥ skip <span className="font-mono text-[9px] opacity-60">⌘S</span>
+                later
               </button>
-              <span className="relative">
-                <button
-                  onClick={() => setSnoozeOpen((o) => !o)}
-                  className="rounded border border-b4 px-2.5 py-1 text-[11px] text-t2 hover:border-ac hover:text-fg"
-                >
-                  ⏾ snooze ▾ <span className="font-mono text-[9px] opacity-60">⌘Z</span>
-                </button>
-                {snoozeOpen && (
-                  <span className="absolute bottom-full left-0 z-10 mb-1.5 flex flex-col gap-0.5 whitespace-nowrap rounded border border-b5 bg-s5 p-1 shadow-xl">
-                    {(
-                      [
-                        ['30 minutes', 'snz30'],
-                        ['2 hours', 'snz2'],
-                        ['until it moves again', 'snzMove'],
-                      ] as const
-                    ).map(([label, kind]) => (
-                      <button
-                        key={kind}
-                        onClick={() => act(kind)}
-                        className="rounded px-3 py-1 text-left text-[11.5px] hover:bg-ac/12"
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </span>
-                )}
-              </span>
+              {snoozeMenu}
               <button
                 onClick={() => act('phone')}
                 title="injects /remote-control — answer from the Claude app"
                 className="rounded border border-b4 px-2.5 py-1 text-[11px] text-t2 hover:border-ac hover:text-fg"
               >
-                📱 send to phone
+                send to phone
               </button>
               <button
                 onClick={() => act('done')}
+                title="closes the terminal — the transcript stays, resumable any time"
                 className="rounded border border-b4 px-2.5 py-1 text-[11px] text-t2 hover:border-run hover:text-fg"
               >
-                ✓ done <span className="font-mono text-[9px] opacity-60">⌘D</span>
+                ✓ done
               </button>
               <button
                 onClick={() => act('kill')}
@@ -360,10 +381,88 @@ export function Stack(props: {
               >
                 ✕ kill
               </button>
-              <span className="ml-auto font-mono text-[10px] text-t6">
-                done closes the PTY — the transcript stays, resumable forever
-              </span>
             </div>
+          </div>
+        </div>
+      )}
+
+      {top !== undefined && top.kind === 'cloud' && (
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded border-[1.5px] border-ask/55 bg-s8 shadow-2xl">
+          <div className="flex shrink-0 items-center gap-2 border-b border-b1 bg-s3 px-3.5 py-2.5">
+            <span className="text-t6">
+              <CloudIcon />
+            </span>
+            <span className="truncate font-ui text-sm font-bold">
+              {top.cloud.title ?? top.cloud.id.slice(0, 12)}
+            </span>
+            {top.cloud.repo !== undefined && (
+              <span className="whitespace-nowrap rounded border border-b4 px-2 font-mono text-[10px] text-t3">
+                {top.cloud.repo}
+              </span>
+            )}
+            {top.cloud.branches[0] !== undefined && (
+              <span className="truncate font-mono text-[10px] text-t4">
+                ⎇ {top.cloud.branches[0]}
+              </span>
+            )}
+            <span className="ml-auto whitespace-nowrap font-mono text-[10px] font-semibold text-ask">
+              waiting {formatWait(top.cloud.updatedAt, nowMs)}
+            </span>
+            <a
+              href={top.cloud.url}
+              target="_blank"
+              rel="noreferrer"
+              className="font-mono text-[10px] text-t3 hover:text-fg"
+            >
+              web ↗
+            </a>
+          </div>
+
+          <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 bg-app px-8 py-6 text-center">
+            {top.cloud.statusDetail !== undefined && (
+              <p className="max-w-2xl text-xs text-t4">{top.cloud.statusDetail}</p>
+            )}
+            <p className="max-w-2xl font-ui text-[15px] font-semibold leading-relaxed text-fg">
+              {top.cloud.needsAction !== undefined
+                ? `"${top.cloud.needsAction}"`
+                : 'this session reads as blocked on you'}
+            </p>
+            <div className="flex w-full max-w-2xl flex-col gap-2">
+              <textarea
+                rows={3}
+                value={reply}
+                onChange={(e) => setReply(e.target.value)}
+                placeholder="reply — queued into the cloud session"
+                className="w-full resize-y rounded border border-b4 bg-s1 px-3 py-2 text-left text-[12px] leading-relaxed outline-none placeholder:text-t6 focus:border-b6"
+              />
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={sendReply}
+                  disabled={reply.trim() === '' || sending}
+                  className="rounded bg-ac px-3.5 py-1.5 text-[11.5px] font-semibold text-ink hover:brightness-110 disabled:opacity-40"
+                >
+                  {sending ? 'sending…' : 'send reply'}
+                </button>
+                <button
+                  onClick={() => void launchOrCopy({ kind: 'teleport', sessionId: top.cloud.id })}
+                  className="rounded border border-run/40 px-3 py-1.5 text-[11.5px] text-run hover:bg-run/10"
+                  title="pull this session into a local terminal (web copy goes read-only)"
+                >
+                  teleport
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-t border-b1 bg-s1 px-3.5 py-2.5">
+            <button
+              onClick={() => act('later')}
+              title="rotate to the bottom of the stack"
+              className="rounded border border-b4 px-2.5 py-1 text-[11px] text-t2 hover:border-ac hover:text-fg"
+            >
+              later
+            </button>
+            {snoozeMenu}
           </div>
         </div>
       )}
@@ -371,21 +470,31 @@ export function Stack(props: {
       {queue.length > 1 && (
         <div className="shrink-0">
           <div className="pb-1.5 font-mono text-[9.5px] font-semibold tracking-[.14em] text-t5">
-            NEXT UP — WAITING-LONGEST-FIRST
+            NEXT UP
           </div>
           <div className="flex flex-col gap-1.5">
-            {queue.slice(1, 5).map(({ session }) => (
+            {queue.slice(1, 5).map((item) => (
               <button
-                key={session.id}
-                onClick={() => setPick(session.id)}
+                key={itemId(item)}
+                onClick={() => setPick(itemId(item))}
                 className="flex items-center gap-2.5 rounded border border-b1 bg-s1 px-3 py-1.5 text-left hover:border-b6"
               >
                 <span className="text-[9px] text-ask">●</span>
+                {item.kind === 'cloud' && (
+                  <span className="text-t6">
+                    <CloudIcon size={10} />
+                  </span>
+                )}
                 <span className="flex-1 truncate font-ui text-[12.5px] font-semibold">
-                  {titleOf(session)}
+                  {item.kind === 'desk'
+                    ? titleOf(item.session)
+                    : (item.cloud.title ?? item.cloud.id.slice(0, 12))}
                 </span>
                 <span className="font-mono text-[10.5px] text-t4">
-                  waiting {formatWait(session.turn?.since, nowMs)} · {projectName(session)}
+                  waiting {formatWait(itemSince(item), nowMs)} ·{' '}
+                  {item.kind === 'desk'
+                    ? projectName(item.session)
+                    : (item.cloud.repo ?? 'cloud')}
                 </span>
                 <span className="font-mono text-[10px] text-t6">bring to top ↑</span>
               </button>
@@ -399,10 +508,11 @@ export function Stack(props: {
         </div>
       )}
 
-      <div className="flex shrink-0 flex-wrap gap-x-5 gap-y-1 font-mono text-[10.5px] text-t6">
-        {deferredN > 0 && <span>⏾ {deferredN} deferred — out of the count, not abandoned</span>}
-        <span>☁ cloud sessions stay out of the stack (v1) — answer by message from Home, or teleport</span>
-      </div>
+      {deferredN > 0 && (
+        <div className="flex shrink-0 flex-wrap gap-x-5 gap-y-1 font-mono text-[10.5px] text-t6">
+          <span>{deferredN} snoozed</span>
+        </div>
+      )}
     </div>
   )
 }

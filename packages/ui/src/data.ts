@@ -23,6 +23,18 @@ export function formatAge(nowMs: number, timestamp?: string): string {
 export const titleOf = (s: Session): string =>
   s.rename ?? s.summary ?? s.promptPreview ?? s.firstCommand ?? '(untitled)'
 
+/** What a waiting session is asking right now. Skips snapshot this: an
+ * "until it moves" skip stays quiet while the ask reads the same and wakes
+ * when it actually changes — NOT on every transcript line (background
+ * task notifications used to un-skip sessions nobody touched). */
+export const sigOfSession = (s: Session): string =>
+  `${s.turn?.state ?? ''}|${s.turn?.preview ?? ''}`
+
+/** Same idea for a cloud session: its ask is bucket + needs-action words
+ * (updatedAt churns constantly while an agent runs — useless as a wake). */
+export const sigOfCloud = (c: CloudSession): string =>
+  `${c.bucket ?? ''}|${c.needsAction ?? ''}`
+
 export const formatTokens = (n: number): string =>
   n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
 
