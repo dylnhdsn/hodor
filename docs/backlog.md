@@ -50,6 +50,35 @@ brainstorm doc when they get built. Living file — prune on completion.
 
 ## Platform & distribution
 
+- **Detached sessions (survive closing hodor)** — researched in
+  [025](brainstorm/025-detach-pause-native-ui.md): the CLI already has a
+  supervisor (`claude --bg`, `/bg` on a running session, `attach`,
+  `stop`, `agents --json`). Plan: offer "detach instead of kill" on quit,
+  show background sessions as first-class rows (their
+  `waitingFor: permission prompt` is a needs-you), per-tile detach verb.
+  Note `--bg` REJECTS `--session-id`, and `--bg` on Windows/WSL is
+  undocumented — test on Windows before promising it.
+- **Travel mode (pause everything to change network)** — researched in
+  [025](brainstorm/025-detach-pause-native-ui.md). There is no pause
+  primitive and SIGSTOP is unsafe, but the CLI already retries hard
+  through network loss. Real shape: interrupt-or-finish in-flight turns,
+  then `/bg` every session, then re-attach on arrival.
+- **Native session UI (no terminal)** — researched in
+  [025](brainstorm/025-detach-pause-native-ui.md). Cropping the TUI below
+  the prompt box is a dead end (modals live in that region, no way to find
+  it, breaks every release). The supported path is the stream-json /
+  Agent SDK protocol with our own React UI. Verified it carries streaming
+  text, tool calls, cost, compaction, rate limits, and a native
+  `post_turn_summary` turn state. Gaps to own: plan-mode approval,
+  dialog slash commands, file pickers, interrupt-over-stream-json.
+  Big enough to split hodor into two session kinds — spike before
+  committing.
+- **Authoritative turn state from the CLI** — `claude agents --json`
+  reports live `status`/`waitingFor` for interactive AND background
+  sessions, and stream-json emits `post_turn_summary` with
+  `status_category`/`needs_action`. We fold transcripts to guess the same
+  thing; adopt these as a cross-check. Free win, independent of 025.
+
 - **Workspace v3/v4** — the desk shipped in 0.2.0 (workspace-first
   posture, named zones with open-into-zone routing, restore-all).
   Next per 022: named workspaces + templates with slot rules, then
