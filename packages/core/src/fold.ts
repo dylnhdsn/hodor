@@ -327,24 +327,38 @@ function applyMessage(accum: SessionAccum, line: MessageLine): void {
   // human input abandons whatever was pending (interrupts kill dialogs);
   // assistant lines record whether the turn's last word was text or an
   // unresolved tool_use.
+  // Whose turn it is must follow the CLOCK, not the order files happen to
+  // be folded in. One session id can own transcripts in TWO buckets —
+  // resuming from a different directory re-homes it — and folding the
+  // older file last froze the turn on its final line: hodor showed a
+  // stale "your turn" and ignored every prompt since (seen live: a
+  // session busy at 20:25 still reported waiting since 17:37). Lines
+  // without a timestamp can't be compared, so they stay in file order.
+  const fresh = ts === undefined || accum.lastMainAt === undefined || ts >= accum.lastMainAt
   if (line.type === 'assistant' && line.isApiError !== true) {
-    accum.lastMainKind = (line.toolUses?.length ?? 0) > 0 ? 'assistant-tool' : 'assistant-text'
-    if (ts !== undefined) accum.lastMainAt = ts
-    if (line.textPreview !== undefined) accum.lastMainText = line.textPreview
-    for (const use of line.toolUses ?? []) {
-      accum.openTools[use.id] = {
-        name: use.name,
-        ...(ts !== undefined ? { at: ts } : {}),
-        ...(use.question !== undefined ? { question: use.question } : {}),
-        ...(use.options !== undefined ? { options: use.options } : {}),
+    if (fresh) {
+      accum.lastMainKind = (line.toolUses?.length ?? 0) > 0 ? 'assistant-tool' : 'assistant-text'
+      if (ts !== undefined) accum.lastMainAt = ts
+      if (line.textPreview !== undefined) accum.lastMainText = line.textPreview
+      for (const use of line.toolUses ?? []) {
+        accum.openTools[use.id] = {
+          name: use.name,
+          ...(ts !== undefined ? { at: ts } : {}),
+          ...(use.question !== undefined ? { question: use.question } : {}),
+          ...(use.options !== undefined ? { options: use.options } : {}),
+        }
       }
     }
   } else if (line.type === 'user') {
     if (line.toolResultIds !== undefined) {
+      // Resolving a tool is idempotent and safe out of order — an old
+      // file can only ever close something already closed.
       for (const id of line.toolResultIds) delete accum.openTools[id]
-      accum.lastMainKind = 'tool-result'
-      if (ts !== undefined) accum.lastMainAt = ts
-    } else if (!line.isMeta && line.isCompactSummary !== true) {
+      if (fresh) {
+        accum.lastMainKind = 'tool-result'
+        if (ts !== undefined) accum.lastMainAt = ts
+      }
+    } else if (!line.isMeta && line.isCompactSummary !== true && fresh) {
       // Any non-meta user line without tool_results is human-side input —
       // prompts, slash commands, and interrupt markers alike. All of them
       // abandon whatever dialog was on screen.

@@ -280,6 +280,32 @@ describe('fold', () => {
     expect(state.sessions['a']!.summary).toBe('second')
   })
 
+  // Regression: one session id can own transcripts in TWO buckets
+  // (resuming from another directory re-homes it). Folding the OLDER file
+  // last used to freeze the turn on its final line — hodor kept showing a
+  // stale "your turn" and ignored every prompt since.
+  it('keeps turn state on the newest line when an older transcript folds last', () => {
+    const state = foldAll(emptyState, [
+      // the live transcript: the user answered, so it is the agent's turn
+      lines('a', [
+        msg({ uuid: 'u1', type: 'assistant', timestamp: '2026-09-15T20:00:00Z' }),
+        msg({ uuid: 'u2', type: 'user', timestamp: '2026-09-15T20:25:00Z' }),
+      ]),
+      // a stale second bucket for the SAME id, folded afterwards
+      lines('a', [
+        msg({
+          uuid: 'old1',
+          type: 'assistant',
+          timestamp: '2026-09-15T17:37:00Z',
+          textPreview: 'Hi! How can I help?',
+        }),
+      ]),
+    ])
+    const accum = state.sessions['a']!
+    expect(accum.lastMainAt).toBe('2026-09-15T20:25:00Z')
+    expect(accum.lastMainKind).toBe('human')
+  })
+
   it('takes the last /name custom title', () => {
     const state = foldAll(emptyState, [
       lines('a', [
