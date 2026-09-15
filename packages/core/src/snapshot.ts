@@ -1,3 +1,4 @@
+import { turnFromAgent, type LiveAgent } from './agents.js'
 import type { CloudSession } from './cloud.js'
 import { gitKey, type CoreState, type SessionAccum, type ThreadAccum } from './fold.js'
 import {
@@ -175,6 +176,7 @@ function toSession(
   pricing: Record<string, ModelPricing>,
   now: Date,
   checkpointBackupFiles?: number,
+  live?: LiveAgent,
 ): Session {
   const threads: Thread[] = []
   if (accum.main.messageCount > 0) {
@@ -264,6 +266,33 @@ function toSession(
   if (accum.cliVersion !== undefined) session.cliVersion = accum.cliVersion
   const turn = classifyTurn(accum, now)
   if (turn !== undefined) session.turn = turn
+  if (live !== undefined) {
+    session.live = {
+      kind: live.kind,
+      status: live.status,
+      ...(live.shortId !== undefined ? { shortId: live.shortId } : {}),
+      ...(live.waitingFor !== undefined ? { waitingFor: live.waitingFor } : {}),
+    }
+    // The CLI owns the process, so where it is decisive it overrules the
+    // transcript inference — that is the whole point of the cross-check.
+    // The transcript still supplies the WORDS (what is being asked); the
+    // CLI supplies the state.
+    const says = turnFromAgent(live)
+    if (says === 'working') {
+      session.turn = { state: 'working', ...(turn?.pending !== undefined ? { pending: turn.pending } : {}) }
+    } else if (says === 'waiting') {
+      session.turn = {
+        state: 'waiting',
+        since: turn?.since ?? accum.lastMainAt ?? '',
+        ...(turn?.preview !== undefined
+          ? { preview: turn.preview }
+          : live.waitingFor !== undefined
+            ? { preview: live.waitingFor }
+            : {}),
+        ...(turn?.pending !== undefined ? { pending: turn.pending } : {}),
+      }
+    }
+  }
   return session
 }
 
@@ -492,6 +521,7 @@ export function buildSnapshot(state: CoreState, options: SnapshotOptions): Snaps
         pricing,
         options.now,
         state.checkpointBackups[gitKey(accum.storeId, accum.id)],
+        state.liveAgents[accum.id],
       )
       const meta = state.metas[accum.id]
       if (meta?.rename !== undefined) session.rename = meta.rename

@@ -51,6 +51,74 @@ const baseEvents: SourceEvent[] = [
 const NOW = new Date('2026-06-01T12:00:00Z')
 
 describe('buildSnapshot', () => {
+  // The cross-check that exists because inference got this wrong in the
+  // field: a session the CLI reported busy was shown as "waiting" for
+  // hours because a stale second transcript froze the inference.
+  it('lets the CLI listing overrule a wrong inferred turn', () => {
+    // an assistant line long gone quiet infers as "waiting" (your turn)
+    const quiet: SourceEvent[] = [
+      { type: 'store-discovered', store },
+      {
+        type: 'transcript-lines',
+        storeId: 's1',
+        transcriptPath: '/home/.claude/projects/-x/live.jsonl',
+        sessionId: 'live',
+        lines: [
+          {
+            ...msg('live-a1', '2026-06-01T09:00:00Z', '/repo/a'),
+            type: 'assistant',
+            textPreview: 'shall I proceed?',
+          },
+        ],
+      },
+    ]
+    const inferred = buildSnapshot(foldAll(emptyState, quiet), { now: NOW })
+    expect(inferred.sessions[0]!.turn).toMatchObject({ state: 'waiting' })
+
+    // ...but the CLI says that process is busy right now, so it is
+    const crossChecked = buildSnapshot(
+      foldAll(emptyState, [
+        ...quiet,
+        {
+          type: 'agents-listed',
+          scannedAt: '2026-06-01T12:00:00Z',
+          agents: [{ sessionId: 'live', kind: 'interactive', status: 'busy' }],
+        },
+      ]),
+      { now: NOW },
+    )
+    const session = crossChecked.sessions[0]!
+    expect(session.turn).toMatchObject({ state: 'working' })
+    expect(session.live).toEqual({ kind: 'interactive', status: 'busy' })
+  })
+
+  it('surfaces what a blocked background session is waiting for', () => {
+    const snapshot = buildSnapshot(
+      foldAll(emptyState, [
+        { type: 'store-discovered', store },
+        ...sessionEvents('bg', '2026-06-01T09:00:00Z', '/repo/a'),
+        {
+          type: 'agents-listed',
+          scannedAt: '2026-06-01T12:00:00Z',
+          agents: [
+            {
+              sessionId: 'bg',
+              kind: 'background',
+              status: 'waiting',
+              shortId: 'fa45e953',
+              waitingFor: 'permission prompt',
+              state: 'blocked',
+            },
+          ],
+        },
+      ]),
+      { now: NOW },
+    )
+    const session = snapshot.sessions.find((x) => x.id === 'bg')!
+    expect(session.turn).toMatchObject({ state: 'waiting', preview: 'permission prompt' })
+    expect(session.live).toMatchObject({ kind: 'background', shortId: 'fa45e953' })
+  })
+
   it('assembles sessions, projects, and assignments with provenance', () => {
     const snapshot = buildSnapshot(foldAll(emptyState, baseEvents), { now: NOW })
 

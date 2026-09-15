@@ -1,4 +1,5 @@
 import type { MessageLine } from './claude/transcript.js'
+import type { LiveAgent } from './agents.js'
 import type { CloudSession } from './cloud.js'
 import type { HodorConfig } from './config.js'
 import type { SourceEvent } from './events.js'
@@ -134,6 +135,10 @@ export interface CoreState {
   /** gitKey(storeId, sessionId) → backup files found in the store's
    * file-history dir (0 = probed, none there — expired or restored). */
   checkpointBackups: Record<string, number>
+  /** Sessions the CLI reports running right now (`claude agents --json`),
+   * by session id — the authoritative cross-check for inferred turns.
+   * Replaced whole each scan; empty when the listing is unavailable. */
+  liveAgents: Record<SessionId, LiveAgent>
   /** Cloud sessions from the last listing (full replacement each scan). */
   cloud: {
     sessions: CloudSession[]
@@ -160,6 +165,7 @@ export const emptyState: CoreState = {
   gitContexts: {},
   memoryFiles: {},
   checkpointBackups: {},
+  liveAgents: {},
   cloud: { sessions: [] },
   organize: { labels: {}, errors: [] },
   metas: {},
@@ -498,6 +504,14 @@ export function fold(state: CoreState, event: SourceEvent): CoreState {
             : {}),
         },
       }
+
+    case 'agents-listed': {
+      // Replaced whole: a session that dropped off the listing is no
+      // longer running, and must stop being treated as live.
+      const liveAgents: CoreState['liveAgents'] = {}
+      for (const agent of event.agents) liveAgents[agent.sessionId] = agent
+      return { ...state, liveAgents }
+    }
 
     case 'cloud-branches-checked':
       return {

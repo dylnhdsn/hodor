@@ -1,3 +1,4 @@
+import type { LiveAgent } from './agents.js'
 import type { TranscriptLine } from './claude/transcript.js'
 import type { CloudSession } from './cloud.js'
 import type { HodorConfig } from './config.js'
@@ -22,6 +23,13 @@ export type SourceEvent =
       lines: TranscriptLine[]
     }
   | { type: 'transcript-removed'; storeId: StoreId; transcriptPath: string }
+  | {
+      /** `claude agents --json`: the sessions the CLI has running right
+       * now. Replaces the previous listing whole. */
+      type: 'agents-listed'
+      agents: LiveAgent[]
+      scannedAt: string
+    }
   | {
       /** Sidecar metadata for one subagent run (agent-<id>.meta.json). */
       type: 'subagent-meta'

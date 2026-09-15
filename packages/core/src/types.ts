@@ -73,6 +73,17 @@ export interface Session {
   customTitle?: string
   /** Hodor rename from user config — the highest-priority display title. */
   rename?: string
+  /** Present when the CLI reports this session RUNNING right now
+   * (`claude agents --json`) — the authoritative cross-check behind
+   * `turn`. Absent simply means no live process. */
+  live?: {
+    kind: 'interactive' | 'background'
+    status: string
+    /** Background sessions: the short id attach/stop/rm take. */
+    shortId?: string
+    /** What it is blocked on, e.g. "permission prompt". */
+    waitingFor?: string
+  }
   /** First real user prompt, truncated — the display-title fallback. */
   promptPreview?: string
   /** First slash command that started the session, e.g. "/gsd-resume-work". */

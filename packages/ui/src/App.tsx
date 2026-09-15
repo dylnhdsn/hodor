@@ -1300,6 +1300,18 @@ function SessionRow(props: {
               ⛶ {deskEntry.zone}
             </span>
           )}
+          {s.live?.kind === 'background' && (
+            <span
+              className="shrink-0 rounded border border-b4 px-1.5 py-px text-[10px] text-t3"
+              title={
+                s.live.shortId !== undefined
+                  ? `runs without a terminal — claude attach ${s.live.shortId}`
+                  : 'runs without a terminal'
+              }
+            >
+              background
+            </span>
+          )}
           {s.counts.sidechains > 0 && (
             <span className="shrink-0 text-[10px] text-t6" title="subagent runs">
               ⑂ {s.counts.sidechains}
@@ -1398,7 +1410,9 @@ function SessionRow(props: {
         {skipped ? (
           <span title={skipNote ?? 'wakes when its ask changes'}>skipped</span>
         ) : turn === 'waiting' ? (
-          <span className="font-semibold text-ask">waiting {formatAge(nowMs, s.turn?.since)}</span>
+          <span className="font-semibold text-ask">
+            {s.live?.waitingFor ?? 'waiting'} {formatAge(nowMs, s.turn?.since)}
+          </span>
         ) : (
           formatAge(nowMs, s.lastActivityAt)
         )}

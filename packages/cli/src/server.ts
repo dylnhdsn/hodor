@@ -24,6 +24,7 @@ import {
   type Snapshot,
 } from '@hodor/core'
 import { flavorOfPath, pathOps } from '@hodor/core'
+import { scanLiveAgents } from './agents.js'
 import { scanCloudSessions } from './cloud.js'
 import { createBranchChecker } from './cloudbranch.js'
 import { composeHostClaude, composeLaunch, composePtySpec, runLaunch, type LaunchTarget } from './launch.js'
@@ -117,6 +118,12 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
 
   let nextCloudScanAt = 0
   const CLOUD_SCAN_INTERVAL_MS = 60_000
+  // `claude agents --json` costs a process spawn (~0.5s measured), so it
+  // is interval-gated rather than run on every ~2s tick. Turn state that
+  // is at most a few seconds stale is still far better than inference
+  // that can be hours wrong.
+  let nextAgentScanAt = 0
+  const AGENT_SCAN_INTERVAL_MS = 4_000
 
   // Refreshes must not overlap: organize auto-create WRITES projects.json,
   // and two in-flight refreshes over the same stale plane duplicate
@@ -145,6 +152,13 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
       nextCloudScanAt = Date.now() + CLOUD_SCAN_INTERVAL_MS
       const cloudEvent = await scanCloudSessions(deps).catch(() => undefined)
       if (cloudEvent !== undefined) baseState = foldAll(baseState, [cloudEvent])
+    }
+    // The live-session cross-check. Skipped on the first pass with the
+    // rest of the off-box work, so the window paints from local files.
+    if (!firstPass && Date.now() >= nextAgentScanAt) {
+      nextAgentScanAt = Date.now() + AGENT_SCAN_INTERVAL_MS
+      const agentEvent = await scanLiveAgents(deps).catch(() => undefined)
+      if (agentEvent !== undefined) baseState = foldAll(baseState, [agentEvent])
     }
     const branchEvent = firstPass
       ? undefined

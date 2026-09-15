@@ -518,9 +518,12 @@ describe('cloud sessions', () => {
       body: JSON.stringify({ sessionId: 'session_01CLOUD', text: 'ship it' }),
     })
     expect(message.status).toBe(200)
-    expect(captures).toHaveLength(1)
-    expect(captures[0]!.args[captures[0]!.args.length - 1]).toContain('--cloud')
-    expect(captures[0]!.args[captures[0]!.args.length - 1]).toContain("'ship it'")
+    // the live-agent cross-check also shells out to claude, so look at
+    // the message capture specifically rather than "the only one"
+    const sent = captures.filter((c) => !c.args.join(' ').includes('agents'))
+    expect(sent).toHaveLength(1)
+    expect(sent[0]!.args[sent[0]!.args.length - 1]).toContain('--cloud')
+    expect(sent[0]!.args[sent[0]!.args.length - 1]).toContain("'ship it'")
 
     // teleport composes a pty spec targeting the host
     const teleport = await fetch(`${server.url}/api/launch`, {
