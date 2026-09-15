@@ -9,6 +9,9 @@ export interface OpenTarget {
   sessionId?: string
   storeId?: string
   root?: string
+  name?: string
+  model?: string
+  permissionMode?: string
 }
 
 const api = {

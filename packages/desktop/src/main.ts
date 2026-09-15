@@ -23,6 +23,9 @@ interface OpenTarget {
   sessionId?: string
   storeId?: string
   root?: string
+  name?: string
+  model?: string
+  permissionMode?: string
 }
 
 interface Term {

@@ -10,6 +10,10 @@ export interface OpenTarget {
   sessionId?: string
   storeId?: string
   root?: string
+  /** kind 'new' launch options (the new-session dialog). */
+  name?: string
+  model?: string
+  permissionMode?: string
 }
 
 export interface TermInfo {

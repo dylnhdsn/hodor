@@ -266,7 +266,15 @@ export interface LaunchResponse {
 export async function requestLaunch(
   body:
     | { kind: 'resume' | 'fork' | 'teleport'; sessionId: string }
-    | { kind: 'new'; storeId: string; root: string },
+    | {
+        kind: 'new'
+        storeId: string
+        root: string
+        /** Launch options from the new-session dialog. */
+        name?: string
+        model?: string
+        permissionMode?: string
+      },
 ): Promise<LaunchResponse> {
   try {
     const res = await fetch('/api/launch', {

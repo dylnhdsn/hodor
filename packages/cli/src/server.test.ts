@@ -381,6 +381,57 @@ describe('startServer', () => {
     })
     expect(bad.status).toBe(400)
 
+    // A worktree BENEATH a known root is a valid target even with no
+    // history of its own — that is how you start in a fresh worktree.
+    const wt = await fetch(`${server.url}/api/launch`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        kind: 'new',
+        storeId: 'local',
+        root: '/r/app/.claude/worktrees/feature',
+      }),
+    })
+    expect(wt.status).toBe(200)
+    expect(((await wt.json()) as { cwd: string }).cwd).toBe('/r/app/.claude/worktrees/feature')
+
+    // Launch options become real claude flags; the title follows the name.
+    const opts = await fetch(`${server.url}/api/launch`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        kind: 'new',
+        storeId: 'local',
+        root: '/r/app',
+        mode: 'pty',
+        name: 'billing spike',
+        model: 'opus',
+        permissionMode: 'plan',
+      }),
+    })
+    const optsBody = (await opts.json()) as { command: string; title: string }
+    expect(optsBody.command).toContain('--name billing spike')
+    expect(optsBody.command).toContain('--model opus')
+    expect(optsBody.command).toContain('--permission-mode plan')
+    expect(optsBody.title).toBe('billing spike')
+
+    // Junk options are dropped rather than becoming argv.
+    const junk = await fetch(`${server.url}/api/launch`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        kind: 'new',
+        storeId: 'local',
+        root: '/r/app',
+        mode: 'pty',
+        model: 'opus; rm -rf /',
+        permissionMode: 'wideOpen',
+      }),
+    })
+    const junkBody = (await junk.json()) as { command: string }
+    expect(junkBody.command).not.toContain('rm -rf')
+    expect(junkBody.command).not.toContain('--permission-mode')
+
     expect(
       (
         await fetch(`${server.url}/api/launch`, {

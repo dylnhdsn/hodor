@@ -335,6 +335,10 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
       sessionId?: string
       storeId?: string
       root?: string
+      /** kind 'new' launch options (the new-session dialog). */
+      name?: string
+      model?: string
+      permissionMode?: string
       /** "pty": compose a spec for an embedded terminal instead of spawning
        * an external one — the desktop app owns the PTY. */
       mode?: string
@@ -400,23 +404,59 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
     } else if (payload.kind === 'new') {
       const store = snapshot?.stores.find((s) => s.id === payload.storeId)
       if (store === undefined) return sendJson(res, 400, { error: 'unknown store' })
-      // Only launch into places the data already knows about.
+      if (payload.root === undefined) return sendJson(res, 400, { error: 'root is required' })
+      const root = payload.root
+      // Only launch into places the data already knows about — a known
+      // root or session cwd, or somewhere BENEATH one. The subdirectory
+      // case is what lets a git worktree (…/.claude/worktrees/x) or a
+      // package folder be a launch target before anything has run there.
+      const sep = store.pathFlavor === 'win32' ? '\\' : '/'
+      const under = (base: string): boolean =>
+        root === base || root.startsWith(base.endsWith(sep) ? base : base + sep)
       const known =
         snapshot?.projects.some((p) =>
-          p.roots.some((r) => r.storeId === payload.storeId && r.path === payload.root),
+          p.roots.some((r) => r.storeId === payload.storeId && under(r.path)),
         ) === true ||
-        snapshot?.sessions.some((s) => s.storeId === payload.storeId && s.cwds.includes(payload.root ?? '')) === true
-      if (!known || payload.root === undefined) {
-        return sendJson(res, 400, { error: 'root is not a known project root' })
+        snapshot?.sessions.some(
+          (s) => s.storeId === payload.storeId && s.cwds.some((c) => under(c)),
+        ) === true
+      // Anywhere else is allowed too, as long as it is a REAL directory in
+      // that store — a worktree the user keeps outside the repo has no
+      // history for us to recognize it by, so existence is the only honest
+      // bar. (Checked through the store's fs, so it works across the
+      // Windows/WSL boundary.)
+      if (!known) {
+        const stat = await fsFor(store.id)
+          .stat(root)
+          .catch(() => undefined)
+        if (stat?.kind !== 'dir') {
+          return sendJson(res, 400, { error: `not a directory in this store: ${root}` })
+        }
       }
       mintedId = randomUUID()
+      // Launch options from the new-session dialog. Values are validated
+      // against fixed sets (or shape) so nothing user-typed becomes argv.
+      const extra: string[] = []
+      if (typeof payload.name === 'string' && payload.name.trim() !== '') {
+        extra.push('--name', payload.name.trim().slice(0, 80))
+      }
+      if (typeof payload.model === 'string' && /^[A-Za-z0-9._-]{1,60}$/.test(payload.model)) {
+        extra.push('--model', payload.model)
+      }
+      const MODES = ['acceptEdits', 'auto', 'bypassPermissions', 'manual', 'dontAsk', 'plan']
+      if (typeof payload.permissionMode === 'string' && MODES.includes(payload.permissionMode)) {
+        extra.push('--permission-mode', payload.permissionMode)
+      }
       target = {
-        cwd: payload.root,
+        cwd: root,
         flavor: store.pathFlavor,
         origin: store.origin,
-        claudeArgs: ['--session-id', mintedId],
+        claudeArgs: ['--session-id', mintedId, ...extra],
       }
-      title = payload.root.split(/[/\\]/).filter(Boolean).pop() ?? payload.root
+      title =
+        typeof payload.name === 'string' && payload.name.trim() !== ''
+          ? payload.name.trim()
+          : (root.split(/[/\\]/).filter(Boolean).pop() ?? root)
     } else {
       return sendJson(res, 400, { error: 'kind must be resume, fork, new, or teleport' })
     }
@@ -441,6 +481,31 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
       ...result,
       ...(mintedId !== undefined ? { sessionId: mintedId } : {}),
     })
+  }
+
+  /**
+   * Does this path exist as a directory in that store, and does it look
+   * like a git checkout? The new-session dialog calls this so a typed
+   * path (a worktree kept outside the repo, say) can be confirmed before
+   * launching instead of failing at spawn time.
+   */
+  async function handlePathCheck(res: ServerResponse, url: URL): Promise<void> {
+    const storeId = url.searchParams.get('storeId') ?? ''
+    const target = url.searchParams.get('path') ?? ''
+    const store = snapshot?.stores.find((s) => s.id === storeId)
+    if (store === undefined || target === '') {
+      return sendJson(res, 400, { error: 'storeId and path are required' })
+    }
+    const fs = fsFor(store.id)
+    const stat = await fs.stat(target).catch(() => undefined)
+    if (stat?.kind !== 'dir') return sendJson(res, 200, { exists: false })
+    const p = pathOps(store.pathFlavor)
+    // a linked worktree has .git as a FILE ("gitdir: …"); a primary repo
+    // has it as a directory
+    const dotGit = await fs.stat(p.join(target, '.git')).catch(() => undefined)
+    const git =
+      dotGit?.kind === 'file' ? 'worktree' : dotGit?.kind === 'dir' ? 'repo' : undefined
+    return sendJson(res, 200, { exists: true, ...(git !== undefined ? { git } : {}) })
   }
 
   /** Send one message into a cloud session without taking it over:
@@ -598,6 +663,12 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
         }
         await saveWorkspaces(deps, files.home, doc)
         sendJson(res, 200, { ok: true })
+        return
+      }
+
+      if (reads && path === '/api/pathcheck') {
+        if (snapshot === undefined) await refresh()
+        await handlePathCheck(res, url)
         return
       }
 

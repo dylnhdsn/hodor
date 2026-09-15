@@ -34,6 +34,7 @@ import {
 import { GearIcon } from './icons.js'
 import { confirmAction, DialogHost, notice, promptText } from './dialog.js'
 import { ContextMenu, useContextMenu, type MenuItem } from './menu.js'
+import { NewSessionDialog } from './NewSession.js'
 import { notifyNeedsYou } from './notify.js'
 import { Stack, stackQueue } from './Stack.js'
 import { desktop } from './desktop.js'
@@ -267,18 +268,8 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
     snapshot.customProjects.filter((p) => p.archived !== true).map((p) => [p.id, p.name]),
   )
 
-  // Where "+ new session" launches: the project's first known root.
-  const newSessionTarget = useMemo(() => {
-    if (project === undefined) return undefined
-    const root = project.auto?.roots[0]
-    if (root !== undefined) return { storeId: root.storeId, root: root.path }
-    for (const s of project.sessions) {
-      const derivedRoot = view.derivedOf.get(s.id)?.roots[0]
-      if (derivedRoot !== undefined) return { storeId: derivedRoot.storeId, root: derivedRoot.path }
-      if (s.cwd !== undefined) return { storeId: s.storeId, root: s.cwd }
-    }
-    return undefined
-  }, [project, view])
+  // Starting a session opens a dialog — see NewSession.tsx.
+  const [newSessionFor, setNewSessionFor] = useState<RailProject | undefined>(undefined)
 
   // Mutations that target a project follow the id the server answers with —
   // editing an auto project materializes it under a new (custom) id.
@@ -353,6 +344,14 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
     <div className="flex h-full flex-col bg-app font-mono text-[12px] text-t1">
       {/* prompt/confirm/notice host — Electron has no window.prompt */}
       <DialogHost />
+      {newSessionFor !== undefined && (
+        <NewSessionDialog
+          project={newSessionFor}
+          view={view}
+          nowMs={nowMs}
+          close={() => setNewSessionFor(undefined)}
+        />
+      )}
       <div
         className={`drag flex h-[42px] shrink-0 items-center gap-2.5 border-b border-b1 px-3.5 ${
           platform === 'darwin' ? 'pl-[78px]' : ''
@@ -687,11 +686,11 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
                   settings
                 </button>
               )}
-              {project !== undefined && newSessionTarget !== undefined && (
+              {project !== undefined && (
                 <button
-                  onClick={() => void launchOrCopy({ kind: 'new', ...newSessionTarget })}
+                  onClick={() => setNewSessionFor(project)}
                   className="whitespace-nowrap rounded border border-run/40 px-2 py-0.5 text-[10.5px] text-run hover:bg-run/10"
-                  title={`open a terminal running claude in ${newSessionTarget.root}`}
+                  title="pick the directory and how it starts"
                 >
                   + new session
                 </button>
