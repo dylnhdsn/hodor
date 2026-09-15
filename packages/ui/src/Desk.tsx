@@ -15,6 +15,7 @@ import {
 import 'dockview/dist/styles/dockview.css'
 import { postMutation } from './data.js'
 import { desktop, type OpenTarget } from './desktop.js'
+import { promptText } from './dialog.js'
 import { ContextMenu, useContextMenu } from './menu.js'
 import { TerminalView } from './Terminal.js'
 
@@ -433,18 +434,25 @@ function SlotTab(props: IDockviewPanelHeaderProps<SlotParams>) {
     : undefined
 
   const rename = (): void => {
-    const name = window.prompt('Rename session', title)
-    if (name === null || name.trim().length === 0) return
-    if (sessionId !== undefined) {
-      // the durable name — every view shows it, not just this tab
-      void postMutation('/api/session', {
-        op: 'rename-session',
-        sessionId,
-        name: name.trim(),
-      })
-    } else {
-      props.api.setTitle(name.trim())
-    }
+    void promptText('Rename session', {
+      initial: title,
+      detail:
+        sessionId !== undefined
+          ? 'renames the session everywhere in hodor'
+          : 'renames this tab only — it has no session bound yet',
+    }).then((name) => {
+      if (name === undefined || name.trim().length === 0) return
+      if (sessionId !== undefined) {
+        // the durable name — every view shows it, not just this tab
+        void postMutation('/api/session', {
+          op: 'rename-session',
+          sessionId,
+          name: name.trim(),
+        })
+      } else {
+        props.api.setTitle(name.trim())
+      }
+    })
   }
 
   return (
@@ -591,13 +599,17 @@ export function Desk({ inspect }: { inspect?: (sessionId: string) => void }) {
   const renameZone = useCallback(
     (groupId: string) => {
       const current = zonesRef.current[groupId]?.name ?? ''
-      const name = window.prompt('Zone name (e.g. ACTIVE, PR REVIEWS, MISC)', current)
-      if (name === null) return
-      setZones((z) => ({
-        ...z,
-        [groupId]: { ...z[groupId], name: name.trim().toUpperCase() || undefined },
-      }))
-      save()
+      void promptText('Zone name', {
+        initial: current,
+        placeholder: 'ACTIVE, PR REVIEWS, MISC…',
+      }).then((name) => {
+        if (name === undefined) return
+        setZones((z) => ({
+          ...z,
+          [groupId]: { ...z[groupId], name: name.trim().toUpperCase() || undefined },
+        }))
+        save()
+      })
     },
     [save],
   )

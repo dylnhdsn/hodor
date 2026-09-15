@@ -256,6 +256,7 @@ function toSession(
   if (accum.hookErrorCount > 0) session.hookErrors = accum.hookErrorCount
   if (accum.hookBlockCount > 0) session.hookBlocks = accum.hookBlockCount
   if (accum.summary !== undefined) session.summary = accum.summary
+  if (accum.customTitle !== undefined) session.customTitle = accum.customTitle
   if (accum.promptPreview !== undefined) session.promptPreview = accum.promptPreview
   if (accum.firstCommand !== undefined) session.firstCommand = accum.firstCommand
   if (accum.createdAt !== undefined) session.createdAt = accum.createdAt

@@ -35,6 +35,9 @@ export interface SessionAccum {
   cwds: string[]
   gitBranch?: string
   summary?: string
+  /** The name the user gave the session with /name (custom-title lines).
+   * Later lines overwrite earlier ones: renaming appends. */
+  customTitle?: string
   createdAt?: string
   lastActivityAt?: string
   cliVersion?: string
@@ -400,6 +403,7 @@ export function fold(state: CoreState, event: SourceEvent): CoreState {
       for (const line of event.lines) {
         if (line.kind === 'message') applyMessage(accum, line)
         else if (line.kind === 'summary') accum.summary = line.summary
+        else if (line.kind === 'custom-title') accum.customTitle = line.title
         else if (line.kind === 'other') {
           if (line.subtype === 'compact_boundary') {
             accum.compactBoundaries += 1

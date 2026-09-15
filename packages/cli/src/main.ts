@@ -315,7 +315,7 @@ export function computeStats(
         runs: session.counts.sidechains,
         ...(session.hiddenBy !== undefined ? { hiddenBy: session.hiddenBy } : {}),
         title:
-          session.rename ?? session.summary ?? session.promptPreview ?? session.firstCommand ?? '(untitled)',
+          session.rename ?? session.customTitle ?? session.summary ?? session.promptPreview ?? session.firstCommand ?? '(untitled)',
       })
     }
     if (session.costUsd !== undefined && session.costUsd > 0) {
@@ -325,7 +325,7 @@ export function computeStats(
         usd: session.costUsd,
         ...(session.hiddenBy !== undefined ? { hiddenBy: session.hiddenBy } : {}),
         title:
-          session.rename ?? session.summary ?? session.promptPreview ?? session.firstCommand ?? '(untitled)',
+          session.rename ?? session.customTitle ?? session.summary ?? session.promptPreview ?? session.firstCommand ?? '(untitled)',
       })
     }
     for (const thread of session.threads) {

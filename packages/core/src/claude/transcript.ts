@@ -89,6 +89,21 @@ const summaryLineSchema = z
   .passthrough()
 
 /**
+ * The name the USER gave the session with /name (CLI 2.1.x writes a
+ * `custom-title` line, plus a paired `agent-name` line, each time the
+ * name is set). Last one wins — it's an append-only log, so a rename
+ * appends rather than rewrites. This is the most authoritative title
+ * there is: a human typed it about this exact session.
+ */
+const customTitleLineSchema = z
+  .object({
+    type: z.enum(['custom-title', 'agent-name']),
+    customTitle: z.string().optional(),
+    agentName: z.string().optional(),
+  })
+  .passthrough()
+
+/**
  * Checkpoint lines (the CLI's /rewind feature; shapes verified against
  * CLI 2.1.269 output). A file-history-snapshot marks one checkpoint —
  * written per prompt that starts a turn; trackedFileBackups maps each
@@ -210,6 +225,12 @@ export interface SummaryLine {
   leafUuid?: string
 }
 
+/** A /name line: the user's own name for this session. */
+export interface CustomTitleLine {
+  kind: 'custom-title'
+  title: string
+}
+
 export interface OtherLine {
   kind: 'other'
   type: string
@@ -231,7 +252,12 @@ export interface InvalidLine {
   error: string
 }
 
-export type TranscriptLine = MessageLine | SummaryLine | OtherLine | InvalidLine
+export type TranscriptLine =
+  | MessageLine
+  | SummaryLine
+  | CustomTitleLine
+  | OtherLine
+  | InvalidLine
 
 export const PROMPT_TEXT_MAX_LENGTH = 120
 export const ASSISTANT_PREVIEW_MAX_LENGTH = 200
@@ -299,6 +325,12 @@ export function parseTranscriptLine(raw: string): TranscriptLine {
       summary: summary.data.summary,
       ...(summary.data.leafUuid !== undefined ? { leafUuid: summary.data.leafUuid } : {}),
     }
+  }
+
+  const custom = customTitleLineSchema.safeParse(json)
+  if (custom.success) {
+    const title = (custom.data.customTitle ?? custom.data.agentName ?? '').trim()
+    if (title.length > 0) return { kind: 'custom-title', title }
   }
 
   const type = (json as { type?: unknown }).type

@@ -1,5 +1,6 @@
 import type { CloudSession, CustomProject, Placement, Project, Session, Snapshot } from '@hodor/core'
 import { desktop } from './desktop.js'
+import { notice } from './dialog.js'
 
 /** Client-side derivations over a Snapshot — mirrors the CLI formatter. */
 
@@ -21,7 +22,7 @@ export function formatAge(nowMs: number, timestamp?: string): string {
 }
 
 export const titleOf = (s: Session): string =>
-  s.rename ?? s.summary ?? s.promptPreview ?? s.firstCommand ?? '(untitled)'
+  s.rename ?? s.customTitle ?? s.summary ?? s.promptPreview ?? s.firstCommand ?? '(untitled)'
 
 /** What a waiting session is asking right now. Skips snapshot this: an
  * "until it moves" skip stays quiet while the ask reads the same and wakes
@@ -316,13 +317,16 @@ export async function launchOrCopy(
   if (paste !== '') {
     try {
       await navigator.clipboard.writeText(paste)
-      window.alert(`Couldn't open a terminal — command copied to clipboard:\n\n${paste}`)
+      await notice('no terminal opened — command copied to your clipboard', paste)
       return
     } catch {
       // fall through to the plain alert
     }
   }
-  window.alert(`Couldn't launch: ${result.error ?? 'unknown error'}${paste !== '' ? `\n\n${paste}` : ''}`)
+  await notice(
+    "couldn't launch that session",
+    `${result.error ?? 'unknown error'}${paste !== '' ? `\n\n${paste}` : ''}`,
+  )
 }
 
 export async function postMutation(

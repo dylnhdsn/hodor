@@ -67,6 +67,10 @@ export interface Session {
   gitBranch?: string
   /** Claude-derived summary/title, if any. */
   summary?: string
+  /** The name the user gave the session inside Claude with /name. A human
+   * typed it about this exact session, so it outranks every derived
+   * title; only a hodor rename (also the user's, but ours) beats it. */
+  customTitle?: string
   /** Hodor rename from user config — the highest-priority display title. */
   rename?: string
   /** First real user prompt, truncated — the display-title fallback. */

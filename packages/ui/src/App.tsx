@@ -32,6 +32,7 @@ import {
   subscribeDesk,
 } from './Desk.js'
 import { GearIcon } from './icons.js'
+import { confirmAction, DialogHost, notice, promptText } from './dialog.js'
 import { ContextMenu, useContextMenu, type MenuItem } from './menu.js'
 import { notifyNeedsYou } from './notify.js'
 import { Stack, stackQueue } from './Stack.js'
@@ -284,7 +285,7 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
   async function mutateProject(body: Record<string, unknown>): Promise<boolean> {
     const result = await postMutation('/api/project', body)
     if (!result.ok) {
-      window.alert(result.error ?? 'failed')
+      await notice('that change failed', result.error)
       return false
     }
     if (typeof result.id === 'string' && filter.kind === 'project' && result.id !== filter.id) {
@@ -294,10 +295,10 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
   }
 
   async function createProject() {
-    const name = window.prompt('New project name')
-    if (name === null || name.trim().length === 0) return
+    const name = await promptText('New project', { placeholder: 'project name', okLabel: 'create' })
+    if (name === undefined || name.trim().length === 0) return
     const result = await postMutation('/api/project', { op: 'create-project', name: name.trim() })
-    if (!result.ok) window.alert(result.error ?? 'failed')
+    if (!result.ok) await notice("couldn't create that project", result.error)
     else if (typeof result.id === 'string') setFilter({ kind: 'project', id: result.id })
   }
 
@@ -350,6 +351,8 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
 
   return (
     <div className="flex h-full flex-col bg-app font-mono text-[12px] text-t1">
+      {/* prompt/confirm/notice host — Electron has no window.prompt */}
+      <DialogHost />
       <div
         className={`drag flex h-[42px] shrink-0 items-center gap-2.5 border-b border-b1 px-3.5 ${
           platform === 'darwin' ? 'pl-[78px]' : ''
@@ -1110,9 +1113,12 @@ function ArchivedList(props: {
               {p.derivedFrom !== undefined && (
                 <button
                   onClick={() => {
-                    if (window.confirm(`Revert "${p.name}" to automatic grouping?`)) {
-                      void mutateProject({ op: 'delete-project', id: p.id })
-                    }
+                    void confirmAction(`Revert "${p.name}" to automatic grouping?`, {
+                      detail: 'its custom record goes away; sessions regroup by repo',
+                      okLabel: 'revert',
+                    }).then((ok) => {
+                      if (ok) void mutateProject({ op: 'delete-project', id: p.id })
+                    })
                   }}
                   className="text-t4 hover:text-t2"
                 >
@@ -1171,8 +1177,8 @@ function SessionRow(props: {
   }
 
   async function rename() {
-    const name = window.prompt('Rename session', titleOf(s))
-    if (name === null || name.trim().length === 0) return
+    const name = await promptText('Rename session', { initial: titleOf(s) })
+    if (name === undefined || name.trim().length === 0) return
     await postMutation('/api/session', { op: 'rename-session', sessionId: s.id, name: name.trim() })
   }
 
@@ -1181,9 +1187,13 @@ function SessionRow(props: {
   }
 
   function skipWithNote() {
-    const note = window.prompt('Note to self (why are you skipping this?)')
-    if (note === null) return
-    skipLocal(s, note)
+    void promptText('Skip with a note', {
+      detail: 'shown on the row so you can reorient when it comes back',
+      placeholder: 'waiting on the design review…',
+      okLabel: 'skip',
+    }).then((note) => {
+      if (note !== undefined) skipLocal(s, note)
+    })
   }
 
   const stop = (e: React.SyntheticEvent) => e.stopPropagation()
@@ -1453,8 +1463,8 @@ function DetailPane(props: {
     snapshot.customProjects.find((p) => p.id === id)?.archived === true
 
   async function rename() {
-    const name = window.prompt('Rename session', titleOf(s))
-    if (name === null || name.trim().length === 0) return
+    const name = await promptText('Rename session', { initial: titleOf(s) })
+    if (name === undefined || name.trim().length === 0) return
     await postMutation('/api/session', { op: 'rename-session', sessionId: s.id, name: name.trim() })
   }
 
@@ -1923,9 +1933,12 @@ function SettingsPanel(props: {
           {custom?.derivedFrom !== undefined && (
             <button
               onClick={() => {
-                if (window.confirm(`Revert "${project.name}" to automatic grouping?`)) {
-                  void mutateProject({ op: 'delete-project', id: project.id })
-                }
+                void confirmAction(`Revert "${project.name}" to automatic grouping?`, {
+                  detail: 'its custom record goes away; sessions regroup by repo',
+                  okLabel: 'revert',
+                }).then((ok) => {
+                  if (ok) void mutateProject({ op: 'delete-project', id: project.id })
+                })
               }}
               className="text-t4 hover:text-t2"
             >
@@ -2135,12 +2148,13 @@ function MergeSelect(props: {
         e.target.value = ''
         if (from === '') return
         const other = others.find((p) => p.id === from)
-        if (
-          other !== undefined &&
-          window.confirm(`Merge "${other.name}" into "${project.name}"? Its record goes away.`)
-        ) {
-          void mutateProject({ op: 'merge-projects', id: project.id, from })
-        }
+        if (other === undefined) return
+        void confirmAction(`Merge "${other.name}" into "${project.name}"?`, {
+          detail: `"${other.name}" goes away; its sessions land in "${project.name}"`,
+          okLabel: 'merge',
+        }).then((ok) => {
+          if (ok) void mutateProject({ op: 'merge-projects', id: project.id, from })
+        })
       }}
       className="rounded border border-b4 bg-s3 px-1 py-0.5 text-t3"
     >

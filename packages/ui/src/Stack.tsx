@@ -10,6 +10,7 @@ import {
   type View,
 } from './data.js'
 import { desktop } from './desktop.js'
+import { notice } from './dialog.js'
 import { deskState, getDeskOps, isDeferred, subscribeDesk, type DeskEntry } from './Desk.js'
 import { CloudIcon } from './icons.js'
 import { TerminalView } from './Terminal.js'
@@ -180,7 +181,7 @@ export function Stack(props: {
     void sendCloudMessage(cloud.id, text)
       .then((result) => {
         if (!result.ok) {
-          window.alert(`couldn't send: ${result.error ?? result.output ?? 'unknown error'}`)
+          void notice("couldn't send", result.error ?? result.output ?? 'unknown error')
           return
         }
         setReply('')

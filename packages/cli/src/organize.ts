@@ -52,7 +52,7 @@ export function buildOrganizeFacts(state: CoreState, snapshot: Snapshot): Organi
         if (!remotes.includes(remote)) remotes.push(remote)
       }
     }
-    const title = session.rename ?? session.summary ?? session.promptPreview ?? session.firstCommand
+    const title = session.rename ?? session.customTitle ?? session.summary ?? session.promptPreview ?? session.firstCommand
     facts.push({ type: 'local', ...session, ...(title !== undefined ? { title } : {}), remotes })
   }
   for (const cloud of snapshot.cloudSessions) {

@@ -395,7 +395,7 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
         ],
       }
       title =
-        session.rename ?? session.summary ?? session.promptPreview ?? session.id.slice(0, 8)
+        session.rename ?? session.customTitle ?? session.summary ?? session.promptPreview ?? session.id.slice(0, 8)
       if (payload.kind === 'fork') title = `⑂ ${title}`
     } else if (payload.kind === 'new') {
       const store = snapshot?.stores.find((s) => s.id === payload.storeId)

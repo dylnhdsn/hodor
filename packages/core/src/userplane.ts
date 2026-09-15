@@ -220,7 +220,7 @@ export function globMatches(value: string, glob: string): boolean {
 }
 
 const titleTextOf = (session: Session): string | undefined =>
-  session.rename ?? session.summary ?? session.promptPreview ?? session.firstCommand
+  session.rename ?? session.customTitle ?? session.summary ?? session.promptPreview ?? session.firstCommand
 
 function matches(matcher: Matcher, session: Session, evidence: SessionEvidence): boolean {
   switch (matcher.kind) {

@@ -52,7 +52,7 @@ const ruleLabel = (rule: string): string => rule.slice(rule.indexOf(':') + 1) ||
 
 function titleOf(session: Session): string {
   return (
-    session.rename ?? session.summary ?? session.promptPreview ?? session.firstCommand ?? '(untitled)'
+    session.rename ?? session.customTitle ?? session.summary ?? session.promptPreview ?? session.firstCommand ?? '(untitled)'
   )
 }
 

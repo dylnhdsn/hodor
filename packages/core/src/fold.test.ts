@@ -280,6 +280,17 @@ describe('fold', () => {
     expect(state.sessions['a']!.summary).toBe('second')
   })
 
+  it('takes the last /name custom title', () => {
+    const state = foldAll(emptyState, [
+      lines('a', [
+        { kind: 'custom-title', title: 'first name' },
+        msg({ uuid: 'u1' }),
+        { kind: 'custom-title', title: 'renamed later' },
+      ]),
+    ])
+    expect(state.sessions['a']!.customTitle).toBe('renamed later')
+  })
+
   it('removes sessions when their transcript is removed', () => {
     const state = foldAll(emptyState, [
       lines('a', [msg({ uuid: 'u1' })]),

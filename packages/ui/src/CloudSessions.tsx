@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { CloudSession } from '@hodor/core'
 import { deferNoteOf, getDeskOps, isDeferred } from './Desk.js'
 import { formatAge, formatTokens, formatUsd, launchOrCopy, sendCloudMessage, sigOfCloud } from './data.js'
+import { notice, promptText } from './dialog.js'
 import { CloudIcon } from './icons.js'
 import { ContextMenu, useContextMenu, type MenuItem } from './menu.js'
 
@@ -28,13 +29,14 @@ export const cloudRunning = (s: CloudSession): boolean =>
   s.status === 'running' || s.bucket === 'working'
 
 export async function messageCloud(s: CloudSession): Promise<void> {
-  const text = window.prompt(
-    `Message to "${s.title ?? s.id.slice(0, 12)}" (queued, keeps running in the cloud):`,
-  )
-  if (text === null || text.trim().length === 0) return
+  const text = await promptText(`Message "${s.title ?? s.id.slice(0, 12)}"`, {
+    detail: 'queued into the session; it keeps running in the cloud',
+    okLabel: 'send',
+  })
+  if (text === undefined || text.trim().length === 0) return
   const result = await sendCloudMessage(s.id, text.trim())
   if (!result.ok) {
-    window.alert(`couldn't send: ${result.error ?? result.output ?? 'unknown error'}`)
+    await notice("couldn't send", result.error ?? result.output ?? 'unknown error')
   }
 }
 
@@ -88,8 +90,13 @@ export function CloudRow(props: {
             {
               label: 'skip with a note…',
               onClick: () => {
-                const note = window.prompt('Note to self (why are you skipping this?)')
-                if (note !== null) skip(note)
+                void promptText('Skip with a note', {
+                  detail: 'shown on the row so you can reorient when it comes back',
+                  placeholder: 'waiting on the design review…',
+                  okLabel: 'skip',
+                }).then((note) => {
+                  if (note !== undefined) skip(note)
+                })
               },
             },
           ]

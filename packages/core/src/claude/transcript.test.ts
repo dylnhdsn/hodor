@@ -199,6 +199,26 @@ describe('parseTranscriptLine edge cases', () => {
     expect(line).toEqual({ kind: 'summary', summary: 'Session manager brainstorm', leafUuid: 'abc' })
   })
 
+  // The /name command (CLI 2.1.x): shapes captured from a real store.
+  it('parses the /name custom-title line', () => {
+    const line = parseTranscriptLine(
+      JSON.stringify({ type: 'custom-title', customTitle: 'Hodor', sessionId: 's1' }),
+    )
+    expect(line).toEqual({ kind: 'custom-title', title: 'Hodor' })
+  })
+
+  it('parses the paired agent-name line', () => {
+    const line = parseTranscriptLine(
+      JSON.stringify({ type: 'agent-name', agentName: 'Hodor', sessionId: 's1' }),
+    )
+    expect(line).toEqual({ kind: 'custom-title', title: 'Hodor' })
+  })
+
+  it('ignores an empty custom title rather than blanking the name', () => {
+    const line = parseTranscriptLine(JSON.stringify({ type: 'custom-title', customTitle: '  ' }))
+    expect(line).toEqual({ kind: 'other', type: 'custom-title' })
+  })
+
   it('extracts sidechain spawn links', () => {
     const line = parseTranscriptLine(
       JSON.stringify({
