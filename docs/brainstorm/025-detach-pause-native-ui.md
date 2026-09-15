@@ -157,20 +157,141 @@ choosing not to send input.
 
 ## 3. Replacing the CLI's prompt UI with our own
 
-### Approach A — crop the TUI below the prompt box: NO
+### Approach A — crop the TUI, render our own, keep an escape hatch
 
-There is no supported way to do this and it would be permanently fragile:
+Dylan's framing (and it changes the analysis): we are not cropping to
+*hide* things, we are taking **responsibility for rendering** that region,
+and hodor always exposes a way to reveal the real CLI UI. Coverage grows
+incrementally; anything we haven't covered falls back to the genuine
+thing.
 
-- Nothing exposes where the prompt box starts; its height is dynamic
-  (multi-line input, `\`+Enter, pasted blocks).
-- Permission prompts, plan approval, `/permissions`, `/theme` and friends
-  are **modal dialogs drawn in exactly the region we'd be cropping** —
-  cropping them away removes the ability to answer them.
-- Alternate-screen + full redraw on resize/`Ctrl+L` means crop coordinates
-  go stale mid-conversation.
+That inverts the risk. My first objection was "permission dialogs live in
+the region you'd crop, so you'd lose them." **Measured, that is wrong** —
+see below. And the failure mode of the whole approach is *degrading to the
+CLI's own UI*, which is exactly where we are today. It fails safe.
 
-The TUI is a rendering target, not an API. Cropping it buys a UI that
-breaks on every CLI release.
+#### What the TUI actually does (measured, CLI 2.1.272, 120x40 PTY)
+
+Raw escape-sequence capture of a real session:
+
+- **Alternate screen buffer is used** (`ESC[?1049h`). Nothing lands in
+  scrollback; the CLI owns the grid.
+- **No scroll region is ever set** — zero `DECSTBM` (`ESC[...r`) in the
+  whole stream. So the CLI never *declares* where its chrome begins; we
+  cannot read the boundary off the wire. It redraws with absolute cursor
+  positioning (`ESC[N;NH`), column moves (`ESC[NG`) and erases (`ESC[NJ`).
+- No synchronized-output (`?2026`) framing either.
+
+So the boundary has to be found in the **rendered grid**, which we have:
+xterm.js exposes the buffer, and we only need to scan the last handful of
+rows per frame.
+
+#### The three states, captured
+
+**Idle** — prompt box anchored at the bottom of the screen:
+```
+ 36 |────────────────────────   solid rule  U+2500
+ 37 |❯                          input line
+ 38 |────────────────────────   solid rule  U+2500
+ 39 | ⏸ manual mode on · ← for agents      status line
+```
+
+**Working** (mid-turn, verified across three captures 3s apart) — the
+**same** structure stays anchored at the bottom; only the status line
+changes, gaining `· esc to interrupt`. You can type/queue while it works,
+which is why the box stays.
+
+**Permission modal** — the prompt box is **gone entirely**; the dialog is
+drawn *inline in the transcript flow*, and the rows below it are blank:
+```
+ 15 |● Write(modal-test.txt)
+ 17 |────────────────────────   solid rule (top of the tool/diff block)
+ 20 |╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌   DASHED rule U+254C (diff separator)
+ 23 | Do you want to create modal-test.txt?
+ 24 | ❯ 1. Yes
+ 26 |   3. No
+ 28 | Esc to cancel · Tab to amend
+ 29+|                            (blank to the bottom of the screen)
+```
+
+Two details worth keeping: the prompt box uses **solid** `─` (U+2500)
+while diff/modal separators use **dashed** `╌` (U+254C); and the `❯` caret
+appears in *both* the prompt line and the selected menu option, so `❯`
+alone is not a discriminator.
+
+#### The detection rule this yields
+
+Scan the grid bottom-up once per frame:
+
+- If the last non-blank block is `[solid rule] [❯ line(s)] [solid rule]
+  [status line]` → normal state. **Crop from that first rule down** and
+  render our own input + status. Multi-line input just grows the block,
+  and scanning bottom-up absorbs that for free.
+- If that trailing block is **absent** → the CLI is showing something we
+  do not own (permission prompt, plan approval, `/permissions`, a picker).
+  **Reveal everything.** No per-dialog recognition needed; the absence of
+  the prompt box *is* the signal.
+
+This is the escape hatch, and it can be automatic rather than a button the
+user has to remember — with a manual "show the real UI" toggle on top for
+the cases where our rendering is merely *worse* rather than absent.
+
+#### Where our replacement's DATA comes from
+
+**Never from the screen.** Screen-scraping is only ever used to find the
+crop boundary; every value we *render* comes from session data. hodor
+already folds the transcript into structured state (turn, tool calls,
+previews, cost), and `claude agents --json` adds authoritative live
+`status`/`waitingFor`. The crop is **purely visual**.
+
+But session data has a granularity limit we have to design around, and it
+is measured, not assumed:
+
+> **The transcript carries no partial text.** Sampling a live session's
+> JSONL every 2s while it answered: assistant text went `0 → 1251 chars`
+> in a single step, at message completion. There are no incremental
+> writes to interpolate.
+
+Consequences, and they cleanly split the work in two:
+
+- **Phase 1 — crop the bottom chrome only** (the input box + status line,
+  which is exactly what was asked for). Everything we render there is
+  either ours (the draft the user is typing) or message-granular anyway
+  (mode, queued messages, context/cost, turn state). **The transcript
+  above stays CLI-rendered, so live token-by-token streaming keeps
+  working for free.** No data gap at all.
+- **Phase 2 — take over transcript rendering too.** Here the JSONL is not
+  enough: rendering from it would make responses appear in one lump
+  instead of streaming, which is a visible regression against the CLI.
+  That phase needs a real stream — `stream-json`'s `stream_event`
+  deltas (approach B's protocol, usable as a *data channel* beside the
+  PTY rather than as a replacement session), or the per-session
+  `messaging_socket_path` found in `~/.claude/sessions/<pid>.json`
+  (undocumented; do not build on it without more work).
+
+So the boundary-detection work and the data work are independent, and
+Phase 1 needs no new data source. That is the cheap, safe slice.
+
+#### The real risks
+
+- **The signature is undocumented.** A CLI release could restyle the
+  prompt box and our detection silently stops matching. Mitigation is
+  built in: no match → reveal. We should also ship a loud self-check
+  (if the pattern is missing for N consecutive frames in a session that
+  should be idle, log it and stay revealed) so we notice quickly rather
+  than shipping a subtly broken crop.
+- **Unmeasured render modes.** `/fullscreen` vs classic rendering, and
+  narrow widths where the box may wrap, are untested. Test before relying.
+- **Input still goes to the PTY.** Our box must translate keystrokes
+  faithfully (multi-line, paste, `@` mentions, slash commands, history,
+  queueing while working). That is real work, but it is *our* work and it
+  degrades to the real box on toggle.
+- We only ever paint over the bottom chrome; the transcript above stays
+  the CLI's rendering until/unless we take that over too.
+
+**Verdict: viable, and cheaper than approach B for the same visible win.**
+The escape hatch makes incremental coverage safe, which is the whole
+argument.
 
 ### Approach B — drive the documented stream-json protocol: YES
 
@@ -234,7 +355,12 @@ fidelity, everything works) versus native sessions (our UI, better
 integration, and a permanent tail of parity gaps to chase). Every feature
 after that gets built twice or gated per mode.
 
-Recommended sequencing if we want it:
+**Approach A does not have this problem**: there is still exactly one way
+to run a session (a PTY), and our UI is a skin over it that can be removed
+per-frame. That is the decisive difference now that A is shown to be
+detectable.
+
+Sequencing if we ever want B anyway:
 
 1. **Spike, don't commit.** One native session next to the desk, read-only
    at first: render `stream_event` text + tool calls in React from a real
@@ -244,6 +370,19 @@ Recommended sequencing if we want it:
 3. **Decide** whether native sessions are the future or a second mode, with
    the gap list above in hand and something real to click on.
 
-Meanwhile there's a free win regardless of the outcome: adopt
-`post_turn_summary` / `agents --json` as authoritative turn state for the
-sessions we already run.
+### Recommendation
+
+**Do A first.** It keeps one session model, reuses the transcript state we
+already compute, and its failure mode is the CLI UI we ship today. Order:
+crop + own input box on the idle/working states, auto-reveal whenever the
+prompt-box block is absent, manual reveal toggle always available. Stop
+there until it feels good. Taking over the transcript itself is a separate
+decision that needs a streaming data source (see above) — do not let it
+ride along with Phase 1.
+
+Keep B on the shelf as the answer if we ever want sessions with **no**
+terminal at all (a web hodor, a phone client) — that is the thing A can
+never give us.
+
+Free win regardless of either: adopt `post_turn_summary` / `agents --json`
+as authoritative turn state for the sessions we already run.
