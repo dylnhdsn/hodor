@@ -426,9 +426,11 @@ function GroupActions(props: IDockviewHeaderActionsProps) {
   )
 }
 
-/** Tab anatomy: status dot + ❯ + the SESSION's name (live from the
- * snapshot once the tile knows its session), plus a where-it-runs tag for
- * cross-boundary shells (wsl/cmd). Right-click for the tab's verbs. */
+/** Tab anatomy: a shell icon (wsl/powershell/cmd, name on hover), the
+ * SESSION's name (live from the snapshot once the tile knows its
+ * session), and a status dot that means ONLY whose turn it is. Visible
+ * vs focused is carried by the underline, not the dot, so the two
+ * signals never fight over one pixel. Right-click for the tab's verbs. */
 function SlotTab(props: IDockviewPanelHeaderProps<SlotParams>) {
   const [active, setActive] = useState(props.api.isActive)
   const [panelTitle, setPanelTitle] = useState(props.api.title ?? props.api.id)
