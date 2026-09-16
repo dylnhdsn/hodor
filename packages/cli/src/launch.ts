@@ -21,6 +21,9 @@ export interface LaunchEnv {
   wslDistro?: string | undefined
   /** The user's login shell ($SHELL), for PTY specs on posix hosts. */
   shell?: string | undefined
+  /** Which shell hosts a Windows-side session. PowerShell is the default
+   * (it is what Windows users actually live in); cmd stays available. */
+  windowsShell?: 'powershell' | 'cmd' | undefined
 }
 
 export interface LaunchTarget {
@@ -46,12 +49,33 @@ export interface LaunchPlan {
 
 const shellQuote = (value: string): string => `'${value.replace(/'/g, `'\\''`)}'`
 
+/** PowerShell single-quoted literal: doubling is the escape. */
+const psQuote = (value: string): string => `'${value.replace(/'/g, "''")}'`
+
+/** A `claude …` invocation as ONE PowerShell command string. -Command
+ * re-parses whatever follows, so passing argv would re-split a name like
+ * "billing spike"; quote it here instead. */
+const psCommand = (claudeArgs: string[]): string =>
+  ['claude', ...claudeArgs]
+    .map((a) => (/^[A-Za-z0-9._\/:=-]+$/.test(a) ? a : psQuote(a)))
+    .join(' ')
+
+/** A `claude …` invocation as a POSIX shell STRING. Every argument is
+ * quoted: a session name like "billing spike" used to split into a
+ * positional prompt, so Claude got prompted with "spike" instead of
+ * being named. Only bare-word-safe args are left unquoted, for
+ * readability of the copyable command. */
+const claudeCommand = (claudeArgs: string[]): string =>
+  ['claude', ...claudeArgs]
+    .map((a) => (/^[A-Za-z0-9._\/:=-]+$/.test(a) ? a : shellQuote(a)))
+    .join(' ')
+
 /** Escape for embedding inside an AppleScript double-quoted string. */
 const appleQuote = (value: string): string => value.replace(/[\\"]/g, (c) => `\\${c}`)
 
 export function composeLaunch(env: LaunchEnv, target: LaunchTarget): LaunchPlan {
   const claudeCmd = ['claude', ...target.claudeArgs]
-  const command = claudeCmd.join(' ')
+  const command = claudeCommand(target.claudeArgs)
   const candidates: LaunchCandidate[] = []
 
   const wslSession = target.origin.kind === 'wsl' || (env.wslDistro !== undefined && target.origin.kind === 'native')
@@ -76,11 +100,16 @@ export function composeLaunch(env: LaunchEnv, target: LaunchTarget): LaunchPlan 
       candidates.push({ file: 'wt.exe', args: wsl })
       candidates.push({ file: 'cmd.exe', args: ['/c', 'start', '', ...wsl] })
     } else if (windowsSession) {
-      // cmd /k keeps the window open, so "claude not found" stays readable.
-      candidates.push({ file: 'wt.exe', args: ['-d', target.cwd, 'cmd', '/k', ...claudeCmd] })
+      // -NoExit / /k keep the window open, so "claude not found" stays
+      // readable. PowerShell unless the user picked cmd.
+      const inner =
+        env.windowsShell === 'cmd'
+          ? ['cmd', '/k', ...claudeCmd]
+          : ['powershell.exe', '-NoLogo', '-NoExit', '-Command', psCommand(target.claudeArgs)]
+      candidates.push({ file: 'wt.exe', args: ['-d', target.cwd, ...inner] })
       candidates.push({
         file: 'cmd.exe',
-        args: ['/c', 'start', '', '/d', target.cwd, 'cmd', '/k', ...claudeCmd],
+        args: ['/c', 'start', '', '/d', target.cwd, ...inner],
       })
     }
   } else if (env.os === 'darwin') {
@@ -126,7 +155,7 @@ export interface PtySpec {
  */
 export function composePtySpec(env: LaunchEnv, target: LaunchTarget): PtySpec | undefined {
   const claudeCmd = ['claude', ...target.claudeArgs]
-  const command = claudeCmd.join(' ')
+  const command = claudeCommand(target.claudeArgs)
   const wslSession =
     target.origin.kind === 'wsl' || (env.wslDistro !== undefined && target.origin.kind === 'native')
   const windowsSession =
@@ -149,7 +178,16 @@ export function composePtySpec(env: LaunchEnv, target: LaunchTarget): PtySpec | 
       }
     }
     if (windowsSession) {
-      return { file: 'cmd.exe', args: ['/c', ...claudeCmd], cwd: target.cwd }
+      // PowerShell by default; argv either way, so multi-word arguments
+      // never need quoting on this path.
+      if (env.windowsShell === 'cmd') {
+        return { file: 'cmd.exe', args: ['/c', ...claudeCmd], cwd: target.cwd }
+      }
+      return {
+        file: 'powershell.exe',
+        args: ['-NoLogo', '-NoExit', '-Command', psCommand(target.claudeArgs)],
+        cwd: target.cwd,
+      }
     }
     return undefined
   }
@@ -187,8 +225,12 @@ export interface LaunchResult {
 export async function runLaunch(
   deps: Pick<CliDeps, 'spawnDetached' | 'osPlatform' | 'wslDistro'>,
   target: LaunchTarget,
+  windowsShell?: 'powershell' | 'cmd',
 ): Promise<LaunchResult> {
-  const plan = composeLaunch({ os: deps.osPlatform, wslDistro: deps.wslDistro() }, target)
+  const plan = composeLaunch(
+    { os: deps.osPlatform, wslDistro: deps.wslDistro(), windowsShell },
+    target,
+  )
   if (plan.candidates.length === 0) {
     return { ok: false, error: 'no terminal launcher for this platform/store combination', ...plan }
   }

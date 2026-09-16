@@ -14,6 +14,9 @@ export interface SessionOverride {
   archived?: boolean
   pinnedProject?: string
   tags?: string[]
+  /** Explicitly un-hidden by the user: a visibility RULE matched it, and
+   * the user disagreed. Their call outranks the heuristic. */
+  unhidden?: boolean
 }
 
 export interface HideOverrides {

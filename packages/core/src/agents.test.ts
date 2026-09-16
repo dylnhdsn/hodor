@@ -59,9 +59,19 @@ describe('live agent listing', () => {
     expect(turnFromAgent({ ...base, status: 'busy' })).toBe('working')
     expect(turnFromAgent({ ...base, status: 'waiting' })).toBe('waiting')
     expect(turnFromAgent({ ...base, status: 'idle', state: 'blocked' })).toBe('waiting')
-    // idle just means "sitting at the prompt" — it cannot tell "your turn"
-    // from "abandoned last week", so the transcript keeps that call
-    expect(turnFromAgent({ ...base, status: 'idle' })).toBeUndefined()
+    // 'idle' means alive and sitting at the prompt. It can't tell "your
+    // turn" from "abandoned last week" — the transcript keeps THAT call —
+    // but it does prove the agent is not working, which is what rescues a
+    // session stuck on "working" after a prompt, interrupt or tool result.
+    expect(turnFromAgent({ ...base, status: 'idle' })).toBe('parked')
+    expect(turnFromAgent({ ...base, status: 'idle', state: 'done' })).toBe('parked')
     expect(turnFromAgent({ ...base, status: 'something-new' })).toBeUndefined()
+  })
+
+  it('a parked session that inference called working becomes your turn', () => {
+    // the exact field report: a prompt goes in, the agent finishes, and
+    // the row still says "working" instead of "ready for you"
+    const base = { sessionId: 'a', kind: 'interactive' as const, status: 'idle' }
+    expect(turnFromAgent(base)).toBe('parked')
   })
 })

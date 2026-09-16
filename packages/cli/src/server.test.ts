@@ -410,7 +410,9 @@ describe('startServer', () => {
       }),
     })
     const optsBody = (await opts.json()) as { command: string; title: string }
-    expect(optsBody.command).toContain('--name billing spike')
+    // quoted: an unquoted multi-word name split into a positional
+    // argument and got PROMPTED to claude instead of naming the session
+    expect(optsBody.command).toContain("--name 'billing spike'")
     expect(optsBody.command).toContain('--model opus')
     expect(optsBody.command).toContain('--permission-mode plan')
     expect(optsBody.title).toBe('billing spike')

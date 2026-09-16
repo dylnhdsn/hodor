@@ -73,13 +73,19 @@ export function normalizeAgentListing(body: unknown): LiveAgent[] {
  * - `busy`: the agent is working. Decisive — this is the one that fixes
  *   a stale "your turn".
  * - `waiting` / `blocked`: it stopped and wants a human. Decisive.
- * - anything else (notably `idle`, which just means "sitting at the
- *   prompt"): NOT decisive. Idle can't distinguish "just answered you,
- *   your turn" from "abandoned days ago" — the transcript can, so the
- *   inference keeps that call.
+ * - `idle` / `done`: "parked" — alive, at the prompt, NOT working. It
+ *   cannot tell "just answered you" from "abandoned days ago", so the
+ *   transcript still picks waiting vs idle; but it does veto `working`.
+ * - anything else: not decisive at all.
  */
-export function turnFromAgent(agent: LiveAgent): 'working' | 'waiting' | undefined {
+export function turnFromAgent(agent: LiveAgent): 'working' | 'waiting' | 'parked' | undefined {
   if (agent.status === 'busy') return 'working'
   if (agent.status === 'waiting' || agent.state === 'blocked') return 'waiting'
+  // 'idle' (and the background 'done') mean the process is alive and
+  // sitting at its prompt. That is not nothing: it rules out WORKING.
+  // Inference alone kept such sessions on "working" for minutes after a
+  // prompt or interrupt, and up to two hours after a trailing tool
+  // result — so a session that was ready for you never said so.
+  if (agent.status === 'idle' || agent.state === 'done') return 'parked'
   return undefined
 }

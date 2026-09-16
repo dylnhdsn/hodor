@@ -178,6 +178,7 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
             ...(override.pinnedProject !== undefined
               ? { pinnedProject: override.pinnedProject }
               : {}),
+            ...(override.unhidden !== undefined ? { unhidden: override.unhidden } : {}),
           },
         },
       ])
@@ -241,7 +242,11 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
 
     if (kind === 'session') {
       const op = payload as unknown as SessionOp
-      if (op.op !== 'rename-session' && op.op !== 'archive-session') {
+      if (
+        op.op !== 'rename-session' &&
+        op.op !== 'archive-session' &&
+        op.op !== 'unhide-session'
+      ) {
         return sendJson(res, 400, { error: `unknown session op` })
       }
       await saveConfig(deps, files.home, applySessionOp(files.config, op))
@@ -475,12 +480,19 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
       return sendJson(res, 400, { error: 'kind must be resume, fork, new, or teleport' })
     }
 
+    // Which shell hosts a Windows-side session is a user preference
+    // (PowerShell by default); it lives with the other UI prefs.
+    const prefs = await loadPrefs(deps, files.home).catch(() => ({}) as Record<string, unknown>)
+    const windowsShell = prefs['windowsShell'] === 'cmd' ? ('cmd' as const) : ('powershell' as const)
+    const launchEnv = {
+      os: deps.osPlatform,
+      wslDistro: deps.wslDistro(),
+      shell: deps.env('SHELL'),
+      windowsShell,
+    }
     if (payload.mode === 'pty') {
-      const spec = composePtySpec(
-        { os: deps.osPlatform, wslDistro: deps.wslDistro(), shell: deps.env('SHELL') },
-        target,
-      )
-      const plan = composeLaunch({ os: deps.osPlatform, wslDistro: deps.wslDistro() }, target)
+      const spec = composePtySpec(launchEnv, target)
+      const plan = composeLaunch(launchEnv, target)
       return sendJson(res, 200, {
         spec: spec ?? null,
         title,
@@ -490,7 +502,7 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
       })
     }
 
-    const result = await runLaunch(deps, target)
+    const result = await runLaunch(deps, target, windowsShell)
     return sendJson(res, result.ok ? 200 : 500, {
       ...result,
       ...(mintedId !== undefined ? { sessionId: mintedId } : {}),

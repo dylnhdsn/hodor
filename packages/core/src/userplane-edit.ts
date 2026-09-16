@@ -35,6 +35,7 @@ export type PlaneOp =
 export type SessionOp =
   | { op: 'rename-session'; sessionId: SessionId; name: string }
   | { op: 'archive-session'; sessionId: SessionId; archived: boolean }
+  | { op: 'unhide-session'; sessionId: SessionId; unhidden: boolean }
 
 export interface PlaneEdit {
   plane: UserPlane
@@ -195,6 +196,7 @@ export function applySessionOp(config: HodorConfig, op: SessionOp): HodorConfig 
   const sessions: Record<string, SessionOverride> = { ...(config.sessions ?? {}) }
   const current: SessionOverride = { ...(sessions[op.sessionId] ?? {}) }
   if (op.op === 'rename-session') current.rename = op.name
+  else if (op.op === 'unhide-session') current.unhidden = op.unhidden
   else current.archived = op.archived
   sessions[op.sessionId] = current
   return { ...config, sessions }

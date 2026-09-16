@@ -31,6 +31,23 @@ export const titleOf = (s: Session): string =>
 export const sigOfSession = (s: Session): string =>
   `${s.turn?.state ?? ''}|${s.turn?.preview ?? ''}`
 
+/**
+ * ONE status per row, mutually exclusive. A session is never both "doing
+ * work" and "your turn": whose turn it is decides, and mere file activity
+ * (runtime) never promotes a waiting session to working. Skipped is its
+ * own state rather than a footnote on waiting.
+ */
+export type RowStatus = 'needs-you' | 'working' | 'skipped' | 'idle'
+
+export const statusOfSession = (s: Session, skipped: boolean): RowStatus => {
+  if (s.turn?.state === 'waiting') return skipped ? 'skipped' : 'needs-you'
+  if (s.turn?.state === 'working') return 'working'
+  // No turn verdict at all (a session too thin to classify): fall back to
+  // raw activity, which is the only signal there is.
+  if (s.turn === undefined && s.runtime.kind !== 'idle') return 'working'
+  return 'idle'
+}
+
 /** Same idea for a cloud session: its ask is bucket + needs-action words
  * (updatedAt churns constantly while an agent runs — useless as a wake). */
 export const sigOfCloud = (c: CloudSession): string =>

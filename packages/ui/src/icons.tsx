@@ -39,3 +39,50 @@ export function PhoneIcon({ size = 12 }: { size?: number }) {
     </svg>
   )
 }
+
+/** Terminal-kind marks for desk tabs: the shell a tile actually runs in.
+ * Icon by default, name on hover — a row of tabs shouldn't read as a
+ * wall of text. */
+export function ShellIcon({ env, size = 12 }: { env?: string | undefined; size?: number }) {
+  const kind = env === undefined ? 'shell' : env.startsWith('wsl') ? 'wsl' : env
+  const common = { width: size, height: size, viewBox: '0 0 16 16', fill: 'none' } as const
+  if (kind === 'wsl') {
+    // a stylized penguin-ish mark: distinct silhouette at 12px
+    return (
+      <svg {...common} aria-hidden>
+        <path
+          stroke="currentColor"
+          strokeWidth="1.3"
+          strokeLinejoin="round"
+          d="M8 1.8c1.6 0 2.4 1.3 2.4 3 0 1 .9 1.8 1.5 3.1.7 1.5.6 3.3-.9 4.6-1 .9-1.9 1.2-3 1.2s-2-.3-3-1.2c-1.5-1.3-1.6-3.1-.9-4.6.6-1.3 1.5-2.1 1.5-3.1 0-1.7.8-3 2.4-3Z"
+        />
+        <circle cx="6.8" cy="5.6" r="0.7" fill="currentColor" />
+        <circle cx="9.2" cy="5.6" r="0.7" fill="currentColor" />
+      </svg>
+    )
+  }
+  if (kind === 'powershell') {
+    return (
+      <svg {...common} aria-hidden>
+        <rect x="1.2" y="2.6" width="13.6" height="10.8" rx="1.6" stroke="currentColor" strokeWidth="1.2" />
+        <path stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" d="m4.8 5.9 3 2.1-3 2.1" />
+        <path stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" d="M8.6 10.3h3" />
+      </svg>
+    )
+  }
+  if (kind === 'cmd') {
+    return (
+      <svg {...common} aria-hidden>
+        <rect x="1.2" y="2.6" width="13.6" height="10.8" rx="1.6" stroke="currentColor" strokeWidth="1.2" />
+        <path stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" d="m4.4 6.2 2.2 1.8-2.2 1.8" />
+      </svg>
+    )
+  }
+  // plain shell (bash/zsh/native)
+  return (
+    <svg {...common} aria-hidden>
+      <path stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" d="m2.6 4 3.4 4-3.4 4" />
+      <path stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" d="M7.8 12h5.6" />
+    </svg>
+  )
+}

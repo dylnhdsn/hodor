@@ -280,6 +280,16 @@ function toSession(
     const says = turnFromAgent(live)
     if (says === 'working') {
       session.turn = { state: 'working', ...(turn?.pending !== undefined ? { pending: turn.pending } : {}) }
+    } else if (says === 'parked') {
+      // Alive but not working: whatever the transcript guessed, the ball
+      // is with the human. Keep the agent's last words as the ask.
+      if (turn?.state !== 'waiting') {
+        session.turn = {
+          state: 'waiting',
+          since: turn?.since ?? accum.lastMainAt ?? '',
+          ...(accum.lastMainText !== undefined ? { preview: accum.lastMainText } : {}),
+        }
+      }
     } else if (says === 'waiting') {
       session.turn = {
         state: 'waiting',
@@ -531,7 +541,9 @@ export function buildSnapshot(state: CoreState, options: SnapshotOptions): Snaps
         const rule =
           meta?.archived === true
             ? 'archived'
-            : hiddenBy(
+            : meta?.unhidden === true
+              ? undefined
+              : hiddenBy(
                 {
                   ...(session.cwd !== undefined ? { cwd: session.cwd } : {}),
                   entrypoints: session.entrypoints,

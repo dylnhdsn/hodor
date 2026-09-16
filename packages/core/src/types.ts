@@ -211,4 +211,7 @@ export interface SessionMeta {
   tags?: string[]
   /** User override: force this session into a project. Beats all heuristics. */
   pinnedProject?: ProjectId
+  /** User override: a hide RULE matched this session and the user said no.
+   * Rules are heuristics; an explicit human decision outranks them. */
+  unhidden?: boolean
 }

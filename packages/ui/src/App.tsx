@@ -14,13 +14,14 @@ import {
   postMutation,
   sigOfCloud,
   sigOfSession,
+  statusOfSession,
   titleOf,
   type RailProject,
   type TranscriptEntry,
   type View,
 } from './data.js'
 import { Appearance } from './Appearance.js'
-import { CloudRow, cloudNeedsYou, cloudRunning } from './CloudSessions.js'
+import { CloudRow, cloudNeedsYou, cloudRunning, statusOfCloud } from './CloudSessions.js'
 import {
   Desk,
   deferNoteOf,
@@ -927,16 +928,13 @@ function HomeList(props: {
   const rest: Row[] = []
   for (const r of props.rows) {
     // Skipped rows leave NEEDS YOU for RECENT until the session moves.
-    const needsYou =
+    // One status, mutually exclusive — a row can't be in two groups.
+    const status =
       r.kind === 'local'
-        ? r.session.turn?.state === 'waiting' && !localSkipped(r.session, props.nowMs)
-        : cloudNeedsYou(r.cloud) && !cloudSkipped(r.cloud, props.nowMs)
-    const running =
-      r.kind === 'local'
-        ? r.session.turn?.state === 'working' || r.session.runtime.kind !== 'idle'
-        : cloudRunning(r.cloud)
-    if (needsYou) wait.push(r)
-    else if (running) run.push(r)
+        ? statusOfSession(r.session, localSkipped(r.session, props.nowMs))
+        : statusOfCloud(r.cloud, cloudSkipped(r.cloud, props.nowMs))
+    if (status === 'needs-you') wait.push(r)
+    else if (status === 'working') run.push(r)
     else rest.push(r)
   }
   // Needs-you mirrors the turn stack: longest wait first (a cloud row's
@@ -1152,11 +1150,11 @@ function SessionRow(props: {
   const { session: s, nowMs, view, customNames, rail, showHiddenBy } = props
   const { checked, anySelected, inspecting, toggle, open, mutateProject } = props
   const { menu, openMenu, closeMenu } = useContextMenu()
-  const active = s.runtime.kind !== 'idle'
   const turn = s.turn?.state
   /** Waiting, but skipped: quiet until its ask changes (or you unskip). */
   const skipped = turn === 'waiting' && localSkipped(s, nowMs)
   const skipNote = skipped ? deferNoteOf(s.id) : undefined
+  const status = statusOfSession(s, skipped)
   const claims = view.claimsBySession.get(s.id) ?? []
   const derived = view.derivedOf.get(s.id)
   const deskEntry = deskState.entries.find((e) => e.sessionId === s.id)
@@ -1260,23 +1258,25 @@ function SessionRow(props: {
         <div className="flex items-center gap-2">
           <span
             className={`shrink-0 text-[9px] ${
-              turn === 'waiting' && !skipped
+              status === 'needs-you'
                 ? 'text-ask'
-                : turn === 'working' || active
+                : status === 'working'
                   ? 'text-run'
-                  : 'text-b6'
+                  : status === 'skipped'
+                    ? 'text-rev/70'
+                    : 'text-b6'
             }`}
             title={
-              skipped
-                ? 'skipped — wakes when it moves'
-                : turn === 'waiting'
+              status === 'skipped'
+                ? 'skipped — wakes when its ask changes'
+                : status === 'needs-you'
                   ? 'your turn'
-                  : turn === 'working'
+                  : status === 'working'
                     ? 'agent working'
-                    : undefined
+                    : 'idle'
             }
           >
-            ●
+            {status === 'skipped' ? '◐' : '●'}
           </span>
           <span className="truncate font-ui text-[12.5px] font-bold text-fg">{titleOf(s)}</span>
           {s.forkedFrom !== undefined && (
@@ -1318,9 +1318,24 @@ function SessionRow(props: {
             </span>
           )}
           {showHiddenBy && s.hiddenBy !== undefined && (
-            <span className="shrink-0 rounded bg-ask/15 px-1.5 text-[10px] text-ask">
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                if (s.hiddenBy === 'archived') void setArchived(false)
+                else {
+                  void postMutation('/api/session', {
+                    op: 'unhide-session',
+                    sessionId: s.id,
+                    unhidden: true,
+                  })
+                }
+              }}
+              className="group/tag shrink-0 rounded bg-ask/15 px-1.5 text-[10px] text-ask hover:bg-ask/25"
+              title={`hidden by ${s.hiddenBy} — click to unhide`}
+            >
               {s.hiddenBy}
-            </span>
+              <span className="pl-1 opacity-0 group-hover/tag:opacity-100">×</span>
+            </button>
           )}
           <span
             onClick={stop}

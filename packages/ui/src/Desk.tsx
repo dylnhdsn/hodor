@@ -16,8 +16,9 @@ import 'dockview/dist/styles/dockview.css'
 import { postMutation } from './data.js'
 import { desktop, type OpenTarget } from './desktop.js'
 import { promptText } from './dialog.js'
+import { ShellIcon } from './icons.js'
 import { ContextMenu, useContextMenu } from './menu.js'
-import { TerminalView } from './Terminal.js'
+import { focusTerminal, TerminalView } from './Terminal.js'
 
 /**
  * The desk (docs/brainstorm/022 v2, 023): hodor's main surface on desktop.
@@ -88,6 +89,9 @@ export interface DeskEntry {
   ptyId?: string
   /** The named zone this tile lives in ("ACTIVE", "PR REVIEWS"…). */
   zone?: string
+  /** Teleport tiles: the CLOUD session id this tile was opened from.
+   * That membership is what puts a cloud session in the turn stack. */
+  cloudId?: string
 }
 
 export const deskState: { entries: DeskEntry[]; defer: Record<string, DeferState> } = {
@@ -97,6 +101,10 @@ export const deskState: { entries: DeskEntry[]; defer: Record<string, DeferState
 
 interface DeskOps {
   closePanel: (panelId: string) => void
+  /** Put the keyboard in this tile's terminal, looking its pty up live:
+   * a tab component's params are captured at render and the pty binds
+   * afterwards, so the tab's own copy is stale. */
+  focusPanel: (panelId: string) => void
   /** Make a tile the active panel of its zone (no focus steal). */
   revealPanel: (panelId: string) => void
   resumePanel: (panelId: string) => Promise<void>
@@ -195,6 +203,9 @@ function refreshEntries(api: DockviewApi): void {
       (params.target.kind === 'resume' || params.target.kind === 'new')
         ? { sessionId: params.target.sessionId }
         : {}),
+      ...(params.target?.kind === 'teleport' && params.target.sessionId !== undefined
+        ? { cloudId: params.target.sessionId }
+        : {}),
       ...(params.ptyId !== undefined ? { ptyId: params.ptyId } : {}),
       ...(zone !== undefined ? { zone } : {}),
     }
@@ -273,6 +284,22 @@ function TerminalPanel(props: IDockviewPanelProps<SlotParams>) {
   const ptyId = props.params.ptyId
   const target = props.params.target
   const [status, setStatus] = useState<'checking' | 'live' | 'dead'>('checking')
+  // Clicking a tab activates its panel; that is when its terminal should
+  // take the keyboard.
+  const [active, setActive] = useState(props.api.isActive)
+  useEffect(() => {
+    const d = props.api.onDidActiveChange((e) => setActive(e.isActive))
+    // Dockview focuses the TAB element on click; when it tells us the
+    // panel took focus, hand that focus down to the terminal so the
+    // click leaves you typing in it.
+    const f = props.api.onDidFocusChange((e) => {
+      if (e.isFocused) focusTerminal(paramsOf({ params: props.params }).ptyId)
+    })
+    return () => {
+      d.dispose()
+      f.dispose()
+    }
+  }, [props.api, props.params])
 
   useEffect(() => {
     if (desktop === undefined || ptyId === undefined) {
@@ -293,7 +320,7 @@ function TerminalPanel(props: IDockviewPanelProps<SlotParams>) {
   if (status === 'live' && ptyId !== undefined) {
     return (
       <div className="h-full w-full bg-app p-1">
-        <TerminalView ptyId={ptyId} visible />
+        <TerminalView ptyId={ptyId} visible autoFocus={active} />
       </div>
     )
   }
@@ -407,13 +434,23 @@ function SlotTab(props: IDockviewPanelHeaderProps<SlotParams>) {
   const [panelTitle, setPanelTitle] = useState(props.api.title ?? props.api.id)
   const [, force] = useState(0)
   const { menu, openMenu, closeMenu } = useContextMenu()
+  const [focused, setFocused] = useState(props.api.isActive && props.api.isGroupActive)
   useEffect(() => {
-    const d1 = props.api.onDidActiveChange((e) => setActive(e.isActive))
+    const sync = (): void => setFocused(props.api.isActive && props.api.isGroupActive)
+    const d1 = props.api.onDidActiveChange((e) => {
+      setActive(e.isActive)
+      sync()
+    })
     const d2 = props.api.onDidTitleChange((e) => setPanelTitle(e.title))
+    // Group focus is what separates accent from muted: the visible tab of
+    // an unfocused split is still visible, just not the one taking your
+    // keystrokes.
+    const d3 = props.api.onDidActiveGroupChange(sync)
     const off = subscribeDesk(() => force((t) => t + 1))
     return () => {
       d1.dispose()
       d2.dispose()
+      d3.dispose()
       off()
     }
   }, [props.api])
@@ -426,12 +463,19 @@ function SlotTab(props: IDockviewPanelHeaderProps<SlotParams>) {
   const title = (sessionId !== undefined ? deskSessionTitles[sessionId] : undefined) ?? panelTitle
   const turn = sessionId !== undefined ? deskTurnStates[sessionId] : undefined
   const dead = props.params.ptyId === undefined
-  const dot = turn === 'waiting' ? 'text-ask' : dead ? 'text-b6' : 'text-run'
-  // Only cross-boundary shells earn a tag — a native shell is the default.
+  // The dot means ONE thing: whose turn it is. Your turn (amber) and
+  // working (green) are mutually exclusive; a dead slot is grey. Which
+  // tab is visible/focused is said by the underline instead, so the two
+  // signals never fight over the same pixel.
+  const dot =
+    turn === 'waiting'
+      ? 'text-ask'
+      : turn === 'working'
+        ? 'text-run'
+        : dead
+          ? 'text-b6'
+          : 'text-t6'
   const env = props.params.env
-  const envTag = env !== undefined && (env.startsWith('wsl') || env === 'cmd' || env === 'powershell')
-    ? env
-    : undefined
 
   const rename = (): void => {
     void promptText('Rename session', {
@@ -457,6 +501,8 @@ function SlotTab(props: IDockviewPanelHeaderProps<SlotParams>) {
 
   return (
     <div
+      // Clicking a tab puts the keyboard in ITS terminal — including when
+      // the tab was already active, which fires no activation event.
       onContextMenu={(e) =>
         openMenu(e, [
           { label: title, heading: true },
@@ -474,21 +520,22 @@ function SlotTab(props: IDockviewPanelHeaderProps<SlotParams>) {
       }
       className={`group flex h-full items-center gap-1.5 px-2.5 font-mono text-[11px] ${
         active
-          ? 'text-fg shadow-[inset_0_-2px_0_0_var(--h-ask)]'
+          ? focused
+            ? 'text-fg shadow-[inset_0_-2px_0_0_var(--h-ac)]'
+            : 'text-fg shadow-[inset_0_-2px_0_0_var(--h-b6)]'
           : 'text-t4 hover:text-t2'
       }`}
     >
       <span className={`text-[8px] ${dot}`}>●</span>
-      <span className="text-t6">❯</span>
+      <span className="group/env relative flex items-center text-t5" title={env ?? 'shell'}>
+        <ShellIcon env={env} />
+        {env !== undefined && (
+          <span className="ml-1 hidden max-w-0 overflow-hidden whitespace-nowrap text-[9.5px] text-t5 group-hover:inline group-hover:max-w-[90px]">
+            {env}
+          </span>
+        )}
+      </span>
       <span className="max-w-[160px] truncate font-ui text-[11.5px] font-semibold">{title}</span>
-      {envTag !== undefined && (
-        <span
-          className="rounded border border-b4 px-1 text-[8.5px] leading-[13px] text-t5"
-          title={`runs in ${envTag}`}
-        >
-          {envTag}
-        </span>
-      )}
       <button
         onClick={(e) => {
           e.stopPropagation()
@@ -705,6 +752,10 @@ export function Desk({ inspect }: { inspect?: (sessionId: string) => void }) {
         const panel = api?.getPanel(panelId)
         if (api !== undefined && api !== null && panel !== undefined) api.removePanel(panel)
       },
+      focusPanel: (panelId) => {
+        const panel = apiRef.current?.getPanel(panelId)
+        if (panel !== undefined) focusTerminal(paramsOf(panel).ptyId)
+      },
       revealPanel: (panelId) => {
         // Bring the tile forward in its zone, so the desk behind the
         // stack (and after esc) shows the session being dealt with.
@@ -873,6 +924,21 @@ export function Desk({ inspect }: { inspect?: (sessionId: string) => void }) {
       }
     })
   }, [save])
+
+  // Clicking a tab makes dockview focus the TAB ELEMENT itself, which
+  // leaves the keyboard nowhere useful. Catch that focus and hand it down
+  // to the active tile's terminal — one document-level listener, so it
+  // does not depend on dockview's internal event plumbing.
+  useEffect(() => {
+    const onFocusIn = (event: FocusEvent): void => {
+      const el = event.target as HTMLElement | null
+      if (el === null || el.closest('.dv-tab') === null) return
+      const panel = apiRef.current?.activePanel
+      if (panel !== undefined) focusTerminal(paramsOf(panel).ptyId)
+    }
+    document.addEventListener('focusin', onFocusIn)
+    return () => document.removeEventListener('focusin', onFocusIn)
+  }, [])
 
   // A session row dragged from the library opens IN the zone it lands on.
   const onDidDrop = useCallback((event: DockviewDidDropEvent) => {

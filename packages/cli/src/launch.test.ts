@@ -9,8 +9,45 @@ const target = (over: Partial<LaunchTarget>): LaunchTarget => ({
   ...over,
 })
 
+describe('argument quoting and the Windows shell', () => {
+  const target = {
+    cwd: '/repo',
+    flavor: 'posix' as const,
+    origin: { kind: 'native' as const },
+    claudeArgs: ['--session-id', 'abc', '--name', 'billing spike'],
+  }
+
+  // A multi-word session name used to split into a positional argument,
+  // so `--name "billing spike"` prompted Claude with "spike" instead of
+  // naming the session.
+  it('quotes multi-word arguments in POSIX shell strings', () => {
+    const spec = composePtySpec({ os: 'linux' }, target)
+    expect(spec?.args[1]).toBe("claude --session-id abc --name 'billing spike'")
+    expect(composeLaunch({ os: 'linux' }, target).command).toContain("'billing spike'")
+  })
+
+  it('quotes for the WSL bridge too', () => {
+    const wsl = { ...target, origin: { kind: 'wsl' as const, distro: 'Ubuntu' } }
+    const spec = composePtySpec({ os: 'win32' }, wsl)
+    expect(spec?.args[spec.args.length - 1]).toContain("'billing spike'")
+  })
+
+  it('hosts Windows sessions in PowerShell by default, cmd on request', () => {
+    const win = { ...target, origin: { kind: 'windows' as const, mountRoot: 'C' } }
+    const ps = composePtySpec({ os: 'win32' }, win)
+    expect(ps?.file).toBe('powershell.exe')
+    // -Command re-parses what follows, so it must be ONE quoted string
+    expect(ps?.args[ps.args.length - 1]).toBe("claude --session-id abc --name 'billing spike'")
+
+    const cmd = composePtySpec({ os: 'win32', windowsShell: 'cmd' }, win)
+    expect(cmd?.file).toBe('cmd.exe')
+    // argv all the way down: no shell string to quote
+    expect(cmd?.args).toContain('billing spike')
+  })
+})
+
 describe('composeLaunch', () => {
-  it('windows-native sessions on Windows: wt.exe, then cmd start', () => {
+  it('windows-native sessions on Windows: wt.exe, then start, in PowerShell', () => {
     const plan = composeLaunch(
       { os: 'win32' },
       target({ cwd: 'C:\\code\\app', flavor: 'win32' }),
@@ -18,7 +55,15 @@ describe('composeLaunch', () => {
     expect(plan.command).toBe('claude --resume abc-123')
     expect(plan.candidates[0]).toEqual({
       file: 'wt.exe',
-      args: ['-d', 'C:\\code\\app', 'cmd', '/k', 'claude', '--resume', 'abc-123'],
+      args: [
+        '-d',
+        'C:\\code\\app',
+        'powershell.exe',
+        '-NoLogo',
+        '-NoExit',
+        '-Command',
+        'claude --resume abc-123',
+      ],
     })
     expect(plan.candidates[1]!.file).toBe('cmd.exe')
     expect(plan.candidates[1]!.args).toContain('start')
@@ -54,7 +99,15 @@ describe('composeLaunch', () => {
     )
     expect(plan.candidates[0]).toEqual({
       file: 'wt.exe',
-      args: ['-d', 'C:\\Users\\d\\app', 'cmd', '/k', 'claude', '--resume', 'abc-123'],
+      args: [
+        '-d',
+        'C:\\Users\\d\\app',
+        'powershell.exe',
+        '-NoLogo',
+        '-NoExit',
+        '-Command',
+        'claude --resume abc-123',
+      ],
     })
   })
 
@@ -125,12 +178,12 @@ describe('runLaunch', () => {
 })
 
 describe('composePtySpec', () => {
-  it('windows-native sessions on Windows: cmd /c claude with the cwd', () => {
+  it('windows-native sessions on Windows: PowerShell with the cwd', () => {
     expect(
       composePtySpec({ os: 'win32' }, target({ cwd: 'C:\\code\\app', flavor: 'win32' })),
     ).toEqual({
-      file: 'cmd.exe',
-      args: ['/c', 'claude', '--resume', 'abc-123'],
+      file: 'powershell.exe',
+      args: ['-NoLogo', '-NoExit', '-Command', 'claude --resume abc-123'],
       cwd: 'C:\\code\\app',
     })
   })

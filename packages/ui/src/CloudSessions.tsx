@@ -1,7 +1,15 @@
 import { useState } from 'react'
 import type { CloudSession } from '@hodor/core'
 import { deferNoteOf, getDeskOps, isDeferred } from './Desk.js'
-import { formatAge, formatTokens, formatUsd, launchOrCopy, sendCloudMessage, sigOfCloud } from './data.js'
+import {
+  formatAge,
+  formatTokens,
+  formatUsd,
+  launchOrCopy,
+  sendCloudMessage,
+  sigOfCloud,
+  type RowStatus,
+} from './data.js'
 import { notice, promptText } from './dialog.js'
 import { CloudIcon } from './icons.js'
 import { ContextMenu, useContextMenu, type MenuItem } from './menu.js'
@@ -27,6 +35,13 @@ export const cloudNeedsYou = (s: CloudSession): boolean =>
 
 export const cloudRunning = (s: CloudSession): boolean =>
   s.status === 'running' || s.bucket === 'working'
+
+/** The same mutually-exclusive status the local rows use. */
+export const statusOfCloud = (s: CloudSession, skipped: boolean): RowStatus => {
+  if (cloudNeedsYou(s)) return skipped ? 'skipped' : 'needs-you'
+  if (cloudRunning(s)) return 'working'
+  return 'idle'
+}
 
 export async function messageCloud(s: CloudSession): Promise<void> {
   const text = await promptText(`Message "${s.title ?? s.id.slice(0, 12)}"`, {

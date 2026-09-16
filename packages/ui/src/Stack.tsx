@@ -64,8 +64,18 @@ export function stackQueue(view: View, nowMs: number): StackItem[] {
     }
     items.push({ kind: 'desk', entry, session })
   }
+  // Cloud sessions belong in the stack ONLY once they are part of the
+  // workspace — i.e. you teleported one into a tile here. A cloud
+  // session you have never opened is not something to triage in a queue
+  // of open terminals; it lives in Home.
+  const teleported = new Set(
+    deskState.entries
+      .map((e) => e.cloudId)
+      .filter((id): id is string => id !== undefined),
+  )
   for (const cloud of view.cloud) {
     if (!cloudNeedsYou(cloud) || seen.has(cloud.id)) continue
+    if (!teleported.has(cloud.id)) continue
     seen.add(cloud.id)
     if (deskState.defer[cloud.id] !== undefined) {
       if (isDeferred(cloud.id, sigOfCloud(cloud), cloud.updatedAt, nowMs)) continue

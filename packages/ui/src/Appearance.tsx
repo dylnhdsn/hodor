@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { deriveTheme, mixHex, type Colorscheme } from '@hodor/core/colorscheme'
 import { notifyEnabled, setNotifyEnabled } from './notify.js'
+import { fetchPrefs, savePref } from './prefs.js'
 import {
   FONT_PACKS,
   TERM_FONTS,
@@ -96,6 +97,12 @@ function SchemeCard({ scheme, active, onPick }: { scheme: Colorscheme; active: b
 
 export function Appearance() {
   const [, force] = useState(0)
+  const [winShell, setWinShell] = useState<'powershell' | 'cmd'>('powershell')
+  useEffect(() => {
+    void fetchPrefs().then((p) => {
+      if (p['windowsShell'] === 'cmd') setWinShell('cmd')
+    })
+  }, [])
   const [impText, setImpText] = useState('')
   const [impErr, setImpErr] = useState<string | undefined>(undefined)
   const state = themeState()
@@ -251,6 +258,34 @@ export function Appearance() {
             >
               +
             </button>
+          </span>
+        </div>
+
+        <div className="mt-1 font-mono text-[9.5px] font-semibold tracking-[.14em] text-t5">
+          WINDOWS SHELL
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {(
+            [
+              ['powershell', 'PowerShell'],
+              ['cmd', 'Command Prompt'],
+            ] as const
+          ).map(([id, label]) => (
+            <button
+              key={id}
+              onClick={() => {
+                setWinShell(id)
+                savePref({ windowsShell: id })
+              }}
+              className={`rounded border px-3 py-1.5 text-[11.5px] ${
+                winShell === id ? 'border-ac bg-ac/8 text-fg' : 'border-b3 text-t3 hover:border-ac'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+          <span className="text-[11px] text-t5">
+            hosts Windows-side sessions; WSL sessions always use their distro's shell
           </span>
         </div>
 

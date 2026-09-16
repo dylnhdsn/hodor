@@ -92,6 +92,32 @@ describe('buildSnapshot', () => {
     expect(session.live).toEqual({ kind: 'interactive', status: 'busy' })
   })
 
+  it('a live-but-idle session reads as your turn, not "working"', () => {
+    // A trailing HUMAN line infers as "working" for five minutes (and a
+    // trailing tool result for two hours) — so a session that had already
+    // come back to you kept claiming the agent was busy.
+    const events: SourceEvent[] = [
+      { type: 'store-discovered', store },
+      ...sessionEvents('parked', '2026-06-01T11:59:00Z', '/repo/a'),
+    ]
+    expect(buildSnapshot(foldAll(emptyState, events), { now: NOW }).sessions[0]!.turn).toMatchObject(
+      { state: 'working' },
+    )
+
+    const withAgent = buildSnapshot(
+      foldAll(emptyState, [
+        ...events,
+        {
+          type: 'agents-listed',
+          scannedAt: '2026-06-01T12:00:00Z',
+          agents: [{ sessionId: 'parked', kind: 'interactive', status: 'idle' }],
+        },
+      ]),
+      { now: NOW },
+    )
+    expect(withAgent.sessions[0]!.turn).toMatchObject({ state: 'waiting' })
+  })
+
   it('surfaces what a blocked background session is waiting for', () => {
     const snapshot = buildSnapshot(
       foldAll(emptyState, [
