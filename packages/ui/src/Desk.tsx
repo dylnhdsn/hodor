@@ -89,6 +89,12 @@ export const SESSION_DRAG_MIME = 'application/x-hodor-session'
 export interface DeskEntry {
   panelId: string
   title: string
+  /** How the tile was opened (resume / new / fork / teleport / shell). */
+  kind?: OpenTarget['kind']
+  /** Where its shell runs ("wsl · Ubuntu", "cmd") — shells show it. */
+  env?: string
+  /** Shell tiles: the directory they opened in. */
+  root?: string
   sessionId?: string
   ptyId?: string
   /** The named zone this tile lives in ("ACTIVE", "PR REVIEWS"…). */
@@ -256,6 +262,11 @@ function refreshEntries(api: DockviewApi): void {
     return {
       panelId: p.id,
       title: p.title ?? p.id,
+      ...(params.target?.kind !== undefined ? { kind: params.target.kind } : {}),
+      ...(params.env !== undefined ? { env: params.env } : {}),
+      ...(params.target?.kind === 'shell' && params.target.root !== undefined
+        ? { root: params.target.root }
+        : {}),
       // A tile knows its session when opened via resume, or when hodor
       // minted the id at spawn (kind 'new'). Teleport ids are CLOUD ids
       // and fork targets carry the PARENT id — neither binds here.
