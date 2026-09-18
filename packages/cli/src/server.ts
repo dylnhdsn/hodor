@@ -12,6 +12,7 @@ import {
   enrichCheckpointBackups,
   enrichMemoryFiles,
   foldAll,
+  listSkills,
   mergeHideRules,
   parseTranscript,
   previewMatcher,
@@ -660,6 +661,23 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
 
       if (req.method === 'POST' && path === '/api/cloud/message') {
         await handleCloudMessage(res, await readBody(req))
+        return
+      }
+
+      // Skills a session can run as slash commands (docs/brainstorm/029):
+      // its project's .claude and its store's ~/.claude.
+      if (reads && path === '/api/skills') {
+        const id = url.searchParams.get('sessionId') ?? ''
+        const session = snapshot?.sessions.find((s) => s.id === id)
+        const store = session !== undefined ? stores.find((st) => st.id === session.storeId) : undefined
+        if (session === undefined || store === undefined) {
+          sendJson(res, 404, { error: 'no such session' })
+          return
+        }
+        const skills = await listSkills(fsFor(store.id), store.pathFlavor, store.rootPath, session.cwd).catch(
+          () => [],
+        )
+        sendJson(res, 200, { skills })
         return
       }
 

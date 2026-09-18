@@ -35,6 +35,7 @@ import {
 } from './Desk.js'
 import { CloudIcon, GearIcon } from './icons.js'
 import { confirmAction, DialogHost, notice, promptText } from './dialog.js'
+import { hydratePresets } from './presets.js'
 import { ContextMenu, useContextMenu, type MenuItem } from './menu.js'
 import { NewSessionDialog } from './NewSession.js'
 import { notifyNeedsYou } from './notify.js'
@@ -116,6 +117,7 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
     void fetchPrefs().then((prefs) => {
       if (prefs['rail'] === 'closed') setRailOpen(false)
       else if (prefs['rail'] === 'open') setRailOpen(true)
+      hydratePresets(prefs['stackPresets'])
       if (Array.isArray(prefs['pinnedProjects'])) {
         setPinned(new Set(prefs['pinnedProjects'].filter((x): x is string => typeof x === 'string')))
       }

@@ -11,7 +11,14 @@ import { createPortal } from 'react-dom'
  * also let us theme them and preselect text.
  */
 
-type Kind = 'prompt' | 'confirm' | 'notice'
+type Kind = 'prompt' | 'confirm' | 'notice' | 'pick'
+
+export interface PickOption {
+  id: string
+  label: string
+  /** Muted second line. */
+  detail?: string
+}
 
 interface Request {
   kind: Kind
@@ -22,6 +29,8 @@ interface Request {
   /** Verb on the affirmative button. */
   okLabel?: string | undefined
   danger?: boolean | undefined
+  /** pick: the choices; clicking one resolves with its id. */
+  options?: PickOption[] | undefined
   resolve: (value: string | boolean | undefined) => void
 }
 
@@ -68,6 +77,22 @@ export const confirmAction = (
       okLabel: options.okLabel,
       danger: options.danger,
       resolve: (value) => resolve(value === true),
+    })
+  })
+
+/** Choose one of a short list. Resolves undefined when dismissed. */
+export const pickOne = (
+  title: string,
+  options: PickOption[],
+  extra: { detail?: string } = {},
+): Promise<string | undefined> =>
+  new Promise((resolve) => {
+    submit({
+      kind: 'pick',
+      title,
+      detail: extra.detail,
+      options,
+      resolve: (value) => resolve(typeof value === 'string' ? value : undefined),
     })
   })
 
@@ -123,6 +148,25 @@ export function DialogHost() {
         {req.detail !== undefined && (
           <p className="mt-1 text-[11.5px] leading-relaxed text-t3">{req.detail}</p>
         )}
+        {req.kind === 'pick' && (
+          <div className="mt-3 flex max-h-[50vh] flex-col gap-0.5 overflow-y-auto">
+            {(req.options ?? []).map((o) => (
+              <button
+                key={o.id}
+                onClick={() => close(o.id)}
+                className="rounded px-2.5 py-1.5 text-left hover:bg-ac/12"
+              >
+                <span className="block font-ui text-[12.5px] font-semibold text-fg">{o.label}</span>
+                {o.detail !== undefined && (
+                  <span className="block truncate text-[10.5px] text-t5">{o.detail}</span>
+                )}
+              </button>
+            ))}
+            {(req.options ?? []).length === 0 && (
+              <span className="px-2.5 py-1.5 text-[11.5px] text-t5">nothing to pick from</span>
+            )}
+          </div>
+        )}
         {req.kind === 'prompt' && (
           <input
             ref={inputRef}
@@ -152,6 +196,7 @@ export function DialogHost() {
               cancel
             </button>
           )}
+          {req.kind !== 'pick' && (
           <button
             onClick={() => close(req.kind === 'prompt' ? value : true)}
             disabled={req.kind === 'prompt' && value.trim().length === 0}
@@ -163,6 +208,7 @@ export function DialogHost() {
           >
             {req.okLabel ?? (req.kind === 'notice' ? 'ok' : req.kind === 'confirm' ? 'yes' : 'save')}
           </button>
+          )}
         </div>
       </div>
     </div>,

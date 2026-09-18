@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { CloudSession, Session, Snapshot } from '@hodor/core'
+import type { CloudSession, Session, SkillInfo, Snapshot } from '@hodor/core'
 import { cloudNeedsYou } from './CloudSessions.js'
 import {
   launchOrCopy,
@@ -12,7 +12,9 @@ import {
 } from './data.js'
 import { StackDashboard } from './Dashboard.js'
 import { desktop } from './desktop.js'
-import { notice } from './dialog.js'
+import { notice, pickOne, promptText } from './dialog.js'
+import { ContextMenu, useContextMenu } from './menu.js'
+import { DEFAULT_PRESETS, getPresets, onPresetsChange, setPresets } from './presets.js'
 import { deskState, getDeskOps, isDeferred, subscribeDesk, type DeskEntry } from './Desk.js'
 import { CloudIcon } from './icons.js'
 import { TerminalView } from './Terminal.js'
@@ -26,8 +28,6 @@ import { TerminalView } from './Terminal.js'
  * box — same triage verbs, no terminal to steal. Nothing resumes or spawns
  * on its own; a dead slot offers its resume button and waits for you.
  */
-
-const PRESETS = ['go ahead', 'use your judgment', 'looks good — proceed']
 
 const formatWait = (sinceIso: string | undefined, nowMs: number): string => {
   if (sinceIso === undefined) return ''
@@ -116,6 +116,8 @@ export function Stack(props: {
   const [sending, setSending] = useState(false)
 
   useEffect(() => subscribeDesk(() => setTick((t) => t + 1)), [])
+  useEffect(() => onPresetsChange(() => setTick((t) => t + 1)), [])
+  const { menu, openMenu, closeMenu } = useContextMenu()
 
   let queue = stackQueue(view, nowMs)
   // later = rotate to the bottom; an explicit pick jumps the line
@@ -217,6 +219,37 @@ export function Stack(props: {
       })
       .finally(() => setSending(false))
   }, [top, reply])
+
+  /** Type a preset (or a slash command) into the top card's terminal. */
+  const say = (text: string): void => {
+    if (top?.kind === 'desk' && top.entry.ptyId !== undefined && desktop !== undefined) {
+      desktop.write(top.entry.ptyId, text)
+      desktop.write(top.entry.ptyId, '\r')
+    }
+  }
+  const addPreset = async (): Promise<void> => {
+    const text = await promptText('new preset', { placeholder: 'what to answer with' })
+    if (text !== undefined && text.trim() !== '') setPresets([...getPresets(), text])
+  }
+  const runSkill = async (): Promise<void> => {
+    if (top?.kind !== 'desk') return
+    const res = await fetch(`/api/skills?sessionId=${encodeURIComponent(top.session.id)}`)
+      .then((r) => (r.ok ? (r.json() as Promise<{ skills: SkillInfo[] }>) : { skills: [] }))
+      .catch(() => ({ skills: [] as SkillInfo[] }))
+    if (res.skills.length === 0) {
+      void notice('no skills here', "nothing under the project's .claude or the store's ~/.claude")
+      return
+    }
+    const picked = await pickOne(
+      'run a skill',
+      res.skills.map((sk) => ({
+        id: sk.name,
+        label: '/' + sk.name,
+        detail: sk.description ?? (sk.scope === 'project' ? 'project skill' : 'user skill'),
+      })),
+    )
+    if (picked !== undefined) say('/' + picked)
+  }
 
   const deferredN = Object.keys(deskState.defer).length
   const structured = top?.kind === 'desk' ? top.session.turn?.pending : undefined
@@ -358,16 +391,28 @@ export function Stack(props: {
               <span className="font-mono text-[9px] font-semibold tracking-[.1em] text-t6">
                 {structured?.options !== undefined ? 'OPTIONS — PICK IN THE TERMINAL' : 'PRESETS'}
               </span>
-              {(structured?.options ?? PRESETS).map((chip) => (
+              {(structured?.options ?? getPresets()).map((chip) => (
                 <button
                   key={chip}
                   onClick={() => {
                     if (structured?.options !== undefined) return // the real dialog owns selection
-                    if (top.entry.ptyId !== undefined && desktop !== undefined) {
-                      desktop.write(top.entry.ptyId, chip)
-                      desktop.write(top.entry.ptyId, '\r')
-                    }
+                    say(chip)
                   }}
+                  onContextMenu={(e) =>
+                    openMenu(e, [
+                      { label: chip, heading: true },
+                      ...(structured?.options === undefined
+                        ? [
+                            {
+                              label: 'remove preset',
+                              onClick: () => setPresets(getPresets().filter((x) => x !== chip)),
+                            },
+                          ]
+                        : []),
+                      { label: 'add a preset…', onClick: () => void addPreset() },
+                      { label: 'reset presets', onClick: () => setPresets(DEFAULT_PRESETS) },
+                    ])
+                  }
                   className={`rounded border px-3 py-1 text-[11.5px] ${
                     structured?.options !== undefined
                       ? 'cursor-default border-b4 text-t3'
@@ -377,6 +422,21 @@ export function Stack(props: {
                   {chip}
                 </button>
               ))}
+              {structured?.options === undefined && (
+                <button
+                  onClick={() => void runSkill()}
+                  onContextMenu={(e) =>
+                    openMenu(e, [
+                      { label: 'add a preset…', onClick: () => void addPreset() },
+                      { label: 'reset presets', onClick: () => setPresets(DEFAULT_PRESETS) },
+                    ])
+                  }
+                  title="run one of this session's skills or commands"
+                  className="rounded border border-dashed border-b5 px-3 py-1 font-mono text-[11.5px] text-t3 hover:border-ac hover:text-fg"
+                >
+                  / skill…
+                </button>
+              )}
             </div>
             <div className="flex flex-wrap items-center gap-1.5">
               <button
@@ -539,6 +599,7 @@ export function Stack(props: {
           <span>{deferredN} snoozed</span>
         </div>
       )}
+      {menu !== undefined && <ContextMenu menu={menu} close={closeMenu} />}
     </div>
   )
 }
