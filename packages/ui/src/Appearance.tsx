@@ -278,8 +278,11 @@ export function Appearance() {
           ))}
         </div>
 
-        <div className="mt-1 font-mono text-[9.5px] font-semibold tracking-[.14em] text-t5">
+        <div className="mt-1 flex items-baseline gap-3 font-mono text-[9.5px] font-semibold tracking-[.14em] text-t5">
           TERMINAL FONT
+          <span className="font-normal tracking-normal text-t6">
+            every face gets Nerd Font symbols — statuslines and powerline glyphs render in all of them
+          </span>
         </div>
         <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-2">
           <button
@@ -297,6 +300,7 @@ export function Appearance() {
           {TERM_FONTS.map((f) => {
             const installed =
               f.bundled === true ||
+              f.source !== undefined ||
               (typeof document.fonts?.check === 'function' &&
                 document.fonts.check(`12px "${f.name}"`))
             return (
@@ -316,6 +320,14 @@ export function Appearance() {
                   {f.bundled === true && (
                     <span className="rounded border border-b4 px-1 text-[8.5px] font-normal text-t5">
                       ships with hodor
+                    </span>
+                  )}
+                  {f.source !== undefined && (
+                    <span
+                      className="rounded border border-b4 px-1 text-[8.5px] font-normal text-t5"
+                      title="downloaded the first time you pick it"
+                    >
+                      fetched
                     </span>
                   )}
                 </span>

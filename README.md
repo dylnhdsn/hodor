@@ -184,6 +184,13 @@ filter dark/light, click to adopt. Regenerate the catalog with
 `node scripts/import-schemes.mjs`. Pasting any Windows Terminal, iTerm2,
 Alacritty, kitty or Ghostty scheme file works too.
 
+Terminal fonts: four ship with hodor, forty more are fetched from
+[Fontsource](https://fontsource.org) (jsDelivr) the first time you pick
+them, and any installed family can be typed in. A symbols-only
+[Nerd Font](https://github.com/ryanoasis/nerd-fonts) (MIT) sits behind
+whichever face is active, so statusline and powerline glyphs render in
+every font without patched variants.
+
 ## Development
 
 Requires Node >= 22 and pnpm.
