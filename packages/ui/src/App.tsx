@@ -118,6 +118,7 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
       if (prefs['rail'] === 'closed') setRailOpen(false)
       else if (prefs['rail'] === 'open') setRailOpen(true)
       hydratePresets(prefs['stackPresets'])
+      if (prefs['detachOnQuit'] === true) desktop?.setDetachOnQuit?.(true)
       if (Array.isArray(prefs['pinnedProjects'])) {
         setPinned(new Set(prefs['pinnedProjects'].filter((x): x is string => typeof x === 'string')))
       }

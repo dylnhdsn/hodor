@@ -174,6 +174,14 @@ right back into place. Unsigned builds on the same rolling release
 - [Linux AppImage](https://github.com/dylnhdsn/hodor/releases/download/latest/hodor-desktop-linux-x86_64.AppImage)
 - [macOS (Apple silicon) dmg](https://github.com/dylnhdsn/hodor/releases/download/latest/hodor-desktop-mac-arm64.dmg)
 
+### Sessions that outlive hodor
+
+Settings → *keep sessions running when hodor closes*: on quit each
+claude tile is sent to the CLI's supervisor with `/background` instead
+of being killed, and restoring the tile later runs `claude attach`.
+A tab's menu has *detach (keep running)* for one session at a time.
+Verified on Linux and WSL; Windows-native claude untested.
+
 ### Appearance
 
 Every color derives from a terminal colorscheme. Settings ships a curated

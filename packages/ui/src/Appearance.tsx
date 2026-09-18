@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { deriveTheme, mixHex, type Colorscheme } from '@hodor/core/colorscheme'
 import { CATALOG_SOURCE, loadCatalog, type CatalogEntry } from './catalog.js'
+import { desktop } from './desktop.js'
 import { ContextMenu, useContextMenu } from './menu.js'
 import { DEFAULT_PRESETS, getPresets, onPresetsChange, setPresets } from './presets.js'
 import { HooksToggle } from './HooksToggle.js'
@@ -260,9 +261,11 @@ function PresetControls() {
 export function Appearance() {
   const [, force] = useState(0)
   const [winShell, setWinShell] = useState<'powershell' | 'cmd'>('powershell')
+  const [detachOnQuit, setDetachOnQuit] = useState(false)
   useEffect(() => {
     void fetchPrefs().then((p) => {
       if (p['windowsShell'] === 'cmd') setWinShell('cmd')
+      if (p['detachOnQuit'] === true) setDetachOnQuit(true)
     })
   }, [])
   const [impText, setImpText] = useState('')
@@ -491,6 +494,31 @@ export function Appearance() {
             while the window is in the background
           </span>
         </label>
+
+        {desktop?.setDetachOnQuit !== undefined && (
+          <>
+            <div className="mt-1 font-mono text-[9.5px] font-semibold tracking-[.14em] text-t5">
+              WHEN HODOR CLOSES
+            </div>
+            <label className="flex w-fit cursor-pointer items-center gap-2.5 rounded border border-b3 bg-s1 px-3 py-2">
+              <input
+                type="checkbox"
+                checked={detachOnQuit}
+                onChange={(e) => {
+                  const on = e.target.checked
+                  setDetachOnQuit(on)
+                  savePref({ detachOnQuit: on })
+                  desktop?.setDetachOnQuit?.(on)
+                }}
+                className="h-3.5 w-3.5 accent-ac"
+              />
+              <span className="text-[12px]">
+                keep sessions running — each tile gets <span className="font-mono">/background</span>;
+                restoring it attaches
+              </span>
+            </label>
+          </>
+        )}
 
         <div className="mt-1 font-mono text-[9.5px] font-semibold tracking-[.14em] text-t5">
           CLAUDE HOOKS

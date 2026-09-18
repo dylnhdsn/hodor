@@ -315,6 +315,32 @@ describe('startServer', () => {
     ])
   })
 
+  it('attaches instead of resuming when the session runs in the background', async () => {
+    const { deps, fs } = serverDeps()
+    fs.writeFile('/home/u/.claude/projects/-r/aaaa.jsonl', line('u1', '2026-06-01T11:00:00Z', '/r/app'))
+    deps.runCapture = async (_file, args) =>
+      args.join(' ').includes('agents --json')
+        ? {
+            code: 0,
+            output: JSON.stringify([
+              { pid: 7, cwd: '/r/app', kind: 'background', sessionId: 'aaaa', status: 'idle', id: 'aaaa1234' },
+            ]),
+          }
+        : { code: 0, output: 'queued\n' }
+    const server = await start(fs, deps)
+    const launch = (kind: string) =>
+      fetch(`${server.url}/api/launch`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ kind, sessionId: 'aaaa', mode: 'pty' }),
+      }).then((r) => r.json() as Promise<{ command: string; spec: { args: string[]; cwd?: string } | null }>)
+    const resume = await launch('resume')
+    expect(resume.command).toBe('claude attach aaaa1234')
+    expect(resume.spec).toMatchObject({ args: ['-lic', 'claude attach aaaa1234'], cwd: '/r/app' })
+    // a fork is a new conversation off the transcript — never an attach
+    expect((await launch('fork')).command).toBe('claude --resume aaaa --fork-session')
+  })
+
   it('launches resume/fork terminals and validates new-session roots', async () => {
     const { deps, fs, spawns } = serverDeps()
     fs.writeFile('/home/u/.claude/projects/-r/aaaa.jsonl', line('u1', '2026-06-01T11:00:00Z', '/r/app'))
