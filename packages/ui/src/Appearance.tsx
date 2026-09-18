@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { deriveTheme, mixHex, type Colorscheme } from '@hodor/core/colorscheme'
 import { CATALOG_SOURCE, loadCatalog, type CatalogEntry } from './catalog.js'
+import { ContextMenu, useContextMenu } from './menu.js'
+import { DEFAULT_PRESETS, getPresets, onPresetsChange, setPresets } from './presets.js'
 import { HooksToggle } from './HooksToggle.js'
 import { notifyEnabled, setNotifyEnabled } from './notify.js'
 import { fetchPrefs, savePref } from './prefs.js'
@@ -199,6 +201,62 @@ function SchemeCatalog({ activeId, onPick }: { activeId: string; onPick: (s: Col
   )
 }
 
+/** The turn stack's one-click replies: right-click a chip to remove it. */
+function PresetControls() {
+  const [, force] = useState(0)
+  const [draft, setDraft] = useState('')
+  const { menu, openMenu, closeMenu } = useContextMenu()
+  useEffect(() => onPresetsChange(() => force((x) => x + 1)), [])
+  const presets = getPresets()
+  const add = (): void => {
+    if (draft.trim() === '') return
+    setPresets([...presets, draft])
+    setDraft('')
+  }
+  return (
+    <>
+      <div className="mt-1 flex items-baseline gap-3 font-mono text-[9.5px] font-semibold tracking-[.14em] text-t5">
+        TURN STACK PRESETS
+        {presets.join('\n') !== DEFAULT_PRESETS.join('\n') && (
+          <button
+            onClick={() => setPresets(DEFAULT_PRESETS)}
+            className="font-normal tracking-normal text-t6 hover:text-fg"
+          >
+            reset
+          </button>
+        )}
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        {presets.map((chip) => (
+          <span
+            key={chip}
+            onContextMenu={(e) =>
+              openMenu(e, [
+                { label: chip, heading: true },
+                { label: 'remove', onClick: () => setPresets(presets.filter((x) => x !== chip)) },
+              ])
+            }
+            className="rounded border border-ac/55 px-3 py-1 text-[11.5px] text-ach"
+          >
+            {chip}
+          </span>
+        ))}
+        <input
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') add()
+          }}
+          onBlur={add}
+          placeholder="add a preset…"
+          className="w-56 rounded border border-b1 bg-s1 px-2.5 py-1 text-[11px] outline-none placeholder:text-t6 focus:border-b6"
+        />
+      </div>
+      {menu !== undefined && <ContextMenu menu={menu} close={closeMenu} />}
+    </>
+  )
+}
+
 export function Appearance() {
   const [, force] = useState(0)
   const [winShell, setWinShell] = useState<'powershell' | 'cmd'>('powershell')
@@ -246,6 +304,8 @@ export function Appearance() {
             rerender()
           }}
         />
+
+        <PresetControls />
 
         <div className="mt-1 font-mono text-[9.5px] font-semibold tracking-[.14em] text-t5">
           FONT PACKS
