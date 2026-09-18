@@ -83,6 +83,36 @@ function ptyIdsElsewhere(doc: WorkspaceDoc, except: string | undefined): Set<str
 
 const randomId = (): string => Math.random().toString(36).slice(2, 8)
 
+/** PTYs alive in the main process right now, from the bridge's list and
+ * its opened/closed events — so a workspace that is not showing can still
+ * say which of its tiles has a running terminal. */
+const livePtys = new Set<string>()
+
+/** A saved layout's tiles as desk entries: what the all-turns view reads
+ * for workspaces that are not showing. No zone (the grid would have to
+ * be walked); a pty only when it is known alive. */
+function entriesOfLayout(layout: unknown): DeskEntry[] {
+  const panels = (
+    layout as { panels?: Record<string, { id?: string; title?: string; params?: SlotParams }> } | undefined
+  )?.panels
+  if (panels === undefined || typeof panels !== 'object') return []
+  return Object.entries(panels).map(([id, p]) => {
+    const params = p?.params ?? {}
+    const target = params.target
+    return {
+      panelId: p?.id ?? id,
+      title: p?.title ?? id,
+      ...(target?.sessionId !== undefined && (target.kind === 'resume' || target.kind === 'new')
+        ? { sessionId: target.sessionId }
+        : {}),
+      ...(target?.kind === 'teleport' && target.sessionId !== undefined
+        ? { cloudId: target.sessionId }
+        : {}),
+      ...(params.ptyId !== undefined && livePtys.has(params.ptyId) ? { ptyId: params.ptyId } : {}),
+    }
+  })
+}
+
 export interface DeferState {
   /** Timed snooze: quiet until this instant. */
   until?: string
@@ -132,12 +162,18 @@ export const deskState: {
   /** Terminals a workspace holds — live ones for the active, saved ones
    * for the rest — so "close workspace" can say what it costs. */
   terminalCountOf: (id: string) => number
+  /** A workspace's tiles and skips: live for the active one, from the
+   * saved document for the rest (the all-turns view). */
+  entriesOf: (id: string) => DeskEntry[]
+  deferOf: (id: string) => Record<string, DeferState>
 } = {
   entries: [],
   defer: {},
   workspaces: [],
   active: undefined,
   terminalCountOf: () => 0,
+  entriesOf: () => [],
+  deferOf: () => ({}),
 }
 
 interface DeskOps {
@@ -157,6 +193,9 @@ interface DeskOps {
   newWorkspace: (name: string) => Promise<void>
   renameWorkspace: (id: string, name: string) => void
   closeWorkspace: (id: string) => Promise<void>
+  /** A skip/snooze in a workspace that may not be showing. */
+  setDeferIn: (workspaceId: string, sessionId: string, state: DeferState | undefined) => void
+  scopeWorkspace: (id: string, projectId: string | undefined) => void
 }
 
 let deskOps: DeskOps | undefined
@@ -187,8 +226,9 @@ export function isDeferred(
   currentSig: string | undefined,
   lastMoveIso: string | undefined,
   nowMs: number,
+  defers: Record<string, DeferState> = deskState.defer,
 ): boolean {
-  const defer = deskState.defer[sessionId]
+  const defer = defers[sessionId]
   if (defer === undefined) return false
   if (defer.until !== undefined) return Date.parse(defer.until) > nowMs
   if (defer.hold === true) return true
@@ -326,6 +366,10 @@ interface DeskContextValue {
   resumePanel: (panelId: string) => void
   busy: ReadonlySet<string>
   inspect?: ((sessionId: string) => void) | undefined
+  /** The active workspace's project scope, when it has one (027). */
+  scopeName?: string | undefined
+  /** Start a session in the scoped project. */
+  newSession?: (() => void) | undefined
 }
 
 const DeskContext = createContext<DeskContextValue>({
@@ -619,16 +663,33 @@ function SlotTab(props: IDockviewPanelHeaderProps<SlotParams>) {
 }
 
 function Watermark(_props: IWatermarkPanelProps) {
+  const { scopeName, newSession } = useContext(DeskContext)
   return (
-    <div className="flex h-full w-full items-center justify-center bg-app font-mono text-[11px] text-t6">
-      no tabs — open a session from the library, or drag one here
+    <div className="flex h-full w-full flex-col items-center justify-center gap-3 bg-app font-mono text-[11px] text-t6">
+      <span>no tabs — open a session from the library, or drag one here</span>
+      {scopeName !== undefined && newSession !== undefined && (
+        <button
+          onClick={newSession}
+          className="rounded border border-ac/55 px-3.5 py-1.5 font-ui text-[11.5px] font-semibold text-ach hover:bg-ac/10"
+        >
+          new session in {scopeName}
+        </button>
+      )}
     </div>
   )
 }
 
 const panelComponents = { terminal: TerminalPanel }
 
-export function Desk({ inspect }: { inspect?: (sessionId: string) => void }) {
+export function Desk({
+  inspect,
+  scopeName,
+  newSession,
+}: {
+  inspect?: (sessionId: string) => void
+  scopeName?: string | undefined
+  newSession?: (() => void) | undefined
+}) {
   const [zones, setZones] = useState<Record<string, ZoneMeta>>({})
   const [busy, setBusy] = useState<ReadonlySet<string>>(new Set())
   const [restore, setRestore] = useState<{ dead: number; zones: number } | undefined>(undefined)
@@ -699,6 +760,15 @@ export function Desk({ inspect }: { inspect?: (sessionId: string) => void }) {
       }
       const w = docRef.current.workspaces.find((x) => x.id === id)
       return ptyIdsOfLayout(w?.windows[0]?.layout).length
+    }
+    deskState.entriesOf = (id) => {
+      if (id === activeRef.current) return deskState.entries
+      const w = docRef.current.workspaces.find((x) => x.id === id)
+      return entriesOfLayout(w?.windows[0]?.layout)
+    }
+    deskState.deferOf = (id) => {
+      if (id === activeRef.current) return deskState.defer
+      return docRef.current.workspaces.find((x) => x.id === id)?.defer ?? {}
     }
     notifyDesk()
   }, [])
@@ -968,6 +1038,47 @@ export function Desk({ inspect }: { inspect?: (sessionId: string) => void }) {
     [publishWorkspaces, save, switchWorkspace],
   )
 
+  const setDeferIn = useCallback(
+    (workspaceId: string, sessionId: string, state: DeferState | undefined): void => {
+      if (workspaceId === activeRef.current) {
+        if (state === undefined) delete deskState.defer[sessionId]
+        else deskState.defer[sessionId] = state
+        save()
+        notifyDesk()
+        return
+      }
+      docRef.current = {
+        ...docRef.current,
+        workspaces: docRef.current.workspaces.map((w) => {
+          if (w.id !== workspaceId) return w
+          const defer = { ...(w.defer ?? {}) }
+          if (state === undefined) delete defer[sessionId]
+          else defer[sessionId] = state
+          return { ...w, defer }
+        }),
+      }
+      publishWorkspaces()
+      save()
+    },
+    [publishWorkspaces, save],
+  )
+
+  const scopeWorkspace = useCallback(
+    (id: string, projectId: string | undefined): void => {
+      docRef.current = {
+        ...docRef.current,
+        workspaces: docRef.current.workspaces.map((w) => {
+          if (w.id !== id) return w
+          const { scope: _drop, ...rest } = w
+          return projectId !== undefined ? { ...rest, scope: { projectId } } : rest
+        }),
+      }
+      publishWorkspaces()
+      save()
+    },
+    [publishWorkspaces, save],
+  )
+
   // Publish the desk's operations for the Turn Stack and the library.
   useEffect(() => {
     deskOps = {
@@ -996,13 +1107,24 @@ export function Desk({ inspect }: { inspect?: (sessionId: string) => void }) {
       newWorkspace,
       renameWorkspace,
       closeWorkspace,
+      setDeferIn,
+      scopeWorkspace,
     }
     ;(window as unknown as { __deskOps: DeskOps | undefined }).__deskOps = deskOps
     return () => {
       deskOps = undefined
       ;(window as unknown as { __deskOps: DeskOps | undefined }).__deskOps = undefined
     }
-  }, [resumePanel, save, switchWorkspace, newWorkspace, renameWorkspace, closeWorkspace])
+  }, [
+    resumePanel,
+    save,
+    switchWorkspace,
+    newWorkspace,
+    renameWorkspace,
+    closeWorkspace,
+    setDeferIn,
+    scopeWorkspace,
+  ])
 
   const onReady = useCallback(
     (event: DockviewReadyEvent) => {
@@ -1066,6 +1188,7 @@ export function Desk({ inspect }: { inspect?: (sessionId: string) => void }) {
     void (restoreLatch.current?.p ?? Promise.resolve())
       .then(() => bridge.list())
       .then((list) => {
+        for (const t of list) livePtys.add(t.id)
         const api = apiRef.current
         if (api === null) return
         const elsewhere = ptyIdsElsewhere(docRef.current, activeRef.current)
@@ -1108,6 +1231,8 @@ export function Desk({ inspect }: { inspect?: (sessionId: string) => void }) {
     }
 
     return bridge.onEvent((event) => {
+      if (event.type === 'opened') livePtys.add(event.id)
+      else if (event.type === 'closed') livePtys.delete(event.id)
       const api = apiRef.current
       if (api === null) return
       if (event.type === 'opened' || event.type === 'returned') {
@@ -1187,7 +1312,9 @@ export function Desk({ inspect }: { inspect?: (sessionId: string) => void }) {
   }
 
   return (
-    <DeskContext.Provider value={{ zones, renameZone, toggleDefault, resumePanel, busy, inspect }}>
+    <DeskContext.Provider
+      value={{ zones, renameZone, toggleDefault, resumePanel, busy, inspect, scopeName, newSession }}
+    >
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {restore !== undefined && (
           <div className="mx-3 mt-2.5 flex flex-none items-center gap-2.5 rounded border border-ac/50 bg-ac/8 px-3.5 py-2 text-[12.5px]">

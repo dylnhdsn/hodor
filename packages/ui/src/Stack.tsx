@@ -35,9 +35,18 @@ const formatWait = (sinceIso: string | undefined, nowMs: number): string => {
   return `${h}h ${mins % 60}m`
 }
 
+export type StackScope = 'workspace' | 'all'
+
+/** Which workspace an item's tile lives in; `active` = the one showing. */
+export interface ItemWorkspace {
+  id: string
+  name: string
+  active: boolean
+}
+
 export type StackItem =
-  | { kind: 'desk'; entry: DeskEntry; session: Session }
-  | { kind: 'cloud'; cloud: CloudSession }
+  | { kind: 'desk'; entry: DeskEntry; session: Session; workspace: ItemWorkspace }
+  | { kind: 'cloud'; cloud: CloudSession; workspace: ItemWorkspace }
 
 const itemId = (item: StackItem): string =>
   item.kind === 'desk' ? item.session.id : item.cloud.id
@@ -47,41 +56,59 @@ const itemSince = (item: StackItem): string =>
 
 /** Everything waiting on the human — desk terminals and cloud sessions in
  * ONE queue — deferred ones excluded (and expired deferrals cleaned). */
-export function stackQueue(view: View, nowMs: number): StackItem[] {
+export function stackQueue(view: View, nowMs: number, scope: StackScope = 'workspace'): StackItem[] {
   const items: StackItem[] = []
   const seen = new Set<string>()
-  for (const entry of deskState.entries) {
-    if (entry.sessionId === undefined || seen.has(entry.sessionId)) continue
-    const session = view.byId.get(entry.sessionId)
-    if (session?.turn?.state !== 'waiting') continue
-    seen.add(entry.sessionId)
-    if (deskState.defer[entry.sessionId] !== undefined) {
-      if (isDeferred(entry.sessionId, sigOfSession(session), session.lastActivityAt, nowMs)) {
-        continue
+  const active = deskState.active
+  // The workspaces to read: the active one alone, or every one — the
+  // desk answers for the active from its live tiles and for the rest
+  // from their saved layouts and skips (docs/brainstorm/027).
+  const workspaces =
+    scope === 'all'
+      ? deskState.workspaces
+      : deskState.workspaces.filter((w) => w.id === active)
+  // Active first: a session open in two workspaces is attributed to the
+  // one whose tile is mounted.
+  const wsList: ItemWorkspace[] = (
+    workspaces.length > 0
+      ? workspaces.map((w) => ({ id: w.id, name: w.name, active: w.id === active }))
+      : [{ id: active ?? 'main', name: 'main', active: true }]
+  ).sort((a, b) => Number(b.active) - Number(a.active))
+  for (const ws of wsList) {
+    const entries = ws.active ? deskState.entries : deskState.entriesOf(ws.id)
+    const defers = ws.active ? deskState.defer : deskState.deferOf(ws.id)
+    for (const entry of entries) {
+      if (entry.sessionId === undefined || seen.has(entry.sessionId)) continue
+      const session = view.byId.get(entry.sessionId)
+      if (session?.turn?.state !== 'waiting') continue
+      if (defers[entry.sessionId] !== undefined) {
+        // A skip is per workspace: skipped HERE hides it here only — the
+        // same session open and unskipped in another workspace still
+        // surfaces there. So it counts as seen only once it is queued.
+        if (isDeferred(entry.sessionId, sigOfSession(session), session.lastActivityAt, nowMs, defers)) {
+          continue
+        }
+        // lifted deferral: clean it up so the badge math stays honest
+        getDeskOps()?.setDeferIn(ws.id, entry.sessionId, undefined)
       }
-      // lifted deferral: clean it up so the badge math stays honest
-      getDeskOps()?.setDefer(entry.sessionId, undefined)
+      seen.add(entry.sessionId)
+      items.push({ kind: 'desk', entry, session, workspace: ws })
     }
-    items.push({ kind: 'desk', entry, session })
-  }
-  // Cloud sessions belong in the stack ONLY once they are part of the
-  // workspace — i.e. you teleported one into a tile here. A cloud
-  // session you have never opened is not something to triage in a queue
-  // of open terminals; it lives in Home.
-  const teleported = new Set(
-    deskState.entries
-      .map((e) => e.cloudId)
-      .filter((id): id is string => id !== undefined),
-  )
-  for (const cloud of view.cloud) {
-    if (!cloudNeedsYou(cloud) || seen.has(cloud.id)) continue
-    if (!teleported.has(cloud.id)) continue
-    seen.add(cloud.id)
-    if (deskState.defer[cloud.id] !== undefined) {
-      if (isDeferred(cloud.id, sigOfCloud(cloud), cloud.updatedAt, nowMs)) continue
-      getDeskOps()?.setDefer(cloud.id, undefined)
+    // Cloud sessions belong in the stack ONLY once they are part of a
+    // workspace — i.e. you teleported one into a tile there. A cloud
+    // session you have never opened is not something to triage in a queue
+    // of open terminals; it lives in Home.
+    const teleported = new Set(entries.map((e) => e.cloudId).filter((id): id is string => id !== undefined))
+    for (const cloud of view.cloud) {
+      if (!cloudNeedsYou(cloud) || seen.has(cloud.id)) continue
+      if (!teleported.has(cloud.id)) continue
+      if (defers[cloud.id] !== undefined) {
+        if (isDeferred(cloud.id, sigOfCloud(cloud), cloud.updatedAt, nowMs, defers)) continue
+        getDeskOps()?.setDeferIn(ws.id, cloud.id, undefined)
+      }
+      seen.add(cloud.id)
+      items.push({ kind: 'cloud', cloud, workspace: ws })
     }
-    items.push({ kind: 'cloud', cloud })
   }
   return items.sort((a, b) => itemSince(a).localeCompare(itemSince(b)))
 }
@@ -90,11 +117,13 @@ export function Stack(props: {
   snapshot: Snapshot
   view: View
   nowMs: number
+  scope: StackScope
+  onScope: (scope: StackScope) => void
   onExit: () => void
   onInspect: (sessionId: string) => void
   onJumpDesk: () => void
 }) {
-  const { view, nowMs, onExit, onInspect, onJumpDesk } = props
+  const { view, nowMs, scope, onScope, onExit, onInspect, onJumpDesk } = props
   const [, setTick] = useState(0)
   const [rot, setRot] = useState<string[]>([])
   const [pick, setPick] = useState<string | undefined>(undefined)
@@ -106,7 +135,7 @@ export function Stack(props: {
 
   useEffect(() => subscribeDesk(() => setTick((t) => t + 1)), [])
 
-  let queue = stackQueue(view, nowMs)
+  let queue = stackQueue(view, nowMs, scope)
   // later = rotate to the bottom; an explicit pick jumps the line
   queue = [
     ...queue.filter((q) => !rot.includes(itemId(q))),
@@ -121,13 +150,28 @@ export function Stack(props: {
   const top = queue[0]
   const topPanelId = top?.kind === 'desk' ? top.entry.panelId : undefined
   const topId = top !== undefined ? itemId(top) : undefined
+  const topActive = top?.workspace.active ?? true
 
   // The desk mirrors the stack: a local top card's tile comes forward in
   // its zone, so leaving the stack lands on the session just dealt with.
+  // (Only when its workspace is the one showing — the others' tiles are
+  // not mounted; "tile" switches there on purpose.)
   useEffect(() => {
     setResuming(false)
-    if (topPanelId !== undefined) getDeskOps()?.revealPanel(topPanelId)
-  }, [topPanelId])
+    if (topPanelId !== undefined && topActive) getDeskOps()?.revealPanel(topPanelId)
+  }, [topPanelId, topActive])
+
+  /** Go to the top item's workspace (if not showing) and its tile. */
+  const jumpToTop = useCallback(() => {
+    if (top === undefined) return
+    const go = top.workspace.active
+      ? Promise.resolve()
+      : (getDeskOps()?.switchWorkspace(top.workspace.id) ?? Promise.resolve())
+    void go.then(() => {
+      if (topPanelId !== undefined) getDeskOps()?.revealPanel(topPanelId)
+      onJumpDesk()
+    })
+  }, [top, topPanelId, onJumpDesk])
   useEffect(() => {
     setReply('')
     setSnoozeOpen(false)
@@ -147,6 +191,7 @@ export function Stack(props: {
       if (top === undefined) return
       const ops = getDeskOps()
       const id = itemId(top)
+      const wsId = top.workspace.id
       const note = snoozeNote.trim() !== '' ? { note: snoozeNote.trim() } : {}
       const sig = top.kind === 'desk' ? sigOfSession(top.session) : sigOfCloud(top.cloud)
       setSnoozeOpen(false)
@@ -157,26 +202,33 @@ export function Stack(props: {
           setRot((r) => [...r.filter((x) => x !== id), id])
           break
         case 'snz30':
-          ops?.setDefer(id, { until: new Date(nowMs + 30 * 60_000).toISOString(), ...note })
+          ops?.setDeferIn(wsId, id, { until: new Date(nowMs + 30 * 60_000).toISOString(), ...note })
           break
         case 'snz2':
-          ops?.setDefer(id, { until: new Date(nowMs + 2 * 3600_000).toISOString(), ...note })
+          ops?.setDeferIn(wsId, id, { until: new Date(nowMs + 2 * 3600_000).toISOString(), ...note })
           break
         case 'snzMove':
-          ops?.setDefer(id, { sig, ...note })
+          ops?.setDeferIn(wsId, id, { sig, ...note })
           break
         case 'hold':
-          ops?.setDefer(id, { hold: true, ...note })
+          ops?.setDeferIn(wsId, id, { hold: true, ...note })
           break
         case 'phone':
           if (top.kind === 'desk' && top.entry.ptyId !== undefined && desktop !== undefined) {
             desktop.write(top.entry.ptyId, '/remote-control\r')
-            ops?.setDefer(id, { sig, phone: true, ...note })
+            ops?.setDeferIn(wsId, id, { sig, phone: true, ...note })
           }
           break
         case 'done':
         case 'kill':
-          if (top.kind === 'desk') ops?.closePanel(top.entry.panelId)
+          if (top.kind === 'desk') {
+            // its panel lives in its workspace's dockview — go there first
+            const go = top.workspace.active
+              ? Promise.resolve()
+              : (ops?.switchWorkspace(wsId) ?? Promise.resolve())
+            const panelId = top.entry.panelId
+            void go.then(() => getDeskOps()?.closePanel(panelId))
+          }
           break
       }
     },
@@ -201,7 +253,21 @@ export function Stack(props: {
       .finally(() => setSending(false))
   }, [top, reply])
 
-  const deferredN = Object.keys(deskState.defer).length
+  const deferredN =
+    scope === 'all'
+      ? deskState.workspaces.reduce((n, w) => n + Object.keys(deskState.deferOf(w.id)).length, 0)
+      : Object.keys(deskState.defer).length
+  const wsChip = (ws: ItemWorkspace) =>
+    !ws.active || scope === 'all' ? (
+      <span
+        className={`whitespace-nowrap rounded border px-2 font-mono text-[10px] ${
+          ws.active ? 'border-b4 text-t4' : 'border-ac/50 text-ach'
+        }`}
+        title={ws.active ? 'this workspace' : 'another workspace — tile switches there'}
+      >
+        {ws.name}
+      </span>
+    ) : null
   const structured = top?.kind === 'desk' ? top.session.turn?.pending : undefined
   const projectName = (s: Session): string => {
     const claim = view.claimsBySession.get(s.id)?.[0]
@@ -256,6 +322,26 @@ export function Stack(props: {
         <span className="font-bold text-fg">
           {queue.length === 0 ? '0 waiting' : `1 of ${queue.length}`}
         </span>
+        {deskState.workspaces.length > 1 && (
+          <span className="flex items-center gap-0.5 rounded border border-b3 p-0.5">
+            {(
+              [
+                ['workspace', deskState.workspaces.find((w) => w.id === deskState.active)?.name ?? 'this workspace'],
+                ['all', 'all workspaces'],
+              ] as const
+            ).map(([value, label]) => (
+              <button
+                key={value}
+                onClick={() => onScope(value)}
+                className={`rounded px-2 py-0.5 font-mono text-[10px] ${
+                  scope === value ? 'bg-s3 text-fg' : 'text-t5 hover:text-t2'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </span>
+        )}
         <button
           onClick={onExit}
           className="ml-auto font-mono text-[10px] text-t4 hover:text-fg"
@@ -285,6 +371,7 @@ export function Stack(props: {
                 ⛶ {top.entry.zone}
               </span>
             )}
+            {wsChip(top.workspace)}
             {top.session.gitBranch !== undefined && (
               <span className="truncate font-mono text-[10px] text-t4">
                 ⎇ {top.session.gitBranch}
@@ -300,8 +387,12 @@ export function Stack(props: {
               detail
             </button>
             <button
-              onClick={onJumpDesk}
-              title="its tile is already front of its zone — jump to the desk"
+              onClick={jumpToTop}
+              title={
+                top.workspace.active
+                  ? 'its tile is already front of its zone — jump to the desk'
+                  : `switch to ${top.workspace.name} and jump to its tile`
+              }
               className="font-mono text-[10px] text-t3 hover:text-fg"
             >
               ⛶ tile
@@ -320,12 +411,21 @@ export function Stack(props: {
                   <span className="animate-pulse text-xs text-ac">resuming into its tile…</span>
                 ) : (
                   <div className="flex gap-2">
-                    <button
-                      onClick={resumeTop}
-                      className="rounded border border-ac/55 px-3.5 py-1.5 text-[11.5px] font-semibold text-ach hover:bg-ac/10"
-                    >
-                      ⟳ reopen — claude --resume into its tile
-                    </button>
+                    {top.workspace.active ? (
+                      <button
+                        onClick={resumeTop}
+                        className="rounded border border-ac/55 px-3.5 py-1.5 text-[11.5px] font-semibold text-ach hover:bg-ac/10"
+                      >
+                        ⟳ reopen — claude --resume into its tile
+                      </button>
+                    ) : (
+                      <button
+                        onClick={jumpToTop}
+                        className="rounded border border-ac/55 px-3.5 py-1.5 text-[11.5px] font-semibold text-ach hover:bg-ac/10"
+                      >
+                        switch to {top.workspace.name}
+                      </button>
+                    )}
                     <button
                       onClick={() => act('later')}
                       className="rounded border border-b4 px-3.5 py-1.5 text-[11.5px] text-t3 hover:text-fg"
@@ -411,6 +511,7 @@ export function Stack(props: {
                 {top.cloud.repo}
               </span>
             )}
+            {wsChip(top.workspace)}
             {top.cloud.branches[0] !== undefined && (
               <span className="truncate font-mono text-[10px] text-t4">
                 ⎇ {top.cloud.branches[0]}
@@ -506,6 +607,9 @@ export function Stack(props: {
                   {item.kind === 'desk'
                     ? projectName(item.session)
                     : (item.cloud.repo ?? 'cloud')}
+                  {!item.workspace.active && (
+                    <span className="text-ach"> · {item.workspace.name}</span>
+                  )}
                 </span>
                 <span className="font-mono text-[10px] text-t6">bring to top ↑</span>
               </button>

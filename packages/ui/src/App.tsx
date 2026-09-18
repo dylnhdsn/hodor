@@ -37,7 +37,7 @@ import { confirmAction, DialogHost, notice, promptText } from './dialog.js'
 import { ContextMenu, useContextMenu, type MenuItem } from './menu.js'
 import { NewSessionDialog } from './NewSession.js'
 import { notifyNeedsYou } from './notify.js'
-import { Stack, stackQueue } from './Stack.js'
+import { Stack, stackQueue, type StackScope } from './Stack.js'
 import { desktop } from './desktop.js'
 import { fetchPrefs, savePref } from './prefs.js'
 import { activeScheme, onThemeChange } from './theme.js'
@@ -116,8 +116,15 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
     void fetchPrefs().then((prefs) => {
       if (prefs['rail'] === 'closed') setRailOpen(false)
       else if (prefs['rail'] === 'open') setRailOpen(true)
+      if (prefs['stackScope'] === 'all') setStackScope('all')
     })
   }, [])
+  // The turn stack over this workspace, or every workspace (027).
+  const [stackScope, setStackScopeState] = useState<StackScope>('workspace')
+  const setStackScope = (scope: StackScope): void => {
+    setStackScopeState(scope)
+    savePref({ stackScope: scope })
+  }
   const toggleRail = (open: boolean) => {
     setRailOpen(open)
     savePref({ rail: open ? 'open' : 'closed' })
@@ -144,7 +151,7 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
   }, [])
   const [, setThemeTick] = useState(0)
   useEffect(() => onThemeChange(() => setThemeTick((t) => t + 1)), [])
-  const stackN = desktop !== undefined ? stackQueue(view, nowMs).length : 0
+  const stackN = desktop !== undefined ? stackQueue(view, nowMs, stackScope).length : 0
   // Needs-you counts honor skips (deferrals): a skipped session stays
   // quiet until its ask actually changes.
   const waitingN = useMemo(
@@ -214,6 +221,12 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
   }, [view, nowMs])
 
   const project = filter.kind === 'project' ? view.rail.find((p) => p.id === filter.id) : undefined
+  // The active workspace's project scope, if any (027) — deskTick keeps it fresh.
+  const scopedProject = (() => {
+    void deskTick
+    const active = deskState.workspaces.find((w) => w.id === deskState.active)
+    return active?.scope !== undefined ? view.rail.find((p) => p.id === active.scope!.projectId) : undefined
+  })()
 
   // Top-bar breadcrumb: where you are + what it holds, in the bar itself.
   const totalN = view.visible.length + view.cloud.length
@@ -396,7 +409,10 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
             reconnecting…
           </span>
         )}
-        <WorkspaceTabs onSwitch={() => setFilter({ kind: 'desk' })} />
+        <WorkspaceTabs
+          onSwitch={() => setFilter({ kind: 'desk' })}
+          projects={view.rail.map((p) => ({ id: p.id, name: p.name }))}
+        />
         <span className="text-t6">/</span>
         <span className="font-ui text-[12.5px] font-bold text-fg">{crumb.title}</span>
         {crumb.meta !== undefined && <span className="text-[11px] text-t4">{crumb.meta}</span>}
@@ -664,7 +680,11 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
             state, and the deskStore the turn stack reads all live here. */}
         {desktop !== undefined && (
           <div className={filter.kind === 'desk' ? 'flex min-h-0 flex-1' : 'hidden'}>
-            <Desk inspect={(id) => setDetailId(id)} />
+            <Desk
+              inspect={(id) => setDetailId(id)}
+              scopeName={scopedProject?.name}
+              newSession={scopedProject !== undefined ? () => setNewSessionFor(scopedProject) : undefined}
+            />
             {filter.kind === 'desk' && detailId !== undefined && view.byId.has(detailId) && (
               <DetailPane
                 key={detailId}
@@ -684,6 +704,8 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
               snapshot={snapshot}
               view={view}
               nowMs={nowMs}
+              scope={stackScope}
+              onScope={setStackScope}
               onExit={() => setFilter({ kind: 'desk' })}
               onInspect={(id) => setDetailId(detailId === id ? undefined : id)}
               onJumpDesk={() => setFilter({ kind: 'desk' })}

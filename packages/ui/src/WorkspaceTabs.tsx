@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { deskState, getDeskOps, subscribeDesk } from './Desk.js'
 import { desktop } from './desktop.js'
-import { confirmAction, promptText } from './dialog.js'
+import { confirmAction, pickOne, promptText } from './dialog.js'
 import { ContextMenu, useContextMenu, type MenuItem } from './menu.js'
 
 /**
@@ -11,7 +11,11 @@ import { ContextMenu, useContextMenu, type MenuItem } from './menu.js'
  * right-click for rename / new / close.
  */
 
-export function WorkspaceTabs(props: { onSwitch?: () => void }) {
+export function WorkspaceTabs(props: {
+  onSwitch?: () => void
+  /** Rail projects, for "scope to project". */
+  projects?: Array<{ id: string; name: string }>
+}) {
   const [, force] = useState(0)
   const { menu, openMenu, closeMenu } = useContextMenu()
   useEffect(() => subscribeDesk(() => force((t) => t + 1)), [])
@@ -31,6 +35,16 @@ export function WorkspaceTabs(props: { onSwitch?: () => void }) {
       ops?.renameWorkspace(id, name.trim())
     })
   }
+  const scope = (id: string): void => {
+    const projects = props.projects ?? []
+    void pickOne(
+      'Scope to project',
+      projects.map((p) => ({ id: p.id, label: p.name })),
+      { detail: 'new sessions in this workspace start there' },
+    ).then((projectId) => {
+      if (projectId !== undefined) ops?.scopeWorkspace(id, projectId)
+    })
+  }
   const close = (id: string, name: string): void => {
     const n = deskState.terminalCountOf(id)
     void confirmAction(`Close workspace "${name}"?`, {
@@ -46,9 +60,14 @@ export function WorkspaceTabs(props: { onSwitch?: () => void }) {
     <span className="no-drag flex items-center gap-0.5">
       {deskState.workspaces.map((w) => {
         const active = w.id === deskState.active
+        const scopeName = props.projects?.find((p) => p.id === w.scope?.projectId)?.name
         const items: MenuItem[] = [
           { label: w.name, heading: true },
           { label: 'rename', onClick: () => rename(w.id, w.name) },
+          { label: scopeName !== undefined ? `scope: ${scopeName} — change…` : 'scope to project…', onClick: () => scope(w.id) },
+          ...(w.scope !== undefined
+            ? [{ label: 'clear project scope', onClick: () => ops?.scopeWorkspace(w.id, undefined) }]
+            : []),
           { label: 'new workspace', onClick: create },
           { label: 'close workspace', onClick: () => close(w.id, w.name), danger: true },
         ]
@@ -63,9 +82,15 @@ export function WorkspaceTabs(props: { onSwitch?: () => void }) {
             className={`rounded px-2 py-0.5 font-ui text-[11.5px] ${
               active ? 'bg-s3 font-semibold text-fg' : 'text-t4 hover:bg-s1 hover:text-t1'
             }`}
-            title={active ? 'this workspace' : 'switch workspace'}
+            title={
+              (active ? 'this workspace' : 'switch workspace') +
+              (scopeName !== undefined ? ` — scoped to ${scopeName}` : '')
+            }
           >
             {w.name}
+            {scopeName !== undefined && (
+              <span className="ml-1 font-normal text-t6">· {scopeName}</span>
+            )}
           </button>
         )
       })}
