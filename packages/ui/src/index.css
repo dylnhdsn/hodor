@@ -39,6 +39,16 @@
   font-display: swap;
   src: url('./assets/fonts/source-code-pro-latin.woff2') format('woff2');
 }
+/* Symbols-only Nerd Font (Nerd Fonts, MIT; icon sets keep their own
+   licenses): the fallback right behind every terminal font, so powerline
+   and statusline glyphs render whatever face is chosen. */
+@font-face {
+  font-family: 'Symbols Nerd Font Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./assets/fonts/symbols-nerd-mono.woff2') format('woff2');
+}
 
 /* Theme tokens (docs 023/024 design pass): every color derives from a
    terminal colorscheme at runtime — deriveTheme() writes these variables.

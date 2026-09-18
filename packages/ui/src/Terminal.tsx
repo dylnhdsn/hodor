@@ -5,7 +5,7 @@ import { Terminal as Xterm } from '@xterm/xterm'
 import { useEffect, useRef } from 'react'
 import '@xterm/xterm/css/xterm.css'
 import { desktop } from './desktop.js'
-import { activeTermFont, activeTerminalTheme, onThemeChange } from './theme.js'
+import { activeTermFont, activeTerminalTheme, onThemeChange, termFontEpoch } from './theme.js'
 
 /**
  * One attached PTY view. The PTY lives in the desktop main process; this
@@ -85,9 +85,16 @@ export function TerminalView({
       fastScrollSensitivity: 10,
       smoothScrollDuration: 0,
     })
+    let fontEpoch = termFontEpoch()
     const offTheme = onThemeChange(() => {
       const next = activeTermFont()
       term.options.theme = activeTerminalTheme()
+      if (next.family === term.options.fontFamily && fontEpoch !== termFontEpoch()) {
+        // Same stack, but a face in it just finished loading: xterm only
+        // measures on a change, so bounce through the generic family.
+        term.options.fontFamily = 'monospace'
+      }
+      fontEpoch = termFontEpoch()
       term.options.fontFamily = next.family
       term.options.fontSize = next.size
       fitRef.current?.fit()

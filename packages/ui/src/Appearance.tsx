@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react'
 import { deriveTheme, mixHex, type Colorscheme } from '@hodor/core/colorscheme'
+import { CATALOG_SOURCE, loadCatalog, type CatalogEntry } from './catalog.js'
 import { HooksToggle } from './HooksToggle.js'
 import { notifyEnabled, setNotifyEnabled } from './notify.js'
 import { fetchPrefs, savePref } from './prefs.js'
 import {
   FONT_PACKS,
   TERM_FONTS,
+  adoptScheme,
   allSchemes,
   importScheme,
   setAccent,
@@ -95,7 +97,7 @@ function SchemeCard({ scheme, active, onPick }: { scheme: Colorscheme; active: b
               title="use as the accent"
               onClick={(e) => {
                 e.stopPropagation()
-                if (!active) setScheme(scheme.id)
+                if (!active) onPick()
                 setAccent(hex)
               }}
               className={`inline-block h-2.5 w-2.5 cursor-pointer rounded-[3px] hover:scale-125 ${
@@ -120,6 +122,80 @@ function SchemeCard({ scheme, active, onPick }: { scheme: Colorscheme; active: b
         )}
       </span>
     </button>
+  )
+}
+
+/** The bundled catalog: search by name, dark/light, pick to adopt. */
+function SchemeCatalog({ activeId, onPick }: { activeId: string; onPick: (s: Colorscheme) => void }) {
+  const [entries, setEntries] = useState<CatalogEntry[] | undefined>(undefined)
+  const [query, setQuery] = useState('')
+  const [tone, setTone] = useState<'all' | 'dark' | 'light'>('all')
+  useEffect(() => {
+    let live = true
+    void loadCatalog().then((e) => {
+      if (live) setEntries(e)
+    })
+    return () => {
+      live = false
+    }
+  }, [])
+  const q = query.trim().toLowerCase()
+  const hits = (entries ?? []).filter(
+    (e) =>
+      (tone === 'all' || (tone === 'dark') === e.dark) &&
+      (q === '' || e.scheme.name.toLowerCase().includes(q)),
+  )
+  const shown = hits.slice(0, 48)
+  const chip = (on: boolean): string =>
+    `rounded border px-2 py-0.5 font-mono text-[10px] ${on ? 'border-ac text-fg' : 'border-b3 text-t4 hover:border-b6 hover:text-fg'}`
+  return (
+    <>
+      <div className="mt-1 flex flex-wrap items-center gap-2.5">
+        <span className="font-mono text-[9.5px] font-semibold tracking-[.14em] text-t5">CATALOG</span>
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="find a scheme…"
+          className="w-52 rounded border border-b1 bg-s1 px-2.5 py-1 text-[11px] outline-none placeholder:text-t6 focus:border-b6"
+        />
+        {(['all', 'dark', 'light'] as const).map((t) => (
+          <button key={t} onClick={() => setTone(t)} className={chip(tone === t)}>
+            {t}
+          </button>
+        ))}
+        <span className="font-mono text-[10px] text-t5">
+          {entries === undefined ? 'loading…' : `${hits.length} of ${entries.length}`}
+        </span>
+        <a
+          href={CATALOG_SOURCE.url}
+          target="_blank"
+          rel="noreferrer"
+          className="ml-auto font-mono text-[9.5px] text-t6 hover:text-fg"
+        >
+          {CATALOG_SOURCE.name} · {CATALOG_SOURCE.license}
+        </a>
+      </div>
+      {shown.length > 0 && (
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-2">
+          {shown.map((e) => (
+            <SchemeCard
+              key={e.scheme.id}
+              scheme={e.scheme}
+              active={e.scheme.id === activeId}
+              onPick={() => onPick(e.scheme)}
+            />
+          ))}
+        </div>
+      )}
+      {hits.length > shown.length && (
+        <div className="font-mono text-[10px] text-t5">
+          {hits.length - shown.length} more — narrow the search
+        </div>
+      )}
+      {entries !== undefined && hits.length === 0 && (
+        <div className="font-mono text-[10px] text-t5">no scheme by that name</div>
+      )}
+    </>
   )
 }
 
@@ -163,6 +239,14 @@ export function Appearance() {
           ))}
         </div>
 
+        <SchemeCatalog
+          activeId={state.schemeId}
+          onPick={(scheme) => {
+            adoptScheme(scheme)
+            rerender()
+          }}
+        />
+
         <div className="mt-1 font-mono text-[9.5px] font-semibold tracking-[.14em] text-t5">
           FONT PACKS
         </div>
@@ -194,8 +278,11 @@ export function Appearance() {
           ))}
         </div>
 
-        <div className="mt-1 font-mono text-[9.5px] font-semibold tracking-[.14em] text-t5">
+        <div className="mt-1 flex items-baseline gap-3 font-mono text-[9.5px] font-semibold tracking-[.14em] text-t5">
           TERMINAL FONT
+          <span className="font-normal tracking-normal text-t6">
+            every face gets Nerd Font symbols — statuslines and powerline glyphs render in all of them
+          </span>
         </div>
         <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-2">
           <button
@@ -213,6 +300,7 @@ export function Appearance() {
           {TERM_FONTS.map((f) => {
             const installed =
               f.bundled === true ||
+              f.source !== undefined ||
               (typeof document.fonts?.check === 'function' &&
                 document.fonts.check(`12px "${f.name}"`))
             return (
@@ -232,6 +320,14 @@ export function Appearance() {
                   {f.bundled === true && (
                     <span className="rounded border border-b4 px-1 text-[8.5px] font-normal text-t5">
                       ships with hodor
+                    </span>
+                  )}
+                  {f.source !== undefined && (
+                    <span
+                      className="rounded border border-b4 px-1 text-[8.5px] font-normal text-t5"
+                      title="downloaded the first time you pick it"
+                    >
+                      fetched
                     </span>
                   )}
                 </span>
