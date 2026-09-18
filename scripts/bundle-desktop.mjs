@@ -21,9 +21,15 @@ const version = process.env.HODOR_BUILD_VERSION ?? `${pkg.version}-dev`
 // 'latest' tag — every install shipped before channels existed IS a
 // nightly and must keep updating without noticing.
 const IDENTITY = {
-  nightly: { appId: 'dev.dylnhdsn.hodor', productName: 'hodor', tag: 'latest' },
-  stable: { appId: 'dev.dylnhdsn.hodor.stable', productName: 'hodor stable', tag: 'stable' },
+  nightly: { name: 'hodor-desktop', appId: 'dev.dylnhdsn.hodor', productName: 'hodor', tag: 'latest' },
+  stable: {
+    name: 'hodor-desktop-stable',
+    appId: 'dev.dylnhdsn.hodor.stable',
+    productName: 'hodor stable',
+    tag: 'stable',
+  },
   experimental: {
+    name: 'hodor-desktop-experimental',
     appId: 'dev.dylnhdsn.hodor.experimental',
     productName: 'hodor experimental',
     tag: 'experimental',
@@ -89,6 +95,13 @@ const desktopPkg = JSON.parse(readFileSync(desktopPkgPath, 'utf8'))
 const run = /-build\.(\d+)\./.exec(version)?.[1]
 const [major = '0', minor = '0'] = version.split('-')[0].split('.')
 desktopPkg.version = run !== undefined ? `${major}.${minor}.${run}` : '0.0.0'
+// The package NAME is what electron-builder's per-user one-click NSIS
+// installer names the install folder after (%LOCALAPPDATA%\Programs\
+// <name>) — and its "close the running app" check matches by that
+// folder. One name for every channel meant the experimental installer
+// aimed at the nightly's folder and asked to close it. nightly keeps
+// the original name so existing installs update in place.
+desktopPkg.name = identity.name
 desktopPkg.build.appId = identity.appId
 desktopPkg.build.productName = identity.productName
 desktopPkg.build.publish.url = `https://github.com/dylnhdsn/hodor/releases/download/${identity.tag}`
@@ -101,8 +114,12 @@ writeFileSync(desktopPkgPath, JSON.stringify(desktopPkg, null, 2) + '\n')
 // whatever the registry resolved that hour.
 const lockPath = new URL('../packages/desktop/package-lock.json', import.meta.url)
 const lock = JSON.parse(readFileSync(lockPath, 'utf8'))
+lock.name = desktopPkg.name
 lock.version = desktopPkg.version
-if (lock.packages?.[''] !== undefined) lock.packages[''].version = desktopPkg.version
+if (lock.packages?.[''] !== undefined) {
+  lock.packages[''].name = desktopPkg.name
+  lock.packages[''].version = desktopPkg.version
+}
 writeFileSync(lockPath, JSON.stringify(lock, null, 2) + '\n')
 
 console.log(`bundled hodor desktop ${version} (${channel}: ${identity.productName})`)
