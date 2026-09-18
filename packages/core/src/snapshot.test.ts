@@ -558,6 +558,10 @@ describe('buildSnapshot', () => {
     // with hiding disabled entirely (--all), archived sessions surface
     const all = buildSnapshot(state, { now: NOW })
     expect(all.sessions.find((s) => s.id === 'bbb')!.hiddenBy).toBeUndefined()
+
+    // a blank rename (a cleared rename box) never becomes the title
+    const blank = foldAll(state, [{ type: 'meta-changed', meta: { sessionId: 'aaa', rename: '  ' } }])
+    expect(buildSnapshot(blank, { now: NOW }).sessions.find((s) => s.id === 'aaa')!.rename).toBeUndefined()
   })
 
   it('sums usage across threads and prices it, honoring config overrides', () => {

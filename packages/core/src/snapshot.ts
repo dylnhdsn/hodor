@@ -563,7 +563,8 @@ export function buildSnapshot(state: CoreState, options: SnapshotOptions): Snaps
         state.liveAgents[accum.id],
       )
       const meta = state.metas[accum.id]
-      if (meta?.rename !== undefined) session.rename = meta.rename
+      // A blank rename is no rename: every title chain falls through it.
+      if (meta?.rename !== undefined && meta.rename.trim() !== '') session.rename = meta.rename
       const pr = state.prs[accum.id]
       if (pr !== undefined) session.pr = pr
       if (options.hide !== undefined) {

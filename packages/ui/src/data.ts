@@ -22,7 +22,9 @@ export function formatAge(nowMs: number, timestamp?: string): string {
 }
 
 export const titleOf = (s: Session): string =>
-  s.rename ?? s.customTitle ?? s.summary ?? s.promptPreview ?? s.firstCommand ?? '(untitled)'
+  [s.rename, s.customTitle, s.summary, s.promptPreview, s.firstCommand].find(
+    (t): t is string => t !== undefined && t.trim() !== '',
+  ) ?? '(untitled)'
 
 /** What a waiting session is asking right now. Skips snapshot this: an
  * "until it moves" skip stays quiet while the ask reads the same and wakes
@@ -52,6 +54,17 @@ export const statusOfSession = (s: Session, skipped: boolean): RowStatus => {
  * (updatedAt churns constantly while an agent runs — useless as a wake). */
 export const sigOfCloud = (c: CloudSession): string =>
   `${c.bucket ?? ''}|${c.needsAction ?? ''}`
+
+/** The name the rail shows for a session: its first live custom-project
+ * claim, else the derived project, else "no project". */
+export const projectNameOf = (snapshot: Snapshot, view: View, s: Session): string => {
+  const claim = view.claimsBySession.get(s.id)?.[0]
+  if (claim !== undefined) {
+    const custom = snapshot.customProjects.find((p) => p.id === claim)
+    if (custom !== undefined) return custom.name
+  }
+  return view.derivedOf.get(s.id)?.name ?? 'no project'
+}
 
 export const formatTokens = (n: number): string =>
   n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)

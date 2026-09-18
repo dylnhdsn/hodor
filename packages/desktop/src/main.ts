@@ -36,6 +36,8 @@ interface Term {
   target: OpenTarget
   /** Where the shell runs: "wsl · Ubuntu", "cmd", "bash"… */
   env?: string
+  /** When the process was spawned — the tile's uptime on the dashboard. */
+  startedAt: string
   pty: IPty
   /** Bounded scrollback for re-attach; chunks trimmed from the front. */
   backlog: Buffer[]
@@ -141,6 +143,7 @@ function termSummary(term: Term): {
   title: string
   target: OpenTarget
   env?: string
+  startedAt: string
   exited?: number
 } {
   return {
@@ -148,6 +151,7 @@ function termSummary(term: Term): {
     title: term.title,
     target: term.target,
     ...(term.env !== undefined ? { env: term.env } : {}),
+    startedAt: term.startedAt,
     ...(term.exited !== undefined ? { exited: term.exited } : {}),
   }
 }
@@ -219,6 +223,7 @@ async function openTerminal(
     title,
     target,
     env,
+    startedAt: new Date().toISOString(),
     pty,
     backlog: [],
     backlogBytes: 0,

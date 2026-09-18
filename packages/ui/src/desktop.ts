@@ -22,6 +22,8 @@ export interface TermInfo {
   target?: OpenTarget
   /** Where the shell actually runs: "wsl · Ubuntu", "cmd", "bash"… */
   env?: string
+  /** When it was spawned (absent in older desktop builds). */
+  startedAt?: string
   exited?: number
 }
 

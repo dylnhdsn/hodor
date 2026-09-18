@@ -3,12 +3,14 @@ import type { CloudSession, Session, Snapshot } from '@hodor/core'
 import { cloudNeedsYou } from './CloudSessions.js'
 import {
   launchOrCopy,
+  projectNameOf,
   sendCloudMessage,
   sigOfCloud,
   sigOfSession,
   titleOf,
   type View,
 } from './data.js'
+import { StackDashboard } from './Dashboard.js'
 import { desktop } from './desktop.js'
 import { notice } from './dialog.js'
 import { deskState, getDeskOps, isDeferred, subscribeDesk, type DeskEntry } from './Desk.js'
@@ -284,14 +286,7 @@ export function Stack(props: {
       </span>
     ) : null
   const structured = top?.kind === 'desk' ? top.session.turn?.pending : undefined
-  const projectName = (s: Session): string => {
-    const claim = view.claimsBySession.get(s.id)?.[0]
-    if (claim !== undefined) {
-      const custom = props.snapshot.customProjects.find((p) => p.id === claim)
-      if (custom !== undefined) return custom.name
-    }
-    return view.derivedOf.get(s.id)?.name ?? 'no project'
-  }
+  const projectName = (s: Session): string => projectNameOf(props.snapshot, view, s)
 
   const snoozeMenu = (
     <span className="relative">
@@ -369,11 +364,13 @@ export function Stack(props: {
       </div>
 
       {top === undefined && (
-        <div className="flex min-h-0 flex-1 items-center justify-center">
-          <div className="rounded border border-b4 bg-s3 px-8 py-10 text-center text-sm text-t3">
-            nothing waiting on you
-          </div>
-        </div>
+        <StackDashboard
+          snapshot={props.snapshot}
+          view={view}
+          nowMs={nowMs}
+          onInspect={onInspect}
+          onJumpDesk={onJumpDesk}
+        />
       )}
 
       {top !== undefined && top.kind === 'desk' && (
