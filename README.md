@@ -134,6 +134,10 @@ can run side by side; to change channel, install the other one. The CLI
 remembers the channel it was installed from and `hodor update` follows it
 (`hodor update --channel stable` moves it). Swap `latest` for `stable` or
 `experimental` in any URL below. Requires Node >= 22 on your PATH.
+On Windows each channel installs into its own folder
+(`%LOCALAPPDATA%\Programs\hodor-desktop`, `…-stable`, `…-experimental`);
+experimental installers published before build 94 shared the nightly
+folder — uninstall both and reinstall if you ran one of those.
 
 Linux / WSL / macOS:
 
