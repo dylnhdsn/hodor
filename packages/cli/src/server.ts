@@ -18,6 +18,7 @@ import {
   previewMatcher,
   slugifyProjectId,
   type CoreState,
+  type LiveAgent,
   type Matcher,
   type MessageLine,
   type PlaneOp,
@@ -362,6 +363,23 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
    * answers with the copyable command, so a failed spawn (headless box,
    * exotic terminal) still leaves the user one paste away.
    */
+  /** A session already running under the CLI's supervisor (sent there
+   * with /background, or born with --bg) is ATTACHED to, never resumed:
+   * a second claude on the same transcript would fight the first. The
+   * listing is taken fresh — right after a restart the periodic one may
+   * not have run yet — and kept for a few seconds so restoring a whole
+   * desk is one scan. */
+  let liveScanAt = 0
+  let liveAgents: LiveAgent[] = []
+  async function liveAgentOf(sessionId: string): Promise<LiveAgent | undefined> {
+    if (Date.now() - liveScanAt > 3_000) {
+      const event = await scanLiveAgents(deps, stores).catch(() => undefined)
+      liveScanAt = Date.now()
+      if (event !== undefined && event.type === 'agents-listed') liveAgents = event.agents
+    }
+    return liveAgents.find((a) => a.sessionId === sessionId)
+  }
+
   async function handleLaunch(res: ServerResponse, body: string): Promise<void> {
     let payload: {
       kind?: string
@@ -421,15 +439,16 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
       if (cwd === undefined) return sendJson(res, 400, { error: 'session has no cwd' })
       const store = snapshot?.stores.find((s) => s.id === session.storeId)
       if (store === undefined) return sendJson(res, 400, { error: 'session store unknown' })
+      const live = payload.kind === 'resume' ? await liveAgentOf(session.id) : undefined
+      const attachTo = live?.kind === 'background' ? live.shortId : undefined
       target = {
         cwd,
         flavor: store.pathFlavor,
         origin: store.origin,
-        claudeArgs: [
-          '--resume',
-          session.id,
-          ...(payload.kind === 'fork' ? ['--fork-session'] : []),
-        ],
+        claudeArgs:
+          attachTo !== undefined
+            ? ['attach', attachTo]
+            : ['--resume', session.id, ...(payload.kind === 'fork' ? ['--fork-session'] : [])],
       }
       title =
         session.rename ?? session.customTitle ?? session.summary ?? session.promptPreview ?? session.id.slice(0, 8)

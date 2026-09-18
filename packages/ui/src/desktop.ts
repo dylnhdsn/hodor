@@ -68,6 +68,9 @@ export interface HodorDesktop {
   setTermFocus?(focused: boolean): void
   /** Restore/show/focus this window (a notification was clicked). */
   winRaise?(): void
+  /** Quit sends live claude tiles to the background (/bg) instead of
+   * killing them; a restore then attaches. Absent in older builds. */
+  setDetachOnQuit?(enabled: boolean): void
   updateState(): Promise<UpdateState | undefined>
   /** Kick an update check now (absent in older desktop builds). */
   updateCheck?(): Promise<UpdateState | undefined>

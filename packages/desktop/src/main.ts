@@ -624,9 +624,60 @@ app.on('window-all-closed', () => {
   app.quit()
 })
 
-app.on('before-quit', () => {
+/** Settings → "keep sessions running when hodor closes" (docs/brainstorm/
+ * 028): on quit, each claude tile is sent to the CLI's supervisor with
+ * /background instead of being killed; restoring the tile later attaches
+ * (the server composes `claude attach` for a session that is live in the
+ * background). The renderer pushes the pref here at boot and on change. */
+let detachOnQuit = false
+ipcMain.on('quit:detach', (_event, { enabled }: { enabled: boolean }) => {
+  detachOnQuit = enabled === true
+})
+
+const DETACH_WAIT_MS = 5000
+
+function killAllTerms(): void {
   for (const term of terms.values()) {
     if (term.exited === undefined) term.pty.kill()
   }
-  void server?.close()
+}
+
+/** Type /bg into every live claude tile and wait for them to exit —
+ * up to DETACH_WAIT_MS; whatever is still running gets killed as before
+ * (a tile sitting in a dialog will not take a slash command). */
+function detachClaudes(claudes: Term[]): Promise<void> {
+  return new Promise((resolve) => {
+    let left = claudes.length
+    const timer = setTimeout(resolve, DETACH_WAIT_MS)
+    for (const term of claudes) {
+      term.pty.onExit(() => {
+        left -= 1
+        if (left === 0) {
+          clearTimeout(timer)
+          resolve()
+        }
+      })
+      term.pty.write('/bg\r')
+    }
+  })
+}
+
+let quitting = false
+app.on('before-quit', (event) => {
+  if (quitting) return
+  const claudes = [...terms.values()].filter(
+    (t) => t.exited === undefined && t.target.kind !== 'shell' && t.target.kind !== 'teleport',
+  )
+  if (!detachOnQuit || claudes.length === 0) {
+    killAllTerms()
+    void server?.close()
+    return
+  }
+  event.preventDefault()
+  quitting = true
+  void detachClaudes(claudes).finally(() => {
+    killAllTerms()
+    void server?.close()
+    app.exit(0)
+  })
 })

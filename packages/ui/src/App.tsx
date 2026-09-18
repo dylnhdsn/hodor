@@ -120,6 +120,7 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
       else if (prefs['rail'] === 'open') setRailOpen(true)
       if (prefs['stackScope'] === 'all') setStackScope('all')
       hydratePresets(prefs['stackPresets'])
+      if (prefs['detachOnQuit'] === true) desktop?.setDetachOnQuit?.(true)
       if (Array.isArray(prefs['pinnedProjects'])) {
         setPinned(new Set(prefs['pinnedProjects'].filter((x): x is string => typeof x === 'string')))
       }

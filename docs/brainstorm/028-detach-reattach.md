@@ -70,6 +70,43 @@ environment's policy. They take two minutes on a real machine:
 # 3: claude --bg
 ```
 
+## Verified since, by Dylan on WSL
+
+- `claude --bg` with no prompt starts an idle supervised session
+  (question 3: yes).
+- `/bg` typed in a plain interactive session drops straight back to the
+  shell (question 1: yes). The CLI binary (2.1.273) confirms the command
+  is `/background`, alias `/bg`, always enabled in an interactive
+  session; the two refusals seen on the way were the `claude agents`
+  list view ("not available in agent view") and an already-supervised
+  session reached through `attach` ("not available in this
+  environment" — it is headless by kind).
+
+Still open: `claude --bg --resume <id>` (no longer needed — `attach`
+revives a session the idle timer stopped) and Windows-native claude.
+
+## Shipped (Plan A)
+
+- **Settings → WHEN HODOR CLOSES → keep sessions running.** Off by
+  default. The renderer pushes the pref to the main process at boot and
+  on change; on quit, main types `/bg` into every live claude tile
+  (shells and teleports excluded), waits up to 5s for them to exit, and
+  kills whatever is left as before. A tile sitting in a dialog will not
+  take a slash command and gets killed, so the wait is bounded.
+- **Restore attaches.** A resume launch (the slot's "resume into place",
+  the library's resume) asks `claude agents --json` fresh — the periodic
+  listing may not have run yet right after a restart — and composes
+  `claude attach <short>` when the session is live in the background;
+  otherwise `claude --resume <id>` as before. Forks always fork.
+- **Tab menu → detach (keep running).** Types `/bg` into the tile. A
+  clean exit (code 0: `/bg`, `/exit`) turns the tile back into its
+  slot, so "resume into place" is right there and attaches; a crash
+  keeps its output on screen.
+
+Not done: auto-reattach on boot (the desk restore stays a click), and
+the "attach into a tile" verb on library rows — resume already does the
+right thing for a background session.
+
 ## Plan for A, once (1) holds
 
 - **Settings toggle** "keep sessions running when hodor closes" (off

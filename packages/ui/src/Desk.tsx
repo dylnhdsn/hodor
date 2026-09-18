@@ -490,6 +490,16 @@ function TerminalPanel(props: IDockviewPanelProps<SlotParams>) {
     }
   }, [ptyId])
 
+  // A clean exit — /bg sent it to the background, /exit ended it — turns
+  // the tile back into its slot, whose resume verb attaches when the
+  // session is still running (028). A crash keeps its output on screen.
+  useEffect(() => {
+    if (desktop === undefined || ptyId === undefined) return
+    return desktop.onEvent((e) => {
+      if (e.type === 'exit' && e.id === ptyId && (e.code ?? 0) === 0) setStatus('dead')
+    })
+  }, [ptyId])
+
   if (desktop === undefined) return null
   if (status === 'checking') return <div className="h-full w-full bg-app" />
   if (status === 'live' && ptyId !== undefined) {
@@ -507,7 +517,7 @@ function TerminalPanel(props: IDockviewPanelProps<SlotParams>) {
       <p className="max-w-md truncate font-semibold text-t2">{describeTarget(target)}</p>
       {target?.sessionId !== undefined && (
         <p className="font-mono text-[10.5px] text-t6">
-          claude --resume {target.sessionId.slice(0, 8)}…
+          claude --resume {target.sessionId.slice(0, 8)}… (attaches if it still runs in the background)
         </p>
       )}
       {isBusy ? (
@@ -716,6 +726,14 @@ function SlotTab(props: IDockviewPanelHeaderProps<SlotParams>) {
                   label: 'open in its own window',
                   onClick: () => void desktop!.popOut(props.params.ptyId!),
                 },
+                ...(props.params.target?.kind !== 'shell' && props.params.target?.kind !== 'teleport'
+                  ? [
+                      {
+                        label: 'detach (keep running)',
+                        onClick: () => desktop!.write(props.params.ptyId!, '/bg\r'),
+                      },
+                    ]
+                  : []),
               ]
             : []),
           { label: 'close tab', onClick: () => props.api.close(), danger: true },
