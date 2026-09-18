@@ -628,8 +628,10 @@ describe('workspace document', () => {
     const read = (await (await fetch(`${server.url}/api/workspace`)).json()) as typeof doc
     expect(read.dockHeight).toBe(300)
     expect(read.workspaces[0]!.windows[0]!.layout).toEqual({ grid: { root: {} } })
-    // persisted where the rest of the user plane lives
-    expect(await fs.readFile('/home/u/.hodor/workspaces.json')).toContain('"default"')
+    // persisted where the rest of the user plane lives — in the v2 file;
+    // the v1 file belongs to builds that predate workspaces (027)
+    expect(await fs.readFile('/home/u/.hodor/workspaces.v2.json')).toContain('"default"')
+    expect(await fs.readFile('/home/u/.hodor/workspaces.json')).toBeUndefined()
   })
 
   it('rejects bodies that are not workspace documents', async () => {
@@ -645,5 +647,6 @@ describe('workspace document', () => {
     }
     // nothing was written
     expect(await fs.readFile('/home/u/.hodor/workspaces.json')).toBeUndefined()
+    expect(await fs.readFile('/home/u/.hodor/workspaces.v2.json')).toBeUndefined()
   })
 })

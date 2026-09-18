@@ -45,15 +45,43 @@ interface ZoneMeta {
   def?: boolean | undefined
 }
 
-interface WorkspaceDoc {
-  v: 1
-  workspaces: Array<{
-    id: string
-    name: string
-    windows: Array<{ layout?: unknown; zones?: Record<string, ZoneMeta> }>
-    defer?: Record<string, DeferState>
-  }>
+interface WorkspaceEntry {
+  id: string
+  name: string
+  scope?: { projectId: string }
+  windows: Array<{ layout?: unknown; zones?: Record<string, ZoneMeta> }>
+  defer?: Record<string, DeferState>
 }
+
+interface WorkspaceDoc {
+  v: 1 | 2
+  active?: string
+  workspaces: WorkspaceEntry[]
+}
+
+/** The ptys a saved layout references — its panels' params. */
+function ptyIdsOfLayout(layout: unknown): string[] {
+  const panels = (layout as { panels?: Record<string, { params?: { ptyId?: unknown } }> } | undefined)
+    ?.panels
+  if (panels === undefined || typeof panels !== 'object') return []
+  return Object.values(panels)
+    .map((p) => p?.params?.ptyId)
+    .filter((id): id is string => typeof id === 'string')
+}
+
+/** Every pty referenced by any workspace OTHER than `except`. A live pty
+ * in that set belongs to a workspace that is not showing; it must not be
+ * adopted into the one that is. */
+function ptyIdsElsewhere(doc: WorkspaceDoc, except: string | undefined): Set<string> {
+  const ids = new Set<string>()
+  for (const w of doc.workspaces) {
+    if (w.id === except) continue
+    for (const id of ptyIdsOfLayout(w.windows[0]?.layout)) ids.add(id)
+  }
+  return ids
+}
+
+const randomId = (): string => Math.random().toString(36).slice(2, 8)
 
 export interface DeferState {
   /** Timed snooze: quiet until this instant. */
@@ -95,9 +123,21 @@ export interface DeskEntry {
   cloudId?: string
 }
 
-export const deskState: { entries: DeskEntry[]; defer: Record<string, DeferState> } = {
+export const deskState: {
+  entries: DeskEntry[]
+  defer: Record<string, DeferState>
+  /** Every workspace, for the title bar; `active` is the one showing. */
+  workspaces: Array<{ id: string; name: string; scope?: { projectId: string } }>
+  active: string | undefined
+  /** Terminals a workspace holds — live ones for the active, saved ones
+   * for the rest — so "close workspace" can say what it costs. */
+  terminalCountOf: (id: string) => number
+} = {
   entries: [],
   defer: {},
+  workspaces: [],
+  active: undefined,
+  terminalCountOf: () => 0,
 }
 
 interface DeskOps {
@@ -110,10 +150,23 @@ interface DeskOps {
   revealPanel: (panelId: string) => void
   resumePanel: (panelId: string) => Promise<void>
   setDefer: (sessionId: string, state: DeferState | undefined) => void
+  /** Workspaces (docs/brainstorm/027). Switching detaches the leaving
+   * workspace's terminals — they keep running — and re-attaches the
+   * target's. Closing is the one place terminals end. */
+  switchWorkspace: (id: string) => Promise<void>
+  newWorkspace: (name: string) => Promise<void>
+  renameWorkspace: (id: string, name: string) => void
+  closeWorkspace: (id: string) => Promise<void>
 }
 
 let deskOps: DeskOps | undefined
 export const getDeskOps = (): DeskOps | undefined => deskOps
+
+// Debug handles: the desk's store and verbs, reachable from the devtools
+// console (and the e2e harness) without going through the UI.
+if (typeof window !== 'undefined') {
+  ;(window as unknown as { __deskState: typeof deskState }).__deskState = deskState
+}
 
 const deskListeners = new Set<() => void>()
 export function subscribeDesk(fn: () => void): () => void {
@@ -159,6 +212,10 @@ let zoneMetas: Record<string, ZoneMeta> = {}
  * the removal handler is equally wrong then: the removal is the app
  * closing, not the user closing a tile. */
 let unloading = false
+/** A workspace switch removes every panel to show another set. Those
+ * removals are not the user closing tiles: their PTYs must live on,
+ * detached, until their workspace shows again (or is closed). */
+let switching = false
 if (typeof window !== 'undefined') {
   window.addEventListener('beforeunload', () => {
     unloading = true
@@ -622,36 +679,71 @@ export function Desk({ inspect }: { inspect?: (sessionId: string) => void }) {
     [],
   )
 
-  const save = useCallback(() => {
-    if (unloading) return
-    if (saveTimer.current !== undefined) window.clearTimeout(saveTimer.current)
-    saveTimer.current = window.setTimeout(() => {
+  // The whole document, held here; save() writes the ACTIVE workspace's
+  // layout/zones/defer into it and posts it. Inactive workspaces ride
+  // along untouched.
+  const docRef = useRef<WorkspaceDoc>({ v: 2, workspaces: [] })
+  const activeRef = useRef<string | undefined>(undefined)
+
+  const publishWorkspaces = useCallback(() => {
+    deskState.workspaces = docRef.current.workspaces.map((w) => ({
+      id: w.id,
+      name: w.name,
+      ...(w.scope !== undefined ? { scope: w.scope } : {}),
+    }))
+    deskState.active = activeRef.current
+    deskState.terminalCountOf = (id) => {
       const api = apiRef.current
-      if (api === null || unloading) return
-      // prune zone meta for groups that no longer exist
-      const live = new Set(api.groups.map((g) => g.id))
-      const zoneOut: Record<string, ZoneMeta> = {}
-      for (const [id, meta] of Object.entries(zonesRef.current)) {
-        if (live.has(id)) zoneOut[id] = meta
+      if (id === activeRef.current && api !== null) {
+        return api.panels.filter((p) => paramsOf(p).ptyId !== undefined).length
       }
-      const doc: WorkspaceDoc = {
-        v: 1,
-        workspaces: [
-          {
-            id: 'default',
-            name: 'the desk',
-            windows: [{ layout: api.toJSON(), zones: zoneOut }],
-            defer: deferRef.current,
-          },
-        ],
-      }
-      void fetch('/api/workspace', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(doc),
-      }).catch(() => {})
-    }, 500)
+      const w = docRef.current.workspaces.find((x) => x.id === id)
+      return ptyIdsOfLayout(w?.windows[0]?.layout).length
+    }
+    notifyDesk()
   }, [])
+
+  const writeDoc = useCallback((): void => {
+    const api = apiRef.current
+    if (api === null || unloading || switching) return
+    // prune zone meta for groups that no longer exist
+    const live = new Set(api.groups.map((g) => g.id))
+    const zoneOut: Record<string, ZoneMeta> = {}
+    for (const [id, meta] of Object.entries(zonesRef.current)) {
+      if (live.has(id)) zoneOut[id] = meta
+    }
+    const activeId = activeRef.current
+    const doc: WorkspaceDoc = {
+      v: 2,
+      ...(activeId !== undefined ? { active: activeId } : {}),
+      workspaces: docRef.current.workspaces.map((w) =>
+        w.id === activeId
+          ? { ...w, windows: [{ layout: api.toJSON(), zones: zoneOut }], defer: deferRef.current }
+          : w,
+      ),
+    }
+    docRef.current = doc
+    void fetch('/api/workspace', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(doc),
+    }).catch(() => {})
+  }, [])
+
+  const save = useCallback(() => {
+    if (unloading || switching) return
+    if (saveTimer.current !== undefined) window.clearTimeout(saveTimer.current)
+    saveTimer.current = window.setTimeout(writeDoc, 500)
+  }, [writeDoc])
+
+  /** Write now — the leaving workspace must be on disk before a switch. */
+  const flushSave = useCallback(() => {
+    if (saveTimer.current !== undefined) {
+      window.clearTimeout(saveTimer.current)
+      saveTimer.current = undefined
+    }
+    writeDoc()
+  }, [writeDoc])
 
   const renameZone = useCallback(
     (groupId: string) => {
@@ -754,6 +846,128 @@ export function Desk({ inspect }: { inspect?: (sessionId: string) => void }) {
     }
   }, [deadPanels, resumePanel])
 
+  /** Show one workspace in the (empty) dockview: its layout, zones and
+   * skips; stale ptys marked dead; the tab list published. */
+  const showWorkspace = useCallback(
+    (api: DockviewApi, id: string, live: Array<{ id: string }>) => {
+      const ws = docRef.current.workspaces.find((w) => w.id === id)
+      if (ws === undefined) return
+      activeRef.current = id
+      const window0 = ws.windows[0]
+      if (window0?.layout !== undefined && api.panels.length === 0) {
+        try {
+          api.fromJSON(window0.layout as SerializedDockview)
+        } catch {
+          // a corrupt layout starts empty instead of crashing the desk
+        }
+      }
+      const zones = window0?.zones ?? {}
+      zonesRef.current = zones
+      setZones(zones)
+      deferRef.current = ws.defer ?? {}
+      deskState.defer = deferRef.current
+      // mark stale ptyIds dead by CLEARING them — the slot (target)
+      // stays, which is exactly what restore-all resumes.
+      const liveIds = new Set(live.map((t) => t.id))
+      let dead = 0
+      const deadGroups = new Set<string>()
+      for (const panel of api.panels) {
+        const params = paramsOf(panel)
+        if (params.ptyId !== undefined && !liveIds.has(params.ptyId)) {
+          panel.api.updateParameters({ ptyId: undefined })
+        }
+        if (params.target !== undefined && (params.ptyId === undefined || !liveIds.has(params.ptyId))) {
+          dead += 1
+          deadGroups.add(panel.group.id)
+        }
+      }
+      setRestore(dead > 0 ? { dead, zones: deadGroups.size } : undefined)
+      publishWorkspaces()
+      refreshEntries(api)
+    },
+    [publishWorkspaces],
+  )
+
+  const switchWorkspace = useCallback(
+    async (id: string): Promise<void> => {
+      const api = apiRef.current
+      if (api === null || id === activeRef.current) return
+      if (!docRef.current.workspaces.some((w) => w.id === id)) return
+      flushSave()
+      switching = true
+      try {
+        // every tile detaches (its terminal keeps running, unsubscribed);
+        // the remove handler sees `switching` and closes nothing
+        api.clear()
+        const live = await (desktop?.list() ?? Promise.resolve([]))
+        showWorkspace(api, id, live)
+      } finally {
+        switching = false
+      }
+      save()
+    },
+    [flushSave, showWorkspace, save],
+  )
+
+  const newWorkspace = useCallback(
+    async (name: string): Promise<void> => {
+      let id = randomId()
+      while (docRef.current.workspaces.some((w) => w.id === id)) id = randomId()
+      docRef.current = {
+        ...docRef.current,
+        workspaces: [...docRef.current.workspaces, { id, name, windows: [] }],
+      }
+      publishWorkspaces()
+      await switchWorkspace(id)
+    },
+    [publishWorkspaces, switchWorkspace],
+  )
+
+  const renameWorkspace = useCallback(
+    (id: string, name: string): void => {
+      docRef.current = {
+        ...docRef.current,
+        workspaces: docRef.current.workspaces.map((w) => (w.id === id ? { ...w, name } : w)),
+      }
+      publishWorkspaces()
+      save()
+    },
+    [publishWorkspaces, save],
+  )
+
+  const closeWorkspace = useCallback(
+    async (id: string): Promise<void> => {
+      const api = apiRef.current
+      const bridge = desktop
+      const ws = docRef.current.workspaces.find((w) => w.id === id)
+      if (api === null || bridge === undefined || ws === undefined) return
+      const ptys =
+        id === activeRef.current
+          ? api.panels.map((p) => paramsOf(p).ptyId).filter((x): x is string => x !== undefined)
+          : ptyIdsOfLayout(ws.windows[0]?.layout)
+      if (id === activeRef.current) {
+        // leave first — to a neighbour, or a fresh "main" when this was the last
+        let next = docRef.current.workspaces.find((w) => w.id !== id)?.id
+        if (next === undefined) {
+          next = id === 'main' ? randomId() : 'main'
+          docRef.current = {
+            ...docRef.current,
+            workspaces: [...docRef.current.workspaces, { id: next, name: 'main', windows: [] }],
+          }
+        }
+        await switchWorkspace(next)
+      }
+      for (const pty of ptys) void bridge.close(pty)
+      docRef.current = {
+        ...docRef.current,
+        workspaces: docRef.current.workspaces.filter((w) => w.id !== id),
+      }
+      publishWorkspaces()
+      save()
+    },
+    [publishWorkspaces, save, switchWorkspace],
+  )
+
   // Publish the desk's operations for the Turn Stack and the library.
   useEffect(() => {
     deskOps = {
@@ -778,11 +992,17 @@ export function Desk({ inspect }: { inspect?: (sessionId: string) => void }) {
         save()
         notifyDesk()
       },
+      switchWorkspace,
+      newWorkspace,
+      renameWorkspace,
+      closeWorkspace,
     }
+    ;(window as unknown as { __deskOps: DeskOps | undefined }).__deskOps = deskOps
     return () => {
       deskOps = undefined
+      ;(window as unknown as { __deskOps: DeskOps | undefined }).__deskOps = undefined
     }
-  }, [resumePanel, save])
+  }, [resumePanel, save, switchWorkspace, newWorkspace, renameWorkspace, closeWorkspace])
 
   const onReady = useCallback(
     (event: DockviewReadyEvent) => {
@@ -791,7 +1011,12 @@ export function Desk({ inspect }: { inspect?: (sessionId: string) => void }) {
       api.onDidRemovePanel((panel) => {
         if (unloading) return
         const ptyId = paramsOf(panel).ptyId
-        if (ptyId !== undefined && desktop !== undefined && !movingOut.current.delete(ptyId)) {
+        if (
+          ptyId !== undefined &&
+          desktop !== undefined &&
+          !switching &&
+          !movingOut.current.delete(ptyId)
+        ) {
           void desktop.close(ptyId)
         }
         refreshEntries(api)
@@ -814,40 +1039,22 @@ export function Desk({ inspect }: { inspect?: (sessionId: string) => void }) {
 
       void Promise.all([fetchWorkspace(), desktop?.list() ?? Promise.resolve([])]).then(
         ([doc, live]) => {
-          const window0 = doc?.workspaces[0]?.windows[0]
-          if (window0?.layout !== undefined && api.panels.length === 0) {
-            try {
-              api.fromJSON(window0.layout as SerializedDockview)
-            } catch {
-              // a corrupt layout starts empty instead of crashing the desk
-            }
-          }
-          if (window0?.zones !== undefined) setZones(window0.zones)
-          deferRef.current = doc?.workspaces[0]?.defer ?? {}
-          // mark stale ptyIds dead by CLEARING them — the slot (target)
-          // stays, which is exactly what restore-all resumes.
-          const liveIds = new Set(live.map((t) => t.id))
-          let dead = 0
-          const deadGroups = new Set<string>()
-          for (const panel of api.panels) {
-            const params = paramsOf(panel)
-            if (params.ptyId !== undefined && !liveIds.has(params.ptyId)) {
-              panel.api.updateParameters({ ptyId: undefined })
-            }
-            if (params.target !== undefined && (params.ptyId === undefined || !liveIds.has(params.ptyId))) {
-              dead += 1
-              deadGroups.add(panel.group.id)
-            }
-          }
-          if (dead > 0) setRestore({ dead, zones: deadGroups.size })
-          deskState.defer = deferRef.current
-          refreshEntries(api)
+          const base: WorkspaceDoc =
+            doc !== undefined && doc.workspaces.length > 0
+              ? doc
+              : { v: 2, workspaces: [{ id: 'main', name: 'main', windows: [] }] }
+          docRef.current = base
+          const activeId =
+            base.active !== undefined && base.workspaces.some((w) => w.id === base.active)
+              ? base.active
+              : base.workspaces[0]!.id
+          showWorkspace(api, activeId, live)
         },
       )
         .catch(() => {})
         .finally(() => restoreLatch.current?.done())
     },
-    [save],
+    [save, showWorkspace],
   )
 
   useEffect(() => {
@@ -861,8 +1068,9 @@ export function Desk({ inspect }: { inspect?: (sessionId: string) => void }) {
       .then((list) => {
         const api = apiRef.current
         if (api === null) return
+        const elsewhere = ptyIdsElsewhere(docRef.current, activeRef.current)
         for (const t of list) {
-          if (findPanelByPty(api, t.id) === undefined) {
+          if (findPanelByPty(api, t.id) === undefined && !elsewhere.has(t.id)) {
             addPtyPanel(api, t.id, t.title, t.target, t.env)
           }
         }
@@ -922,7 +1130,10 @@ export function Desk({ inspect }: { inspect?: (sessionId: string) => void }) {
           }
           resolve?.()
         }
-        if (findPanelByPty(api, event.id) === undefined) {
+        if (
+          findPanelByPty(api, event.id) === undefined &&
+          !ptyIdsElsewhere(docRef.current, activeRef.current).has(event.id)
+        ) {
           addPtyPanel(api, event.id, event.title, event.target, event.env)
         }
       } else if (event.type === 'popped' || event.type === 'closed') {

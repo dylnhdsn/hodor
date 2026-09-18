@@ -42,6 +42,7 @@ import { desktop } from './desktop.js'
 import { fetchPrefs, savePref } from './prefs.js'
 import { activeScheme, onThemeChange } from './theme.js'
 import { TitleUpdatePill, UpdateCheckRow, UpdatePill } from './UpdatePill.js'
+import { WorkspaceTabs } from './WorkspaceTabs.js'
 import { useSnapshot } from './useSnapshot.js'
 import { BootSplash, Wordmark } from './Wordmark.js'
 
@@ -395,6 +396,7 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
             reconnecting…
           </span>
         )}
+        <WorkspaceTabs onSwitch={() => setFilter({ kind: 'desk' })} />
         <span className="text-t6">/</span>
         <span className="font-ui text-[12.5px] font-bold text-fg">{crumb.title}</span>
         {crumb.meta !== undefined && <span className="text-[11px] text-t4">{crumb.meta}</span>}
