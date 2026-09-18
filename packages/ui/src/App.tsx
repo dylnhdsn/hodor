@@ -33,7 +33,7 @@ import {
   setDeskSessions,
   subscribeDesk,
 } from './Desk.js'
-import { GearIcon } from './icons.js'
+import { CloudIcon, GearIcon } from './icons.js'
 import { confirmAction, DialogHost, notice, promptText } from './dialog.js'
 import { ContextMenu, useContextMenu, type MenuItem } from './menu.js'
 import { NewSessionDialog } from './NewSession.js'
@@ -118,6 +118,12 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
       if (prefs['rail'] === 'closed') setRailOpen(false)
       else if (prefs['rail'] === 'open') setRailOpen(true)
       if (prefs['stackScope'] === 'all') setStackScope('all')
+      if (Array.isArray(prefs['pinnedProjects'])) {
+        setPinned(new Set(prefs['pinnedProjects'].filter((x): x is string => typeof x === 'string')))
+      }
+      if (Array.isArray(prefs['expandedProjects'])) {
+        setExpanded(new Set(prefs['expandedProjects'].filter((x): x is string => typeof x === 'string')))
+      }
     })
   }, [])
   // The turn stack over this workspace, or every workspace (027).
@@ -125,6 +131,24 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
   const setStackScope = (scope: StackScope): void => {
     setStackScopeState(scope)
     savePref({ stackScope: scope })
+  }
+  // Rail projects: pinned ones sort first; an expanded one lists its
+  // sessions that matter right now (your turn, working, touched today).
+  const [pinned, setPinned] = useState<ReadonlySet<string>>(new Set())
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set())
+  const togglePinned = (id: string): void => {
+    const next = new Set(pinned)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    setPinned(next)
+    savePref({ pinnedProjects: [...next] })
+  }
+  const toggleExpanded = (id: string): void => {
+    const next = new Set(expanded)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    setExpanded(next)
+    savePref({ expandedProjects: [...next] })
   }
   const toggleRail = (open: boolean) => {
     setRailOpen(open)
@@ -491,7 +515,9 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
               +
             </button>
           </RailHeading>
-          {view.rail.map((p) => {
+          {[...view.rail]
+            .sort((a, b) => Number(pinned.has(b.id)) - Number(pinned.has(a.id)))
+            .map((p) => {
             const cloudHere = view.cloudByProject.get(p.id) ?? []
             const wait =
               p.sessions.filter((s) => s.turn?.state === 'waiting' && !localSkipped(s, nowMs))
@@ -502,14 +528,25 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
                 .length + cloudHere.filter(cloudRunning).length
             const total = p.sessions.length + cloudHere.length
             return (
-              <RailItem
+              <RailProjectItem
                 key={p.id}
-                label={p.name}
+                project={p}
                 active={filter.kind === 'project' && filter.id === p.id}
-                onClick={() => {
+                pinned={pinned.has(p.id)}
+                expanded={expanded.has(p.id)}
+                nowMs={nowMs}
+                cloudHere={cloudHere}
+                onOpen={() => {
                   setFilter({ kind: 'project', id: p.id })
                   setSelected(new Set())
                 }}
+                onOpenSession={(id) => {
+                  setFilter({ kind: 'project', id: p.id })
+                  setDetailId(id)
+                }}
+                onTogglePinned={() => togglePinned(p.id)}
+                onToggleExpanded={() => toggleExpanded(p.id)}
+                onNewSession={() => setNewSessionFor(p)}
                 right={
                   <>
                     {wait > 0 && <WaitChip n={wait} />}
@@ -930,19 +967,161 @@ function RailItem(props: {
   label: string
   active: boolean
   onClick: () => void
+  onContextMenu?: (e: React.MouseEvent) => void
+  left?: React.ReactNode
   right?: React.ReactNode
+  /** A pinned project: a thin accent edge, and it sorts first. */
+  pinned?: boolean
 }) {
   return (
     <button
       onClick={props.onClick}
-      className={`flex w-full items-center justify-between px-3.5 py-[7px] text-left ${
-        props.active ? 'bg-s3 text-fg' : 'text-t2 hover:bg-s1 hover:text-fg'
-      }`}
+      onContextMenu={props.onContextMenu}
+      className={`flex w-full items-center justify-between py-[7px] pr-3.5 text-left ${
+        props.pinned === true ? 'border-l-2 border-ac/60 pl-[12px]' : 'pl-3.5'
+      } ${props.active ? 'bg-s3 text-fg' : 'text-t2 hover:bg-s1 hover:text-fg'}`}
     >
-      <span className="truncate font-ui text-[12px]">{props.label}</span>
+      <span className="flex min-w-0 items-center gap-1">
+        {props.left}
+        <span className="truncate font-ui text-[12px]">{props.label}</span>
+      </span>
       <span className="ml-2 flex shrink-0 items-center gap-1.5">{props.right}</span>
     </button>
   )
+}
+
+/** The rail's project row: pin/expand/new-session/shell via right-click,
+ * and — expanded — the sessions worth a glance: your turn, working, or
+ * touched in the last 24 hours. */
+function RailProjectItem(props: {
+  project: RailProject
+  active: boolean
+  pinned: boolean
+  expanded: boolean
+  nowMs: number
+  cloudHere: CloudSession[]
+  right: React.ReactNode
+  onOpen: () => void
+  onOpenSession: (sessionId: string) => void
+  onTogglePinned: () => void
+  onToggleExpanded: () => void
+  onNewSession: () => void
+}) {
+  const { project: p, nowMs } = props
+  const { menu, openMenu, closeMenu } = useContextMenu()
+  const root = projectRootOf(p)
+  const DAY = 24 * 3600_000
+  const rank = (s: Session): number =>
+    s.turn?.state === 'waiting' && !localSkipped(s, nowMs) ? 0 : s.turn?.state === 'working' ? 1 : 2
+  const glance = p.sessions
+    .filter(
+      (s) =>
+        s.turn?.state === 'waiting' ||
+        s.turn?.state === 'working' ||
+        (s.lastActivityAt !== undefined && nowMs - Date.parse(s.lastActivityAt) < DAY),
+    )
+    .sort((a, b) => rank(a) - rank(b) || (b.lastActivityAt ?? '').localeCompare(a.lastActivityAt ?? ''))
+    .slice(0, 8)
+  const clouds = props.cloudHere.filter((c) => cloudNeedsYou(c) && !cloudSkipped(c, nowMs)).slice(0, 4)
+  const items: MenuItem[] = [
+    { label: p.name, heading: true },
+    { label: props.pinned ? 'unpin' : 'pin to the top', onClick: props.onTogglePinned },
+    { label: props.expanded ? 'collapse' : 'expand', onClick: props.onToggleExpanded },
+    { label: 'new session…', onClick: props.onNewSession },
+    ...(root !== undefined
+      ? [
+          {
+            label: `open a shell in ${root.path.split(/[\\/]/).filter((x) => x !== '').pop() ?? root.path}`,
+            onClick: () => void launchOrCopy({ kind: 'shell', storeId: root.storeId, root: root.path }),
+          },
+        ]
+      : []),
+  ]
+  return (
+    <>
+      <RailItem
+        label={p.name}
+        active={props.active}
+        pinned={props.pinned}
+        onClick={props.onOpen}
+        onContextMenu={(e) => openMenu(e, items)}
+        left={
+          <span
+            role="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              props.onToggleExpanded()
+            }}
+            title={props.expanded ? 'collapse' : 'expand'}
+            className="-ml-1 w-3 shrink-0 text-center font-mono text-[9px] text-t6 hover:text-fg"
+          >
+            {props.expanded ? '▾' : '▸'}
+          </span>
+        }
+        right={props.right}
+      />
+      {props.expanded && (
+        <div className="mb-1">
+          {glance.map((s) => {
+            const status = statusOfSession(s, localSkipped(s, nowMs))
+            return (
+              <button
+                key={s.id}
+                onClick={() => props.onOpenSession(s.id)}
+                className="flex w-full items-center gap-2 py-[3px] pl-[30px] pr-3.5 text-left text-t3 hover:bg-s1 hover:text-fg"
+                title={s.turn?.preview ?? s.cwd}
+              >
+                <span
+                  className={`shrink-0 text-[8px] ${
+                    status === 'needs-you'
+                      ? 'text-ask'
+                      : status === 'working'
+                        ? 'text-run'
+                        : status === 'skipped'
+                          ? 'text-rev/70'
+                          : 'text-b6'
+                  }`}
+                >
+                  {status === 'skipped' ? '◐' : '●'}
+                </span>
+                <span className="truncate font-ui text-[11.5px]">{titleOf(s)}</span>
+              </button>
+            )
+          })}
+          {clouds.map((c) => (
+            <button
+              key={c.id}
+              onClick={props.onOpen}
+              className="flex w-full items-center gap-2 py-[3px] pl-[30px] pr-3.5 text-left text-t3 hover:bg-s1 hover:text-fg"
+              title={c.needsAction ?? c.statusDetail}
+            >
+              <span className="shrink-0 text-[8px] text-ask">●</span>
+              <span className="truncate font-ui text-[11.5px]">{c.title ?? c.id.slice(0, 12)}</span>
+              <span className="shrink-0 text-t6">
+                <CloudIcon size={9} />
+              </span>
+            </button>
+          ))}
+          {glance.length === 0 && clouds.length === 0 && (
+            <div className="py-[3px] pl-[30px] font-mono text-[10px] text-t6">nothing recent</div>
+          )}
+        </div>
+      )}
+      {menu !== undefined && <ContextMenu menu={menu} close={closeMenu} />}
+    </>
+  )
+}
+
+/** The directory a project's shell opens in: a derived project's first
+ * root; for a custom project (which claims sessions, not paths) the
+ * working directory of its most recent session. */
+function projectRootOf(p: RailProject): { storeId: string; path: string } | undefined {
+  const auto = p.auto?.roots[0]
+  if (auto !== undefined) return { storeId: auto.storeId, path: auto.path }
+  const recent = [...p.sessions]
+    .filter((s) => s.cwd !== undefined)
+    .sort((a, b) => (b.lastActivityAt ?? '').localeCompare(a.lastActivityAt ?? ''))[0]
+  return recent?.cwd !== undefined ? { storeId: recent.storeId, path: recent.cwd } : undefined
 }
 
 /** Collapsed-rail icon: the badge rides the corner, exactly like the mock. */
@@ -1256,6 +1435,14 @@ function SessionRow(props: {
     { label: titleOf(s), heading: true },
     { label: 'resume in a terminal', onClick: () => void launchOrCopy({ kind: 'resume', sessionId: s.id }) },
     { label: 'fork', onClick: () => void launchOrCopy({ kind: 'fork', sessionId: s.id }) },
+    ...(s.cwd !== undefined
+      ? [
+          {
+            label: 'open a shell here',
+            onClick: () => void launchOrCopy({ kind: 'shell', storeId: s.storeId, root: s.cwd! }),
+          },
+        ]
+      : []),
     { label: 'rename', onClick: () => void rename() },
     ...(turn === 'waiting' && getDeskOps() !== undefined
       ? skipped

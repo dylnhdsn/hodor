@@ -69,6 +69,8 @@ export interface ThemeState {
   /** Terminal font family ('' = follow the font pack's mono). */
   termFont: string
   termSize: number
+  /** A swatch picked as the accent ("rrggbb"); absent = the scheme's magenta. */
+  accent?: string
 }
 
 const listeners = new Set<() => void>()
@@ -118,7 +120,7 @@ export function onThemeChange(handler: () => void): () => void {
 }
 
 function apply(): void {
-  const tokens = deriveTheme(activeScheme())
+  const tokens = deriveTheme(activeScheme(), current.accent !== undefined ? { accent: current.accent } : {})
   const el = document.documentElement
   for (const [key, value] of Object.entries(tokens)) {
     el.style.setProperty('--h-' + key.toLowerCase(), value)
@@ -137,6 +139,8 @@ function persistLocal(): void {
     localStorage.setItem('hodor-font', current.fontId)
     localStorage.setItem('hodor-term-font', current.termFont)
     localStorage.setItem('hodor-term-size', String(current.termSize))
+    if (current.accent !== undefined) localStorage.setItem('hodor-accent', current.accent)
+    else localStorage.removeItem('hodor-accent')
     if (current.custom !== undefined) {
       localStorage.setItem('hodor-custom-scheme', JSON.stringify(current.custom))
     }
@@ -154,6 +158,7 @@ function persist(): void {
     font: current.fontId,
     termFont: current.termFont,
     termSize: current.termSize,
+    accent: current.accent ?? null,
     ...(current.custom !== undefined ? { customScheme: current.custom } : {}),
   })
 }
@@ -168,6 +173,8 @@ export function loadTheme(): void {
     if (font !== null) current.fontId = font
     const termFont = localStorage.getItem('hodor-term-font')
     if (termFont !== null) current.termFont = termFont
+    const accent = localStorage.getItem('hodor-accent')
+    if (accent !== null && /^[0-9a-f]{6}$/.test(accent)) current.accent = accent
     const termSize = Number(localStorage.getItem('hodor-term-size'))
     if (Number.isFinite(termSize) && termSize >= 8 && termSize <= 28) current.termSize = termSize
   } catch {
@@ -200,6 +207,14 @@ export async function hydrateTheme(): Promise<void> {
     current = { ...current, termFont }
     changed = true
   }
+  const accent = prefs['accent']
+  if (typeof accent === 'string' && /^[0-9a-f]{6}$/.test(accent) && current.accent !== accent) {
+    current.accent = accent
+    changed = true
+  } else if (accent === null && current.accent !== undefined) {
+    delete current.accent
+    changed = true
+  }
   const termSize = prefs['termSize']
   if (typeof termSize === 'number' && termSize >= 8 && termSize <= 28 && termSize !== current.termSize) {
     current = { ...current, termSize }
@@ -225,6 +240,15 @@ export function setFont(id: string): void {
 
 export function setTermFont(family: string): void {
   current = { ...current, termFont: family }
+  persist()
+  apply()
+}
+
+/** Make one of the scheme's colors the accent; undefined restores the default. */
+export function setAccent(hex: string | undefined): void {
+  const clean = hex?.replace(/^#/, '').toLowerCase()
+  const { accent: _drop, ...rest } = current
+  current = clean !== undefined && /^[0-9a-f]{6}$/.test(clean) ? { ...rest, accent: clean } : rest
   persist()
   apply()
 }

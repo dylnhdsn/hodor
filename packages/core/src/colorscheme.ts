@@ -85,7 +85,7 @@ function ensureContrast(c: string, bg: string, fg: string): string {
  * them as CSS vars): bg, s1–s8 (surfaces), b1–b6 (borders), fg, t1–t6
  * (text tones), ac/acH/acB/ink (accent family), ask/run/rev/err (status).
  */
-export function deriveTheme(scheme: Colorscheme): ThemeTokens {
+export function deriveTheme(scheme: Colorscheme, options: { accent?: string } = {}): ThemeTokens {
   const bg = '#' + scheme.bg
   const fg = '#' + scheme.fg
   const A = scheme.ansi.map((x) => '#' + x)
@@ -104,7 +104,10 @@ export function deriveTheme(scheme: Colorscheme): ThemeTokens {
     return sat(b) > sat(n) ? b : n
   }
   const en = (c: string) => ensureContrast(c, bg, fg)
-  const ac = en(pick(5, 13))
+  // The accent is magenta unless the user picked a swatch (any ANSI slot,
+  // as "#rrggbb"); either way it is pushed to legible contrast.
+  const chosen = options.accent !== undefined ? '#' + options.accent.replace(/^#/, '') : undefined
+  const ac = en(chosen ?? pick(5, 13))
   return {
     bg,
     s1: mx(0.028),

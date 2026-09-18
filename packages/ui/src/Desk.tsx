@@ -251,6 +251,56 @@ export function isDeferred(
 export const deferNoteOf = (sessionId: string): string | undefined =>
   deskState.defer[sessionId]?.note
 
+/** A group's tab strip: dockview scrolls it (overflow: auto); these
+ * helpers give it the wheel, the arrow buttons and a right-button drag,
+ * because a strip full of tabs is otherwise reachable only by the
+ * overflow menu. */
+const tabStripOf = (el: HTMLElement | undefined): HTMLElement | null =>
+  el?.querySelector<HTMLElement>('.dv-tabs-container') ?? null
+const scrollStrip = (el: HTMLElement | undefined, dx: number): void => {
+  tabStripOf(el)?.scrollBy({ left: dx, behavior: 'smooth' })
+}
+if (typeof document !== 'undefined') {
+  // vertical wheel over a strip scrolls it sideways (it has no vertical axis)
+  document.addEventListener(
+    'wheel',
+    (e) => {
+      const strip = (e.target as HTMLElement | null)?.closest<HTMLElement>('.dv-tabs-container')
+      if (strip === null || strip === undefined || strip.scrollWidth <= strip.clientWidth) return
+      if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return
+      strip.scrollLeft += e.deltaY
+      e.preventDefault()
+    },
+    { passive: false },
+  )
+  // right-button drag scrubs the strip; a plain right-click still opens
+  // the tab's menu (the drag swallows the contextmenu only if it moved)
+  let drag: { strip: HTMLElement; x: number; left: number; moved: boolean } | undefined
+  document.addEventListener('pointerdown', (e) => {
+    if (e.button !== 2) return
+    const strip = (e.target as HTMLElement | null)?.closest<HTMLElement>('.dv-tabs-container')
+    if (strip === null || strip === undefined) return
+    drag = { strip, x: e.clientX, left: strip.scrollLeft, moved: false }
+  })
+  document.addEventListener('pointermove', (e) => {
+    if (drag === undefined) return
+    const dx = e.clientX - drag.x
+    if (Math.abs(dx) > 4) drag.moved = true
+    if (drag.moved) drag.strip.scrollLeft = drag.left - dx
+  })
+  document.addEventListener('pointerup', () => {
+    if (drag?.moved === true) {
+      const swallow = (e: Event): void => {
+        e.preventDefault()
+        e.stopPropagation()
+      }
+      document.addEventListener('contextmenu', swallow, { capture: true, once: true })
+      setTimeout(() => document.removeEventListener('contextmenu', swallow, { capture: true }), 150)
+    }
+    drag = undefined
+  })
+}
+
 /** Zone metas mirrored at module scope so entries can carry zone names. */
 let zoneMetas: Record<string, ZoneMeta> = {}
 
@@ -355,6 +405,8 @@ function describeTarget(target: OpenTarget | undefined): string {
       return `a new session in ${target.root ?? '?'}`
     case 'teleport':
       return `cloud session ${short}`
+    case 'shell':
+      return `a shell in ${target.root ?? '?'}`
   }
 }
 
@@ -365,6 +417,8 @@ const verbOf = (target: OpenTarget): string =>
       ? 'fork again'
       : target.kind === 'new'
         ? 'start new session'
+        : target.kind === 'shell'
+          ? 'open shell again'
         : 'teleport'
 
 interface DeskContextValue {
@@ -477,6 +531,13 @@ function ZoneHeader(props: IDockviewHeaderActionsProps) {
   return (
     <div className="flex h-full items-center gap-2 pl-2.5 pr-1">
       <button
+        onClick={() => scrollStrip(props.group.element, -240)}
+        title="scroll tabs left"
+        className="px-1 font-mono text-[11px] text-t6 hover:text-fg"
+      >
+        ‹
+      </button>
+      <button
         onClick={() => renameZone(props.group.id)}
         title="rename this zone"
         className={`font-mono text-[10px] font-bold tracking-[.14em] ${
@@ -503,6 +564,13 @@ function GroupActions(props: IDockviewHeaderActionsProps) {
   const bridge = desktop
   return (
     <div className="flex h-full items-center gap-0.5 px-1.5">
+      <button
+        onClick={() => scrollStrip(props.group.element, 240)}
+        title="scroll tabs right"
+        className="px-1 font-mono text-[11px] text-t6 hover:text-fg"
+      >
+        ›
+      </button>
       <button
         onClick={() => toggleDefault(props.group.id)}
         title="new terminals open here"

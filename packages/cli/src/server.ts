@@ -433,6 +433,22 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
       title =
         session.rename ?? session.customTitle ?? session.summary ?? session.promptPreview ?? session.id.slice(0, 8)
       if (payload.kind === 'fork') title = `⑂ ${title}`
+    } else if (payload.kind === 'shell') {
+      // A plain shell at a directory hodor knows — a session's cwd or a
+      // project root — in the store that owns it, so it lands on the
+      // right side of the Windows/WSL boundary.
+      const store = snapshot?.stores.find((s) => s.id === payload.storeId)
+      if (store === undefined) return sendJson(res, 400, { error: 'unknown store' })
+      if (payload.root === undefined) return sendJson(res, 400, { error: 'root is required' })
+      const stat = await fsFor(store.id)
+        .stat(payload.root)
+        .catch(() => undefined)
+      if (stat?.kind !== 'dir') {
+        return sendJson(res, 400, { error: `not a directory in this store: ${payload.root}` })
+      }
+      target = { cwd: payload.root, flavor: store.pathFlavor, origin: store.origin, claudeArgs: [], shell: true }
+      const base = payload.root.split(/[\\/]/).filter((x) => x !== '').pop() ?? payload.root
+      title = `shell · ${base}`
     } else if (payload.kind === 'new') {
       const store = snapshot?.stores.find((s) => s.id === payload.storeId)
       if (store === undefined) return sendJson(res, 400, { error: 'unknown store' })

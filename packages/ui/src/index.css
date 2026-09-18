@@ -244,6 +244,15 @@ body {
 }
 
 /* Dockview chrome follows the scheme. */
+/* The tab strip scrolls (wheel, arrows, right-drag); its own scrollbar
+   would eat a row of pixels from every zone header. */
+.dv-tabs-container {
+  scrollbar-width: none;
+}
+.dv-tabs-container::-webkit-scrollbar {
+  display: none;
+}
+
 .dockview-theme-dark {
   --dv-group-view-background-color: var(--h-bg);
   --dv-tabs-and-actions-container-background-color: var(--h-s1);

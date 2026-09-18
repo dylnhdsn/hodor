@@ -33,6 +33,8 @@ export interface LaunchTarget {
   origin: SessionStore['origin']
   /** Arguments after `claude`, e.g. ['--resume', id, '--fork-session']. */
   claudeArgs: string[]
+  /** A plain shell at cwd — no claude at all ("open a shell here"). */
+  shell?: boolean
 }
 
 export interface LaunchCandidate {
@@ -74,6 +76,7 @@ export const claudeCommand = (claudeArgs: string[]): string =>
 const appleQuote = (value: string): string => value.replace(/[\\"]/g, (c) => `\\${c}`)
 
 export function composeLaunch(env: LaunchEnv, target: LaunchTarget): LaunchPlan {
+  if (target.shell === true) return composeShellLaunch(env, target)
   const claudeCmd = ['claude', ...target.claudeArgs]
   const command = claudeCommand(target.claudeArgs)
   const candidates: LaunchCandidate[] = []
@@ -138,6 +141,43 @@ export function composeLaunch(env: LaunchEnv, target: LaunchTarget): LaunchPlan 
   return { candidates, command, cwd: target.cwd }
 }
 
+/** An external terminal window holding a login shell at cwd. */
+function composeShellLaunch(env: LaunchEnv, target: LaunchTarget): LaunchPlan {
+  const candidates: LaunchCandidate[] = []
+  const wslSession =
+    target.origin.kind === 'wsl' || (env.wslDistro !== undefined && target.origin.kind === 'native')
+  const windowsSession =
+    target.origin.kind === 'windows' || (env.os === 'win32' && target.origin.kind === 'native')
+  if (env.os === 'win32' || env.wslDistro !== undefined) {
+    if (wslSession) {
+      const distro = target.origin.kind === 'wsl' ? target.origin.distro : env.wslDistro
+      const wsl = ['wsl.exe', ...(distro !== undefined ? ['-d', distro] : []), '--cd', target.cwd]
+      candidates.push({ file: 'wt.exe', args: wsl })
+      candidates.push({ file: 'cmd.exe', args: ['/c', 'start', '', ...wsl] })
+    } else if (windowsSession) {
+      const inner = env.windowsShell === 'cmd' ? ['cmd'] : ['powershell.exe', '-NoLogo']
+      candidates.push({ file: 'wt.exe', args: ['-d', target.cwd, ...inner] })
+      candidates.push({ file: 'cmd.exe', args: ['/c', 'start', '', '/d', target.cwd, ...inner] })
+    }
+  } else if (env.os === 'darwin') {
+    candidates.push({
+      file: 'osascript',
+      args: [
+        '-e',
+        `tell application "Terminal" to do script "${appleQuote(`cd ${shellQuote(target.cwd)}`)}"`,
+        '-e',
+        'tell application "Terminal" to activate',
+      ],
+    })
+  } else {
+    candidates.push({ file: 'x-terminal-emulator', args: ['--working-directory', target.cwd] })
+    candidates.push({ file: 'gnome-terminal', args: ['--working-directory', target.cwd] })
+    candidates.push({ file: 'konsole', args: ['--workdir', target.cwd] })
+    candidates.push({ file: 'xterm', args: ['-e', 'bash', '-lc', `cd ${shellQuote(target.cwd)} && exec bash -l`] })
+  }
+  return { candidates, command: '', cwd: target.cwd }
+}
+
 export interface PtySpec {
   file: string
   args: string[]
@@ -153,7 +193,31 @@ export interface PtySpec {
  * combination with no sensible PTY route returns undefined and the caller
  * falls back to the external-terminal path.
  */
+/** The embedded-terminal variant of a plain shell at cwd. */
+function composeShellPty(env: LaunchEnv, target: LaunchTarget): PtySpec | undefined {
+  const wslSession =
+    target.origin.kind === 'wsl' || (env.wslDistro !== undefined && target.origin.kind === 'native')
+  const windowsSession =
+    target.origin.kind === 'windows' || (env.os === 'win32' && target.origin.kind === 'native')
+  if (env.os === 'win32') {
+    if (wslSession) {
+      const distro = target.origin.kind === 'wsl' ? target.origin.distro : env.wslDistro
+      return { file: 'wsl.exe', args: [...(distro !== undefined ? ['-d', distro] : []), '--cd', target.cwd] }
+    }
+    if (windowsSession) {
+      return env.windowsShell === 'cmd'
+        ? { file: 'cmd.exe', args: [], cwd: target.cwd }
+        : { file: 'powershell.exe', args: ['-NoLogo'], cwd: target.cwd }
+    }
+    return undefined
+  }
+  if (target.origin.kind === 'windows') return undefined
+  if (target.origin.kind === 'wsl' && env.wslDistro === undefined) return undefined
+  return { file: env.shell ?? 'bash', args: ['-l'], cwd: target.cwd }
+}
+
 export function composePtySpec(env: LaunchEnv, target: LaunchTarget): PtySpec | undefined {
+  if (target.shell === true) return composeShellPty(env, target)
   const claudeCmd = ['claude', ...target.claudeArgs]
   const command = claudeCommand(target.claudeArgs)
   const wslSession =
