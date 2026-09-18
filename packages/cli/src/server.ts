@@ -26,6 +26,7 @@ import {
 import { flavorOfPath, pathOps } from '@hodor/core'
 import { scanLiveAgents } from './agents.js'
 import { drainHookEvents, hooksStatusForStores, setHooksForStores } from './hooks.js'
+import { createPrChecker } from './prcheck.js'
 import { scanCloudSessions } from './cloud.js'
 import { createBranchChecker } from './cloudbranch.js'
 import { composeHostClaude, composeLaunch, composePtySpec, runLaunch, type LaunchTarget } from './launch.js'
@@ -98,6 +99,7 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
   let files: UserFiles = await loadUserFiles(deps)
   const organizer = createOrganizer(deps, files.home)
   const branchChecker = createBranchChecker(deps)
+  const prChecker = createPrChecker(deps)
   const stores = await resolveStores(deps, { roots: [], noDiscover: false }, files.config)
   const fsFor = storeFs(deps, stores)
   const tailers = stores.map((store) => new StoreTailer(deps.fs, store))
@@ -171,6 +173,9 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
       ? undefined
       : await branchChecker.check(baseState, stores, fsFor).catch(() => undefined)
     if (branchEvent !== undefined) baseState = foldAll(baseState, [branchEvent])
+    // Which PR each recent branch is on (gh), a few lookups per pass.
+    const prEvent = firstPass ? undefined : await prChecker.check(baseState, stores).catch(() => undefined)
+    if (prEvent !== undefined) baseState = foldAll(baseState, [prEvent])
     files = await loadUserFiles(deps)
 
     let presented = foldAll(baseState, configEventsOf(files))

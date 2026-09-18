@@ -85,7 +85,16 @@ export function stackQueue(view: View, nowMs: number, scope: StackScope = 'works
         // A skip is per workspace: skipped HERE hides it here only — the
         // same session open and unskipped in another workspace still
         // surfaces there. So it counts as seen only once it is queued.
-        if (isDeferred(entry.sessionId, sigOfSession(session), session.lastActivityAt, nowMs, defers)) {
+        if (
+          isDeferred(
+            entry.sessionId,
+            sigOfSession(session),
+            session.lastActivityAt,
+            nowMs,
+            defers,
+            session.pr?.fingerprint,
+          )
+        ) {
           continue
         }
         // lifted deferral: clean it up so the badge math stays honest
@@ -187,7 +196,7 @@ export function Stack(props: {
   }, [topPanelId])
 
   const act = useCallback(
-    (kind: 'later' | 'snz30' | 'snz2' | 'snzMove' | 'hold' | 'phone' | 'done' | 'kill') => {
+    (kind: 'later' | 'snz30' | 'snz2' | 'snzMove' | 'snzPr' | 'hold' | 'phone' | 'done' | 'kill') => {
       if (top === undefined) return
       const ops = getDeskOps()
       const id = itemId(top)
@@ -209,6 +218,12 @@ export function Stack(props: {
           break
         case 'snzMove':
           ops?.setDeferIn(wsId, id, { sig, ...note })
+          break
+        case 'snzPr':
+          if (top.kind === 'desk' && top.session.pr !== undefined) {
+            const { number, fingerprint } = top.session.pr
+            ops?.setDeferIn(wsId, id, { pr: { number, fingerprint }, ...note })
+          }
           break
         case 'hold':
           ops?.setDeferIn(wsId, id, { hold: true, ...note })
@@ -296,11 +311,14 @@ export function Stack(props: {
           />
           {(
             [
-              ['30 minutes', 'snz30'],
-              ['2 hours', 'snz2'],
-              ['until its ask changes', 'snzMove'],
-              ['until I unskip it', 'hold'],
-            ] as const
+              ['30 minutes', 'snz30'] as const,
+              ['2 hours', 'snz2'] as const,
+              ['until its ask changes', 'snzMove'] as const,
+              ...(top?.kind === 'desk' && top.session.pr !== undefined
+                ? [[`until PR #${top.session.pr.number} moves`, 'snzPr'] as const]
+                : []),
+              ['until I unskip it', 'hold'] as const,
+            ]
           ).map(([label, kind]) => (
             <button
               key={kind}

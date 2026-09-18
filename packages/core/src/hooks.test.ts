@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeHookEvent, summarizeToolInput, turnFromHook } from './hooks.js'
+import { hookIsCurrent, normalizeHookEvent, summarizeToolInput, turnFromHook } from './hooks.js'
 
 const AT = '2026-09-18T18:00:00.000Z'
 const base = { session_id: 's1', cwd: '/w', transcript_path: '/h/.claude/projects/-w/s1.jsonl' }
@@ -88,3 +88,15 @@ describe('turnFromHook', () => {
     expect(turnFromHook({ name: 'SessionStart', at: AT, reason: 'resume' })).toBeUndefined()
   })
 })
+
+describe('hookIsCurrent', () => {
+  it('is newer-wins with one second of slack for coarse stamps', () => {
+    expect(hookIsCurrent('2026-09-18T18:00:05.000Z', undefined)).toBe(true)
+    expect(hookIsCurrent('2026-09-18T18:00:05.000Z', '2026-09-18T18:00:04.900Z')).toBe(true)
+    // a whole-second stamp from the same second as a millisecond line
+    expect(hookIsCurrent('2026-09-18T18:00:05.000Z', '2026-09-18T18:00:05.376Z')).toBe(true)
+    expect(hookIsCurrent('2026-09-18T18:00:05.000Z', '2026-09-18T18:00:06.001Z')).toBe(false)
+    expect(hookIsCurrent('garbage', '2026-09-18T18:00:06.001Z')).toBe(false)
+  })
+})
+
