@@ -138,20 +138,22 @@ export function StackDashboard(props: {
     }
   }, [termTick])
 
-  const sessions: SessionRow[] = []
+  const bySession = new Map<string, SessionRow>()
   const shells: DeskEntry[] = []
   const clouds: Array<{ entry: DeskEntry; cloud: CloudSession | undefined }> = []
-  const seen = new Set<string>()
   for (const entry of deskState.entries) {
     const term = entry.ptyId !== undefined ? terms.get(entry.ptyId) : undefined
     if (entry.kind === 'shell') {
       shells.push(entry)
     } else if (entry.cloudId !== undefined) {
       clouds.push({ entry, cloud: view.cloud.find((c) => c.id === entry.cloudId) })
-    } else if (entry.sessionId !== undefined && !seen.has(entry.sessionId)) {
+    } else if (entry.sessionId !== undefined) {
       const session = view.byId.get(entry.sessionId)
       if (session === undefined) continue
-      seen.add(session.id)
+      // Two tiles for one session (a dead slot beside a live resume):
+      // the live one speaks for it.
+      const prior = bySession.get(session.id)
+      if (prior !== undefined && (isAlive(prior.entry, prior.term) || !isAlive(entry, term))) continue
       const defer = deskState.defer[session.id]
       const skipped =
         defer !== undefined &&
@@ -163,7 +165,7 @@ export function StackDashboard(props: {
           undefined,
           session.pr?.fingerprint,
         )
-      sessions.push({
+      bySession.set(session.id, {
         entry,
         session,
         status: isAlive(entry, term) ? statusOfSession(session, skipped) : 'off',
@@ -172,7 +174,7 @@ export function StackDashboard(props: {
       })
     }
   }
-  sessions.sort(
+  const sessions = [...bySession.values()].sort(
     (a, b) =>
       STATUS_RANK[a.status] - STATUS_RANK[b.status] ||
       (b.session.lastActivityAt ?? '').localeCompare(a.session.lastActivityAt ?? ''),
