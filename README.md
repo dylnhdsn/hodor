@@ -119,27 +119,42 @@ via `pricing` in `~/.hodor/config.json` (USD per million tokens):
 
 ## Install
 
-Every push to the default branch publishes a rolling build to the
-[`latest` release](https://github.com/dylnhdsn/hodor/releases/tag/latest).
-Requires Node >= 22 on your PATH.
+Three release channels, each its own GitHub release:
+
+| channel | release | built from |
+| --- | --- | --- |
+| `nightly` | [`latest`](https://github.com/dylnhdsn/hodor/releases/tag/latest) | every push to the default branch |
+| `stable` | [`stable`](https://github.com/dylnhdsn/hodor/releases/tag/stable) | by hand: Actions → build → Run workflow → pick the ref, channel `stable` |
+| `experimental` | [`experimental`](https://github.com/dylnhdsn/hodor/releases/tag/experimental) | every push to an `exp/*` branch |
+
+The channel is baked into each build. Desktop builds are separate
+products per channel (`hodor`, `hodor stable`, `hodor experimental`) with
+their own install and data directories and their own update feed, so two
+can run side by side; to change channel, install the other one. The CLI
+remembers the channel it was installed from and `hodor update` follows it
+(`hodor update --channel stable` moves it). Swap `latest` for `stable` or
+`experimental` in any URL below. Requires Node >= 22 on your PATH.
 
 Linux / WSL / macOS:
 
 ```sh
 curl -fsSL https://github.com/dylnhdsn/hodor/releases/download/latest/install.sh | sh
+# a channel: HODOR_CHANNEL=stable sh -c "$(curl -fsSL https://github.com/dylnhdsn/hodor/releases/download/stable/install.sh)"
 ```
 
 Windows PowerShell:
 
 ```powershell
 irm https://github.com/dylnhdsn/hodor/releases/download/latest/install.ps1 | iex
+# a channel: $env:HODOR_CHANNEL="stable"; irm https://github.com/dylnhdsn/hodor/releases/download/stable/install.ps1 | iex
 ```
 
 The desktop app auto-updates itself from the same release (Windows/Linux; unsigned macOS shows a notice linking the fresh dmg). Both CLI installers install to `~/.hodor/bin` (override with `HODOR_HOME`) and add it to
 your PATH. After that, get the newest build any time with:
 
 ```sh
-hodor update    # alias: hodor upgrade
+hodor update                     # alias: hodor upgrade — stays on its channel
+hodor update --channel stable    # move to another channel
 ```
 
 `hodor update` updates the UI too — it's embedded in the same file.

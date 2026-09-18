@@ -1,10 +1,18 @@
 # hodor installer for Windows PowerShell.
 #   irm https://github.com/dylnhdsn/hodor/releases/download/latest/install.ps1 | iex
 # Requires Node.js >= 22.
+# $env:HODOR_CHANNEL picks the release channel: stable, nightly (default)
+# or experimental. The installed bundle remembers it; `hodor update` follows.
 $ErrorActionPreference = "Stop"
 
 $Repo = "dylnhdsn/hodor"
-$Tag = "latest"
+$Channel = if ($env:HODOR_CHANNEL) { $env:HODOR_CHANNEL } else { "nightly" }
+$Tag = switch ($Channel) {
+    "nightly" { "latest" }
+    "stable" { "stable" }
+    "experimental" { "experimental" }
+    default { throw "hodor: HODOR_CHANNEL must be stable, nightly or experimental (got '$Channel')" }
+}
 $HodorHome = if ($env:HODOR_HOME) { $env:HODOR_HOME } else { Join-Path $env:USERPROFILE ".hodor" }
 $BinDir = Join-Path $HodorHome "bin"
 $BaseUrl = "https://github.com/$Repo/releases/download/$Tag"
@@ -49,5 +57,5 @@ if (($env:Path -split ";") -notcontains $BinDir) {
 }
 
 $Version = node $Bundle --version
-Write-Host "hodor $Version installed to $BinDir"
+Write-Host "hodor $Version ($Channel) installed to $BinDir"
 Write-Host "hodor: update later with: hodor update"

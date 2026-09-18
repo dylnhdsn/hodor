@@ -2,10 +2,20 @@
 # hodor installer for unix-ish shells (Linux, WSL, macOS).
 #   curl -fsSL https://github.com/dylnhdsn/hodor/releases/download/latest/install.sh | sh
 # Requires Node.js >= 22. Set HODOR_NO_MODIFY_PATH=1 to skip PATH edits.
+# HODOR_CHANNEL picks the release channel: stable, nightly (default) or
+# experimental. The installed bundle remembers it; `hodor update` follows.
 set -eu
 
 REPO="dylnhdsn/hodor"
-TAG="latest"
+CHANNEL="${HODOR_CHANNEL:-nightly}"
+case "$CHANNEL" in
+nightly) TAG="latest" ;;
+stable | experimental) TAG="$CHANNEL" ;;
+*)
+  echo "hodor: HODOR_CHANNEL must be stable, nightly or experimental (got '$CHANNEL')" >&2
+  exit 1
+  ;;
+esac
 HODOR_HOME="${HODOR_HOME:-$HOME/.hodor}"
 BIN_DIR="$HODOR_HOME/bin"
 BASE_URL="https://github.com/$REPO/releases/download/$TAG"
@@ -64,5 +74,5 @@ case ":$PATH:" in
   ;;
 esac
 
-echo "hodor $("$BIN_DIR/hodor" --version) installed to $BIN_DIR"
+echo "hodor $("$BIN_DIR/hodor" --version) ($CHANNEL) installed to $BIN_DIR"
 echo "hodor: update later with: hodor update"

@@ -34,6 +34,7 @@ import { createOrganizer } from './organize.js'
 import { resolveStores, storeFs } from './stores.js'
 import { uiAssets } from './ui-assets.js'
 import { loadUserFiles, saveConfig, saveUserPlane, type UserFiles } from './userdata.js'
+import { cliChannel } from './channel.js'
 import { cliVersion } from './version.js'
 import {
   WORKSPACE_DOC_LIMIT,
@@ -224,6 +225,7 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
       hide: mergeHideRules(defaultHideRules, files.config.hide),
     })
     next.hodorVersion = cliVersion()
+    next.hodorChannel = cliChannel()
     const nextJson = JSON.stringify(next)
     if (nextJson !== snapshotJson) {
       snapshot = next

@@ -35,6 +35,8 @@ export interface Snapshot {
   /** The serving build (stamped by the server, not the core) — shown in
    * the UI so "which build am I actually running?" is a glance. */
   hodorVersion?: string
+  /** The serving build's release channel (stable / nightly / experimental). */
+  hodorChannel?: string
   stores: SessionStore[]
   sessions: Session[]
   /** Derived (base-plane) projects — machine-owned, rederivable. */

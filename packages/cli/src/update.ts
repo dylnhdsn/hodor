@@ -1,14 +1,18 @@
+import { REPO, releaseTagOf, type Channel } from './channel.js'
+
 /**
- * Self-update from the rolling GitHub release. CI publishes every default-
- * branch push as release tag "latest" carrying hodor.mjs + version.json;
- * `hodor update` compares versions and swaps the installed bundle in place.
+ * Self-update from a channel's GitHub release. CI publishes each channel
+ * to its own release tag (nightly → "latest", stable, experimental)
+ * carrying hodor.mjs + version.json; `hodor update` compares versions and
+ * swaps the installed bundle in place. The bundle knows its own channel
+ * and follows it; `--channel` moves to another, and the bundle that
+ * lands then follows THAT one.
  *
  * All effects are injected via UpdateIO so the logic is testable; bin.ts
  * provides the real fetch/fs implementation.
  */
 
-export const REPO = 'dylnhdsn/hodor'
-export const RELEASE_TAG = 'latest'
+export { REPO }
 
 export interface HttpResponse {
   status: number
@@ -17,6 +21,8 @@ export interface HttpResponse {
 
 export interface UpdateIO {
   currentVersion: string
+  /** The channel this bundle was built for (nightly when unknown). */
+  channel?: Channel
   /** Path of the installed bundle; undefined when running from a dev checkout. */
   selfPath?: string
   /** GitHub token, if any — needed only for private repos and rate limits. */
@@ -68,7 +74,7 @@ async function downloadAsset(io: UpdateIO, asset: ReleaseAsset): Promise<Uint8Ar
   return res.status === 200 ? res.bytes : undefined
 }
 
-export async function runUpdate(io: UpdateIO): Promise<number> {
+export async function runUpdate(io: UpdateIO, wanted?: Channel): Promise<number> {
   const out = (text: string): void => io.write(text + '\n')
 
   if (io.selfPath === undefined) {
@@ -76,10 +82,13 @@ export async function runUpdate(io: UpdateIO): Promise<number> {
     return 1
   }
 
-  const releaseUrl = `https://api.github.com/repos/${REPO}/releases/tags/${RELEASE_TAG}`
+  const own = io.channel ?? 'nightly'
+  const channel = wanted ?? own
+  const tag = releaseTagOf(channel)
+  const releaseUrl = `https://api.github.com/repos/${REPO}/releases/tags/${tag}`
   const res = await io.http(releaseUrl, baseHeaders(io, 'application/vnd.github+json'))
   if (res.status !== 200) {
-    out(`update: could not fetch the ${RELEASE_TAG} release (HTTP ${res.status}).`)
+    out(`update: could not fetch the ${tag} release (HTTP ${res.status}).`)
     out('update: if the repo is private, set GITHUB_TOKEN or log in with `gh auth login`.')
     return 1
   }
@@ -114,7 +123,7 @@ export async function runUpdate(io: UpdateIO): Promise<number> {
   }
 
   if (remoteVersion === io.currentVersion) {
-    out(`hodor ${io.currentVersion} is already up to date.`)
+    out(`hodor ${io.currentVersion} is already up to date (${channel}).`)
     return 0
   }
 
@@ -125,6 +134,9 @@ export async function runUpdate(io: UpdateIO): Promise<number> {
   }
 
   await io.replaceSelf(bundleBytes)
-  out(`hodor updated: ${io.currentVersion} → ${remoteVersion}`)
+  out(`hodor updated: ${io.currentVersion} → ${remoteVersion} (${channel})`)
+  if (channel !== own) {
+    out(`update: now on the ${channel} channel — future updates follow it.`)
+  }
   return 0
 }

@@ -3,13 +3,52 @@ name: build
 on:
   push:
     branches: ['**']
+  # Promotion. Run workflow → pick the branch or tag → channel. A stable
+  # build is a REBUILD of that ref with the stable identity, never a copy
+  # of a nightly's binaries: those carry the nightly product id and feed.
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: 'Publish this ref to which channel'
+        type: choice
+        options: [stable, experimental, nightly]
+        default: stable
 
 permissions:
   contents: write
 
 jobs:
-  build:
+  # Which channel (and release tag) this run publishes to. Empty = build
+  # and test only. nightly: the default branch → tag 'latest', which every
+  # existing install already tracks. experimental: exp/* branches. stable:
+  # only by hand.
+  channel:
     runs-on: ubuntu-latest
+    outputs:
+      channel: ${{ steps.pick.outputs.channel }}
+      tag: ${{ steps.pick.outputs.tag }}
+    steps:
+      - id: pick
+        shell: bash
+        env:
+          INPUT_CHANNEL: ${{ inputs.channel }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then ch="$INPUT_CHANNEL"
+          elif [ "$GITHUB_REF_NAME" = "$DEFAULT_BRANCH" ]; then ch="nightly"
+          elif [[ "$GITHUB_REF_NAME" == exp/* ]]; then ch="experimental"
+          else ch=""; fi
+          case "$ch" in nightly) tag="latest" ;; "") tag="" ;; *) tag="$ch" ;; esac
+          echo "channel=$ch" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "channel=${ch:-none} tag=${tag:-none} ref=$GITHUB_REF_NAME"
+
+  build:
+    needs: channel
+    runs-on: ubuntu-latest
+    env:
+      HODOR_CHANNEL: ${{ needs.channel.outputs.channel || 'nightly' }}
+      RELEASE_TAG: ${{ needs.channel.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -23,7 +62,7 @@ jobs:
       - name: Bundle
         run: |
           VERSION="$(node -p "require('./packages/cli/package.json').version")-build.${{ github.run_number }}.$(git rev-parse --short HEAD)"
-          echo "Building hodor $VERSION"
+          echo "Building hodor $VERSION ($HODOR_CHANNEL)"
           HODOR_BUILD_VERSION="$VERSION" node scripts/bundle.mjs
           node dist-release/hodor.mjs --version
 
@@ -32,25 +71,29 @@ jobs:
           name: hodor
           path: dist-release/
 
-      - name: Publish rolling release
-        if: github.ref_name == github.event.repository.default_branch
+      - name: Publish to the channel's release
+        if: env.RELEASE_TAG != ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if ! gh release view "latest" >/dev/null 2>&1; then
-            gh release create "latest" --prerelease --title "Rolling build" \
-              --notes "Automated rolling build" --target "$GITHUB_SHA"
+          # the tag follows the published commit
+          git push -f origin "HEAD:refs/tags/$RELEASE_TAG"
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            PRE="--prerelease"; [ "$HODOR_CHANNEL" = "stable" ] && PRE=""
+            gh release create "$RELEASE_TAG" $PRE --title "hodor $HODOR_CHANNEL" \
+              --notes "Automated $HODOR_CHANNEL build" --target "$GITHUB_SHA"
           fi
-          gh release upload "latest" \
+          gh release upload "$RELEASE_TAG" \
             dist-release/hodor.mjs \
             dist-release/version.json \
             scripts/install.sh \
             scripts/install.ps1 \
             --clobber
-          gh release edit "latest" \
-            --notes "Rolling build from ${GITHUB_SHA} (run ${{ github.run_number }}, $(date -u +'%Y-%m-%dT%H:%M:%SZ'))"
+          gh release edit "$RELEASE_TAG" \
+            --notes "$HODOR_CHANNEL build from ${GITHUB_SHA} (run ${{ github.run_number }}, $(date -u +'%Y-%m-%dT%H:%M:%SZ'))"
 
   desktop:
+    needs: channel
     strategy:
       fail-fast: false
       matrix:
@@ -68,6 +111,8 @@ jobs:
     env:
       # unsigned builds everywhere; mac must not go looking for identities
       CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      HODOR_CHANNEL: ${{ needs.channel.outputs.channel || 'nightly' }}
+      RELEASE_TAG: ${{ needs.channel.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -100,12 +145,20 @@ jobs:
           name: desktop-${{ matrix.os }}
           path: packages/desktop/release/${{ matrix.artifact }}
 
-      - name: Attach to rolling release
-        if: github.ref_name == github.event.repository.default_branch
+      - name: Attach to the channel's release
+        if: env.RELEASE_TAG != ''
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # The build job normally creates the release; on a channel's
+          # first run this job can get here first, so create if missing
+          # (a lost race just means "already exists").
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            PRE="--prerelease"; [ "$HODOR_CHANNEL" = "stable" ] && PRE=""
+            gh release create "$RELEASE_TAG" $PRE --title "hodor $HODOR_CHANNEL" \
+              --notes "Automated $HODOR_CHANNEL build" --target "$GITHUB_SHA" || true
+          fi
           cd packages/desktop/release
           # installer + blockmaps first, the update feed (latest*.yml)
           # last — clients read the yml, then fetch what it names.
@@ -113,7 +166,7 @@ jobs:
           YML="$(ls latest*.yml 2>/dev/null || true)"
           upload() {
             for i in 1 2 3; do
-              gh release upload "latest" $1 --clobber && return 0
+              gh release upload "$RELEASE_TAG" $1 --clobber && return 0
               sleep 10
             done
             return 1

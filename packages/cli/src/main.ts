@@ -41,6 +41,7 @@ import { composeLaunch, runLaunch } from './launch.js'
 import { resolveStores, storeFs } from './stores.js'
 import { formatSnapshot } from './format.js'
 import { loadUserFiles, type UserFiles } from './userdata.js'
+import { CHANNELS, isChannel, type Channel } from './channel.js'
 import { cliVersion } from './version.js'
 
 /**
@@ -67,8 +68,9 @@ export interface CliDeps {
   columns(): number
   /** Open a URL in the user's browser (best effort). */
   openUrl(url: string): Promise<void>
-  /** Replace the installed bundle with the latest release (hodor update). */
-  selfUpdate(): Promise<number>
+  /** Replace the installed bundle with the channel's newest release
+   * (hodor update). No channel = the one this bundle was built for. */
+  selfUpdate(channel?: Channel): Promise<number>
   /** The real OS family (platformFlavor only says how paths look). */
   osPlatform: 'win32' | 'darwin' | 'linux'
   /** Fire-and-forget spawn; rejects when the executable can't start. */
@@ -110,7 +112,7 @@ Usage:
                                             Curate custom projects (projects.json)
   hodor session <rename|archive|unarchive>  Per-session overrides (config.json)
   hodor bucket <cwd>                        Print the ~/.claude/projects bucket for a cwd
-  hodor update                              Update to the latest build (alias: upgrade)
+  hodor update [--channel <c>]              Update on this build's channel, or move to c (alias: upgrade)
   hodor --version                           Print the CLI version
 
 Stores default to <home>/.claude PLUS auto-discovered cross-boundary stores
@@ -136,6 +138,8 @@ Visibility (scan/watch):
 `.trim()
 
 interface Flags {
+  /** hodor update --channel <stable|nightly|experimental> */
+  channel?: string
   json: boolean
   all: boolean
   noDiscover: boolean
@@ -164,7 +168,15 @@ function parseFlags(args: string[]): Flags {
     port: 4477,
     rest: [],
   }
-  const valueFlags = new Set(['--root', '--interval', '--ticks', '--hide', '--port', '--explain'])
+  const valueFlags = new Set([
+    '--root',
+    '--interval',
+    '--ticks',
+    '--hide',
+    '--port',
+    '--explain',
+    '--channel',
+  ])
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!
     if (arg === '--json') flags.json = true
@@ -184,6 +196,7 @@ function parseFlags(args: string[]): Flags {
       if (arg === '--ticks') flags.ticks = Number(value)
       if (arg === '--port') flags.port = Number(value)
       if (arg === '--explain') flags.explain = value
+      if (arg === '--channel') flags.channel = value
     } else flags.rest.push(arg)
   }
   return flags
@@ -731,8 +744,13 @@ export async function run(argv: string[], deps: CliDeps): Promise<number> {
       return 0
 
     case 'update':
-    case 'upgrade':
-      return deps.selfUpdate()
+    case 'upgrade': {
+      if (flags.channel !== undefined && !isChannel(flags.channel)) {
+        deps.write(`update: --channel must be one of ${CHANNELS.join(', ')}\n`)
+        return 1
+      }
+      return deps.selfUpdate(flags.channel)
+    }
 
     case 'bucket': {
       const cwd = flags.rest[0]

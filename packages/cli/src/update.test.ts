@@ -20,6 +20,7 @@ function fakeIo(over: {
   currentVersion?: string
   selfPath?: string
   token?: string
+  channel?: UpdateIO['channel']
   responses: Record<string, { status: number; bytes: Uint8Array }>
 }): { io: UpdateIO; calls: Call[]; replaced: Uint8Array[]; output: string[] } {
   const calls: Call[] = []
@@ -27,6 +28,7 @@ function fakeIo(over: {
   const output: string[] = []
   const io: UpdateIO = {
     currentVersion: over.currentVersion ?? '1.0.0',
+    ...(over.channel !== undefined ? { channel: over.channel } : {}),
     ...(over.selfPath !== undefined ? { selfPath: over.selfPath } : {}),
     ...(over.token !== undefined ? { token: over.token } : {}),
     http: async (url, headers) => {
@@ -140,5 +142,57 @@ describe('runUpdate', () => {
     expect(await runUpdate(io)).toBe(1)
     expect(output.join('')).toContain('failed to download hodor.mjs')
     expect(replaced).toHaveLength(0)
+  })
+
+  const tagUrl = (tag: string) => `https://api.github.com/repos/dylnhdsn/hodor/releases/tags/${tag}`
+
+  // The bundle knows which channel built it; a stable install must never
+  // wander onto nightly just because that is the historical default.
+  it("follows the bundle's own channel", async () => {
+    const { io, calls, output } = fakeIo({
+      currentVersion: '1.2.3',
+      selfPath: '/x/hodor.mjs',
+      channel: 'stable',
+      responses: {
+        [tagUrl('stable')]: { status: 200, bytes: enc(RELEASE) },
+        'pub://version': { status: 200, bytes: enc({ version: '1.2.3' }) },
+      },
+    })
+    expect(await runUpdate(io)).toBe(0)
+    expect(calls[0]!.url).toBe(tagUrl('stable'))
+    expect(output.join('')).toContain('up to date (stable)')
+  })
+
+  it('moves to another channel on request and says so', async () => {
+    const { io, calls, output, replaced } = fakeIo({
+      currentVersion: '1.2.3',
+      selfPath: '/x/hodor.mjs',
+      responses: {
+        [tagUrl('experimental')]: { status: 200, bytes: enc(RELEASE) },
+        'pub://version': { status: 200, bytes: enc({ version: '1.2.9' }) },
+        'pub://bundle': { status: 200, bytes: new Uint8Array([7]) },
+      },
+    })
+    expect(await runUpdate(io, 'experimental')).toBe(0)
+    expect(calls[0]!.url).toBe(tagUrl('experimental'))
+    expect(replaced).toHaveLength(1)
+    expect(output.join('')).toContain('now on the experimental channel')
+  })
+
+  // nightly is spelled 'latest' on the release side — the tag every
+  // pre-channel install tracks — and the mapping must hold in both
+  // directions, including a stable bundle asked to go back.
+  it('resolves nightly to the latest tag', async () => {
+    const { io, calls } = fakeIo({
+      currentVersion: '1.2.3',
+      selfPath: '/x/hodor.mjs',
+      channel: 'stable',
+      responses: {
+        [tagUrl('latest')]: { status: 200, bytes: enc(RELEASE) },
+        'pub://version': { status: 200, bytes: enc({ version: '1.2.3' }) },
+      },
+    })
+    expect(await runUpdate(io, 'nightly')).toBe(0)
+    expect(calls[0]!.url).toBe(tagUrl('latest'))
   })
 })

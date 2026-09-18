@@ -9,6 +9,12 @@ const pkg = JSON.parse(
   readFileSync(new URL('../packages/cli/package.json', import.meta.url), 'utf8'),
 )
 const version = process.env.HODOR_BUILD_VERSION ?? `${pkg.version}-dev`
+// The release channel is baked in (see packages/cli/src/channel.ts):
+// `hodor update` follows the channel of the bundle it is run from.
+const channel = process.env.HODOR_CHANNEL ?? 'nightly'
+if (!['stable', 'nightly', 'experimental'].includes(channel)) {
+  throw new Error(`HODOR_CHANNEL must be stable, nightly or experimental (got "${channel}")`)
+}
 
 mkdirSync('dist-release', { recursive: true })
 
@@ -22,11 +28,14 @@ await build({
   format: 'esm',
   outfile: 'dist-release/hodor.mjs',
   banner: { js: '#!/usr/bin/env node' },
-  define: { __HODOR_VERSION__: JSON.stringify(version) },
+  define: {
+    __HODOR_VERSION__: JSON.stringify(version),
+    __HODOR_CHANNEL__: JSON.stringify(channel),
+  },
   plugins: [embedUiAssetsPlugin(assets)],
   logLevel: 'info',
 })
 
 chmodSync('dist-release/hodor.mjs', 0o755)
-writeFileSync('dist-release/version.json', JSON.stringify({ version }) + '\n')
-console.log(`bundled hodor ${version}`)
+writeFileSync('dist-release/version.json', JSON.stringify({ version, channel }) + '\n')
+console.log(`bundled hodor ${version} (${channel})`)

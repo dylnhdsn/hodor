@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url'
 import { run } from './main.js'
 import { baseNodeDeps } from './node-deps.js'
 import { runUpdate } from './update.js'
+import { cliChannel } from './channel.js'
 import { cliVersion } from './version.js'
 
 function resolveToken(): string | undefined {
@@ -39,23 +40,27 @@ process.exitCode = await run(process.argv.slice(2), {
   writeErr: (text) => {
     process.stderr.write(text)
   },
-  selfUpdate: () => {
+  selfUpdate: (channel) => {
     const token = resolveToken()
-    return runUpdate({
-      currentVersion: cliVersion(),
-      ...(selfPath !== undefined ? { selfPath } : {}),
-      ...(token !== undefined ? { token } : {}),
-      http: async (url, headers) => {
-        const res = await fetch(url, { headers })
-        return { status: res.status, bytes: new Uint8Array(await res.arrayBuffer()) }
+    return runUpdate(
+      {
+        currentVersion: cliVersion(),
+        channel: cliChannel(),
+        ...(selfPath !== undefined ? { selfPath } : {}),
+        ...(token !== undefined ? { token } : {}),
+        http: async (url, headers) => {
+          const res = await fetch(url, { headers })
+          return { status: res.status, bytes: new Uint8Array(await res.arrayBuffer()) }
+        },
+        replaceSelf: async (bytes) => {
+          if (selfPath === undefined) throw new Error('no installed bundle to replace')
+          const staging = `${selfPath}.new`
+          await writeFile(staging, bytes, { mode: 0o755 })
+          await rename(staging, selfPath)
+        },
+        write,
       },
-      replaceSelf: async (bytes) => {
-        if (selfPath === undefined) throw new Error('no installed bundle to replace')
-        const staging = `${selfPath}.new`
-        await writeFile(staging, bytes, { mode: 0o755 })
-        await rename(staging, selfPath)
-      },
-      write,
-    })
+      channel,
+    )
   },
 })

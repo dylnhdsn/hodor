@@ -13,6 +13,28 @@ const pkg = JSON.parse(
 )
 const version = process.env.HODOR_BUILD_VERSION ?? `${pkg.version}-dev`
 
+// One PRODUCT per channel, so stable and experimental install side by
+// side: their own appId (Windows uninstall key, notification identity),
+// install directory and user-data directory (both follow productName),
+// and their own update feed (electron-builder writes app-update.yml
+// from build.publish). nightly keeps the original identity and the
+// 'latest' tag — every install shipped before channels existed IS a
+// nightly and must keep updating without noticing.
+const IDENTITY = {
+  nightly: { appId: 'dev.dylnhdsn.hodor', productName: 'hodor', tag: 'latest' },
+  stable: { appId: 'dev.dylnhdsn.hodor.stable', productName: 'hodor stable', tag: 'stable' },
+  experimental: {
+    appId: 'dev.dylnhdsn.hodor.experimental',
+    productName: 'hodor experimental',
+    tag: 'experimental',
+  },
+}
+const channel = process.env.HODOR_CHANNEL ?? 'nightly'
+const identity = IDENTITY[channel]
+if (identity === undefined) {
+  throw new Error(`HODOR_CHANNEL must be stable, nightly or experimental (got "${channel}")`)
+}
+
 const assets = collectUiAssets()
 
 await build({
@@ -23,7 +45,11 @@ await build({
   format: 'cjs',
   outfile: 'packages/desktop/dist/main.cjs',
   external: ['electron', 'node-pty', 'electron-updater'],
-  define: { __HODOR_VERSION__: JSON.stringify(version) },
+  define: {
+    __HODOR_VERSION__: JSON.stringify(version),
+    __HODOR_CHANNEL__: JSON.stringify(channel),
+    __HODOR_APP_ID__: JSON.stringify(identity.appId),
+  },
   plugins: [embedUiAssetsPlugin(assets)],
   logLevel: 'info',
 })
@@ -63,6 +89,9 @@ const desktopPkg = JSON.parse(readFileSync(desktopPkgPath, 'utf8'))
 const run = /-build\.(\d+)\./.exec(version)?.[1]
 const [major = '0', minor = '0'] = version.split('-')[0].split('.')
 desktopPkg.version = run !== undefined ? `${major}.${minor}.${run}` : '0.0.0'
+desktopPkg.build.appId = identity.appId
+desktopPkg.build.productName = identity.productName
+desktopPkg.build.publish.url = `https://github.com/dylnhdsn/hodor/releases/download/${identity.tag}`
 writeFileSync(desktopPkgPath, JSON.stringify(desktopPkg, null, 2) + '\n')
 
 // Keep the lockfile's own version fields in step, so CI can `npm ci`
@@ -76,4 +105,4 @@ lock.version = desktopPkg.version
 if (lock.packages?.[''] !== undefined) lock.packages[''].version = desktopPkg.version
 writeFileSync(lockPath, JSON.stringify(lock, null, 2) + '\n')
 
-console.log(`bundled hodor desktop ${version}`)
+console.log(`bundled hodor desktop ${version} (${channel}: ${identity.productName})`)

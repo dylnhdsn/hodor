@@ -30,8 +30,8 @@ function memDeps(fs = new MemFs()): {
       spawns.push({ file, args })
       if (file !== 'x-terminal-emulator') throw new Error(`spawn ${file}: not stubbed`)
     },
-    selfUpdate: async () => {
-      output.push('selfUpdate-stub\n')
+    selfUpdate: async (channel) => {
+      output.push(`selfUpdate-stub${channel === undefined ? '' : `:${channel}`}\n`)
       return 0
     },
     httpGetJson: async () => ({ status: 404 }),
@@ -113,6 +113,15 @@ describe('basic commands', () => {
     expect(await run(['update'], deps)).toBe(0)
     expect(await run(['upgrade'], deps)).toBe(0)
     expect(output.filter((o) => o === 'selfUpdate-stub\n')).toHaveLength(2)
+  })
+
+  it('passes --channel through and rejects an unknown one', async () => {
+    const { deps, output } = memDeps()
+    expect(await run(['update', '--channel', 'stable'], deps)).toBe(0)
+    expect(output).toContain('selfUpdate-stub:stable\n')
+    expect(await run(['update', '--channel', 'beta'], deps)).toBe(1)
+    expect(output.join('')).toContain('must be one of stable, nightly, experimental')
+    expect(output.filter((o) => o.startsWith('selfUpdate-stub'))).toHaveLength(1)
   })
 
   it('fails on unknown commands', async () => {

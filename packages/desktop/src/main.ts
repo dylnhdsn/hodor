@@ -14,6 +14,7 @@ import { autoUpdater } from 'electron-updater'
 import type { IPty } from 'node-pty'
 import { spawn as ptySpawn } from 'node-pty'
 import { baseNodeDeps } from '../../cli/src/node-deps.js'
+import { cliChannel, feedUrlOf } from '../../cli/src/channel.js'
 import { startServer, type RunningServer } from '../../cli/src/server.js'
 
 const BACKLOG_LIMIT = 512 * 1024
@@ -387,6 +388,14 @@ function wireIpc(): void {
 }
 
 declare const __HODOR_VERSION__: string | undefined
+/** The installer's appId for this channel (scripts/bundle-desktop.mjs);
+ * the user-model id must match it or Windows drops our notifications. */
+declare const __HODOR_APP_ID__: string | undefined
+
+/** Where this build's channel publishes — the mac manual-update path
+ * reads it; win/linux read the same URL from electron-builder's
+ * app-update.yml, stamped from the same channel at build time. */
+const FEED_URL = feedUrlOf(cliChannel())
 
 /**
  * Auto-update against the rolling release. Windows (NSIS) and Linux
@@ -429,14 +438,14 @@ const buildNumberOf = (version: string): number =>
 /** Returns true when a newer build was found (darwin manual path). */
 async function checkMacUpdate(): Promise<boolean> {
   const local = typeof __HODOR_VERSION__ === 'string' ? __HODOR_VERSION__ : ''
-  const res = await fetch('https://github.com/dylnhdsn/hodor/releases/download/latest/version.json')
+  const res = await fetch(`${FEED_URL}/version.json`)
   if (!res.ok) throw new Error(`version.json: HTTP ${res.status}`)
   const remote = ((await res.json()) as { version?: string }).version ?? ''
   if (buildNumberOf(remote) > buildNumberOf(local)) {
     announceUpdate({
       state: 'available-manual',
       version: remote,
-      url: 'https://github.com/dylnhdsn/hodor/releases/download/latest/hodor-desktop-mac-arm64.dmg',
+      url: `${FEED_URL}/hodor-desktop-mac-arm64.dmg`,
     })
     return true
   }
@@ -567,13 +576,14 @@ function connectMainWindow(): void {
 
 // Windows ties toast notifications and taskbar grouping to this id; it must
 // match the installer's appId or renderer Notifications never show.
-app.setAppUserModelId('dev.dylnhdsn.hodor')
+app.setAppUserModelId(typeof __HODOR_APP_ID__ === 'string' ? __HODOR_APP_ID__ : 'dev.dylnhdsn.hodor')
 
 app.whenReady().then(async () => {
   // macOS About panel says hodor, not Electron.
   if (process.platform === 'darwin') {
     app.setAboutPanelOptions({
-      applicationName: 'hodor',
+      // the product name carries the channel ("hodor experimental")
+      applicationName: app.name,
       applicationVersion: typeof __HODOR_VERSION__ === 'string' ? __HODOR_VERSION__ : 'dev',
     })
   }

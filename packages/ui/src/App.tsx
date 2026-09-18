@@ -379,6 +379,14 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
         }`}
       >
         <Wordmark height={14} />
+        {snapshot.hodorChannel !== undefined && (
+          <span
+            className="rounded border border-b4 px-1 py-px font-mono text-[9.5px] leading-none text-t5"
+            title="release channel"
+          >
+            {snapshot.hodorChannel}
+          </span>
+        )}
         {!connected && (
           <span
             className="font-mono text-[10px] text-ask"
@@ -548,6 +556,7 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
           {snapshot.hodorVersion !== undefined && (
             <p className="px-3.5 pb-2 pt-0.5 text-[10px] text-t6" title="the build serving this UI">
               {snapshot.hodorVersion}
+              {snapshot.hodorChannel !== undefined ? ` · ${snapshot.hodorChannel}` : ''}
             </p>
           )}
         </div>
@@ -629,7 +638,10 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
                   {view.hidden.length} hidden sessions
                 </button>
                 {snapshot.hodorVersion !== undefined && (
-                  <p className="px-3 pt-1 pb-0.5 text-[10px] text-t6">{snapshot.hodorVersion}</p>
+                  <p className="px-3 pt-1 pb-0.5 text-[10px] text-t6">
+                    {snapshot.hodorVersion}
+                    {snapshot.hodorChannel !== undefined ? ` · ${snapshot.hodorChannel}` : ''}
+                  </p>
                 )}
               </div>
             </>
