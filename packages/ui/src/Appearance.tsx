@@ -8,6 +8,7 @@ import {
   TERM_FONTS,
   allSchemes,
   importScheme,
+  setAccent,
   setFont,
   setScheme,
   setTermFont,
@@ -84,13 +85,39 @@ function SchemeCard({ scheme, active, onPick }: { scheme: Colorscheme; active: b
         ❯ claude --resume
       </span>
       <span className="flex gap-1">
-        {[9, 10, 11, 12, 13, 14].map((i) => (
+        {[9, 10, 11, 12, 13, 14].map((i) => {
+          const hex = scheme.ansi[i]!.toLowerCase()
+          const chosen = active && themeState().accent === hex
+          return (
+            <span
+              key={i}
+              role="button"
+              title="use as the accent"
+              onClick={(e) => {
+                e.stopPropagation()
+                if (!active) setScheme(scheme.id)
+                setAccent(hex)
+              }}
+              className={`inline-block h-2.5 w-2.5 cursor-pointer rounded-[3px] hover:scale-125 ${
+                chosen ? 'ring-1 ring-fg ring-offset-1 ring-offset-s1' : ''
+              }`}
+              style={{ background: '#' + hex }}
+            />
+          )
+        })}
+        {active && themeState().accent !== undefined && (
           <span
-            key={i}
-            className="inline-block h-2.5 w-2.5 rounded-[3px]"
-            style={{ background: '#' + scheme.ansi[i] }}
-          />
-        ))}
+            role="button"
+            title="back to the scheme's own accent"
+            onClick={(e) => {
+              e.stopPropagation()
+              setAccent(undefined)
+            }}
+            className="ml-1 cursor-pointer font-mono text-[9px] text-t6 hover:text-fg"
+          >
+            reset
+          </span>
+        )}
       </span>
     </button>
   )

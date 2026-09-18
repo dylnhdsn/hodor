@@ -223,3 +223,52 @@ describe('composePtySpec', () => {
     ).toBeUndefined()
   })
 })
+
+describe('a plain shell at a directory (open a shell here)', () => {
+  const shell = (over: Partial<LaunchTarget>): LaunchTarget => ({
+    cwd: '/home/d/code/app',
+    flavor: 'posix',
+    origin: { kind: 'native' },
+    claudeArgs: [],
+    shell: true,
+    ...over,
+  })
+
+  it('is a login shell in the embedded terminal on posix hosts', () => {
+    expect(composePtySpec({ os: 'linux', shell: '/bin/zsh' }, shell({}))).toEqual({
+      file: '/bin/zsh',
+      args: ['-l'],
+      cwd: '/home/d/code/app',
+    })
+  })
+
+  it('enters the distro for a WSL store from Windows, and PowerShell or cmd for a Windows one', () => {
+    expect(composePtySpec({ os: 'win32' }, shell({ origin: { kind: 'wsl', distro: 'Ubuntu' } }))).toEqual({
+      file: 'wsl.exe',
+      args: ['-d', 'Ubuntu', '--cd', '/home/d/code/app'],
+    })
+    expect(
+      composePtySpec({ os: 'win32' }, shell({ cwd: 'C:\\code\\app', flavor: 'win32', origin: { kind: 'native' } })),
+    ).toEqual({ file: 'powershell.exe', args: ['-NoLogo'], cwd: 'C:\\code\\app' })
+    expect(
+      composePtySpec(
+        { os: 'win32', windowsShell: 'cmd' },
+        shell({ cwd: 'C:\\code\\app', flavor: 'win32', origin: { kind: 'native' } }),
+      ),
+    ).toEqual({ file: 'cmd.exe', args: [], cwd: 'C:\\code\\app' })
+  })
+
+  it('has no route into a Windows store from a mac', () => {
+    expect(
+      composePtySpec({ os: 'darwin' }, shell({ origin: { kind: 'windows', mountRoot: '/mnt' } })),
+    ).toBeUndefined()
+  })
+
+  it('opens an external terminal at the directory with nothing to paste', () => {
+    const linux = composeLaunch({ os: 'linux' }, shell({}))
+    expect(linux.command).toBe('')
+    expect(linux.candidates[0]).toEqual({ file: 'x-terminal-emulator', args: ['--working-directory', '/home/d/code/app'] })
+    const win = composeLaunch({ os: 'win32' }, shell({ origin: { kind: 'wsl', distro: 'Ubuntu' } }))
+    expect(win.candidates[0]).toEqual({ file: 'wt.exe', args: ['wsl.exe', '-d', 'Ubuntu', '--cd', '/home/d/code/app'] })
+  })
+})

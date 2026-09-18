@@ -6,7 +6,7 @@
 
 /** How a terminal was opened — doubles as the workspace slot rule. */
 export interface OpenTarget {
-  kind: 'resume' | 'fork' | 'new' | 'teleport'
+  kind: 'resume' | 'fork' | 'new' | 'teleport' | 'shell'
   sessionId?: string
   storeId?: string
   root?: string

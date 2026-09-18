@@ -283,6 +283,8 @@ export interface LaunchResponse {
 export async function requestLaunch(
   body:
     | { kind: 'resume' | 'fork' | 'teleport'; sessionId: string }
+    /** A plain shell at a directory hodor knows, in the store that owns it. */
+    | { kind: 'shell'; storeId: string; root: string }
     | {
         kind: 'new'
         storeId: string
