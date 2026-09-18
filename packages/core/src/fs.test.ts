@@ -43,3 +43,15 @@ describe('MemFs', () => {
     expect(await fs.readFile('/f')).toBeUndefined()
   })
 })
+
+describe('MemFs.remove', () => {
+  it('deletes a file and tolerates a missing one', async () => {
+    const fs = new MemFs()
+    await fs.writeFile('/a/b.json', '{}')
+    expect(await fs.stat('/a/b.json')).toBeDefined()
+    await fs.remove('/a/b.json')
+    expect(await fs.stat('/a/b.json')).toBeUndefined()
+    expect(await fs.readFile('/a/b.json')).toBeUndefined()
+    await expect(fs.remove('/a/b.json')).resolves.toBeUndefined()
+  })
+})

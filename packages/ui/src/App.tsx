@@ -1299,13 +1299,21 @@ function SessionRow(props: {
                     : 'text-b6'
             }`}
             title={
-              status === 'skipped'
+              (status === 'skipped'
                 ? 'skipped — wakes when its ask changes'
                 : status === 'needs-you'
                   ? 'your turn'
                   : status === 'working'
                     ? 'agent working'
-                    : 'idle'
+                    : 'idle') +
+              // who said so: exact (a Claude hook), the CLI listing, or inferred
+              (s.turn?.source === 'hook'
+                ? ' — from Claude\'s hook'
+                : s.turn?.source === 'cli'
+                  ? ' — from the CLI listing'
+                  : s.turn !== undefined
+                    ? ' — inferred from the transcript'
+                    : '')
             }
           >
             {status === 'skipped' ? '◐' : '●'}

@@ -115,6 +115,24 @@ describe('basic commands', () => {
     expect(output.filter((o) => o === 'selfUpdate-stub\n')).toHaveLength(2)
   })
 
+  it('hooks on/status/off write, read, and clear every store, and reject nonsense', async () => {
+    const { deps, output, fs } = memDeps()
+    seedStore(fs)
+    expect(await run(['hooks', 'on'], deps)).toBe(0)
+    expect(output.join('')).toContain('this machine')
+    expect(output.join('')).toContain(' on')
+    const written = await fs.readFile('/home/u/.claude/settings.json')
+    expect(written).toContain('.claude/hodor/events')
+    output.length = 0
+    expect(await run(['hooks'], deps)).toBe(0)
+    expect(output.join('')).toMatch(/this machine\s+on/)
+    output.length = 0
+    expect(await run(['hooks', 'off'], deps)).toBe(0)
+    expect(output.join('')).toMatch(/this machine\s+off/)
+    expect(await fs.readFile('/home/u/.claude/settings.json')).not.toContain('hodor/events')
+    expect(await run(['hooks', 'sideways'], deps)).toBe(1)
+  })
+
   it('passes --channel through and rejects an unknown one', async () => {
     const { deps, output } = memDeps()
     expect(await run(['update', '--channel', 'stable'], deps)).toBe(0)

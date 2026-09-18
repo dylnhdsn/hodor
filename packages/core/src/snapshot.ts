@@ -1,4 +1,5 @@
 import { turnFromAgent, type LiveAgent } from './agents.js'
+import { turnFromHook } from './hooks.js'
 import type { CloudSession } from './cloud.js'
 import { gitKey, type CoreState, type SessionAccum, type ThreadAccum } from './fold.js'
 import {
@@ -134,9 +135,26 @@ const TURN_TOOL_IDLE_MS = 2 * 3600_000
  * costs more trust than a late one.
  */
 export function classifyTurn(
-  accum: Pick<SessionAccum, 'lastMainAt' | 'lastMainKind' | 'lastMainText' | 'openTools'>,
+  accum: Pick<SessionAccum, 'lastMainAt' | 'lastMainKind' | 'lastMainText' | 'openTools' | 'hook'>,
   now: Date,
 ): SessionTurn | undefined {
+  // A Claude hook fact is exact; while nothing in the transcript is newer
+  // than it, it IS the answer (docs/brainstorm/026). A tool_result after
+  // a permission ask, a prompt after a Stop — any newer main-line event
+  // retires the fact and inference resumes.
+  const hook = accum.hook
+  if (hook !== undefined && (accum.lastMainAt === undefined || hook.at >= accum.lastMainAt)) {
+    const said = turnFromHook(hook)
+    if (said !== undefined) {
+      return {
+        ...said,
+        source: 'hook',
+        ...(said.state === 'waiting' && said.preview === undefined && accum.lastMainText !== undefined
+          ? { preview: accum.lastMainText }
+          : {}),
+      }
+    }
+  }
   if (accum.lastMainAt === undefined || accum.lastMainKind === undefined) return undefined
   const last = Date.parse(accum.lastMainAt)
   if (Number.isNaN(last)) return undefined
@@ -279,15 +297,23 @@ function toSession(
     // transcript inference — that is the whole point of the cross-check.
     // The transcript still supplies the WORDS (what is being asked); the
     // CLI supplies the state.
-    const says = turnFromAgent(live)
+    // …unless a Claude hook already said, exactly and more recently than
+    // any 4-second-stale listing: an exact fact is never overruled by a
+    // polled one.
+    const says = turn?.source === 'hook' ? undefined : turnFromAgent(live)
     if (says === 'working') {
-      session.turn = { state: 'working', ...(turn?.pending !== undefined ? { pending: turn.pending } : {}) }
+      session.turn = {
+        state: 'working',
+        source: 'cli',
+        ...(turn?.pending !== undefined ? { pending: turn.pending } : {}),
+      }
     } else if (says === 'parked') {
       // Alive but not working: whatever the transcript guessed, the ball
       // is with the human. Keep the agent's last words as the ask.
       if (turn?.state !== 'waiting') {
         session.turn = {
           state: 'waiting',
+          source: 'cli',
           since: turn?.since ?? accum.lastMainAt ?? '',
           ...(accum.lastMainText !== undefined ? { preview: accum.lastMainText } : {}),
         }
@@ -295,6 +321,7 @@ function toSession(
     } else if (says === 'waiting') {
       session.turn = {
         state: 'waiting',
+        source: 'cli',
         since: turn?.since ?? accum.lastMainAt ?? '',
         ...(turn?.preview !== undefined
           ? { preview: turn.preview }

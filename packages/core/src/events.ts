@@ -3,6 +3,7 @@ import type { TranscriptLine } from './claude/transcript.js'
 import type { CloudSession } from './cloud.js'
 import type { HodorConfig } from './config.js'
 import type { GitContext } from './git.js'
+import type { HookFact } from './hooks.js'
 import type { MemoryFileInfo } from './memory.js'
 import type { UserPlane } from './userplane.js'
 import type { Runtime, SessionId, SessionMeta, SessionStore, StoreId } from './types.js'
@@ -29,6 +30,21 @@ export type SourceEvent =
       type: 'agents-listed'
       agents: LiveAgent[]
       scannedAt: string
+    }
+  | {
+      /** One Claude Code hook firing, dropped as a file by the hook
+       * command hodor installs (docs/brainstorm/026): an exact, stamped
+       * fact about whose turn it is — the transcript only implies them.
+       * Order-independent like every other event: the fold keeps the
+       * newest fact and lets the clock decide against transcript lines. */
+      type: 'hook-event'
+      storeId: StoreId
+      sessionId: SessionId
+      /** The session's transcript, when the hook said (creates the
+       * accumulator for a session whose transcript has not appeared). */
+      transcriptPath?: string
+      cwd?: string
+      fact: HookFact
     }
   | {
       /** Sidecar metadata for one subagent run (agent-<id>.meta.json). */

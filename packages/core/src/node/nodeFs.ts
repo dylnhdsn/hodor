@@ -1,4 +1,4 @@
-import { mkdir, open, readdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
+import { mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import type { FileSystem, FsStat } from '../fs.js'
 
@@ -36,6 +36,10 @@ export class NodeFs implements FileSystem {
     const staging = `${path}.tmp-${process.pid}`
     await writeFile(staging, content, 'utf8')
     await rename(staging, path)
+  }
+
+  async remove(path: string): Promise<void> {
+    await rm(path, { force: true })
   }
 
   async readBytesFrom(path: string, offset: number): Promise<Uint8Array | undefined> {

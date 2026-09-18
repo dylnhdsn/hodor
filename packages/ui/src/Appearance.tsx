@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { deriveTheme, mixHex, type Colorscheme } from '@hodor/core/colorscheme'
+import { HooksToggle } from './HooksToggle.js'
 import { notifyEnabled, setNotifyEnabled } from './notify.js'
 import { fetchPrefs, savePref } from './prefs.js'
 import {
@@ -307,6 +308,11 @@ export function Appearance() {
             while the window is in the background
           </span>
         </label>
+
+        <div className="mt-1 font-mono text-[9.5px] font-semibold tracking-[.14em] text-t5">
+          CLAUDE HOOKS
+        </div>
+        <HooksToggle />
 
         <div className="mt-1 font-mono text-[9.5px] font-semibold tracking-[.14em] text-t5">
           IMPORT — FROM THE FILES YOUR TERMINAL ALREADY USES

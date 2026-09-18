@@ -25,6 +25,7 @@ import {
 } from '@hodor/core'
 import { flavorOfPath, pathOps } from '@hodor/core'
 import { scanLiveAgents } from './agents.js'
+import { drainHookEvents, hooksStatusForStores, setHooksForStores } from './hooks.js'
 import { scanCloudSessions } from './cloud.js'
 import { createBranchChecker } from './cloudbranch.js'
 import { composeHostClaude, composeLaunch, composePtySpec, runLaunch, type LaunchTarget } from './launch.js'
@@ -144,6 +145,11 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
     const firstPass = snapshot === undefined
     for (const tailer of tailers) {
       const events = await tailer.poll()
+      if (events.length > 0) baseState = foldAll(baseState, events)
+    }
+    // Claude hook facts dropped into each store since the last tick.
+    for (const store of stores) {
+      const events = await drainHookEvents(fsFor(store.id), store).catch(() => [])
       if (events.length > 0) baseState = foldAll(baseState, events)
     }
     baseState = foldAll(baseState, await enrichGitContexts(baseState, fsFor))
@@ -633,6 +639,30 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
 
       if (req.method === 'POST' && path === '/api/cloud/message') {
         await handleCloudMessage(res, await readBody(req))
+        return
+      }
+
+      // Claude hooks: whether hodor's hooks are in each store's
+      // ~/.claude/settings.json, and the toggle that puts them there.
+      if (reads && path === '/api/hooks') {
+        sendJson(res, 200, { stores: await hooksStatusForStores(stores, fsFor) })
+        return
+      }
+      if (req.method === 'POST' && path === '/api/hooks') {
+        const body = await readBody(req)
+        let parsed: unknown
+        try {
+          parsed = JSON.parse(body)
+        } catch {
+          sendJson(res, 400, { error: 'body must be JSON' })
+          return
+        }
+        const enabled = (parsed as { enabled?: unknown } | null)?.enabled
+        if (typeof enabled !== 'boolean') {
+          sendJson(res, 400, { error: 'enabled must be a boolean' })
+          return
+        }
+        sendJson(res, 200, { stores: await setHooksForStores(stores, fsFor, enabled) })
         return
       }
 

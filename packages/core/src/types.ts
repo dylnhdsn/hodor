@@ -47,6 +47,9 @@ export interface SessionStore {
  */
 export interface SessionTurn {
   state: 'working' | 'waiting' | 'idle'
+  /** Who overruled the transcript inference: a Claude hook (exact) or
+   * the CLI's live listing. Absent = inferred from the transcript. */
+  source?: 'hook' | 'cli'
   /** When the wait began — the agent's last word, or the dialog's tool_use. */
   since?: string
   /** The agent's last words, verbatim (truncated) — on a waiting session

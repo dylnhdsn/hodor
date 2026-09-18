@@ -1,5 +1,6 @@
 import type { MessageLine } from './claude/transcript.js'
 import type { LiveAgent } from './agents.js'
+import type { HookFact } from './hooks.js'
 import type { CloudSession } from './cloud.js'
 import type { HodorConfig } from './config.js'
 import type { SourceEvent } from './events.js'
@@ -65,6 +66,9 @@ export interface SessionAccum {
   /** The agent's last words — the most recent assistant text preview.
    * Surfaced verbatim on waiting rows: it IS the question, usually. */
   lastMainText?: string
+  /** The newest Claude hook fact (docs/brainstorm/026). Decisive about
+   * the turn while it is at least as new as the last main-line event. */
+  hook?: HookFact
   openTools: Record<string, { name: string; at?: string; question?: string; options?: string[] }>
   /** tool_use blocks seen, main and sidechains alike. */
   toolCallCount: number
@@ -406,6 +410,7 @@ function cloneAccum(accum: SessionAccum): SessionAccum {
     checkpointIds: { ...accum.checkpointIds },
     checkpointFiles: { ...accum.checkpointFiles },
     openTools: { ...accum.openTools },
+    ...(accum.hook !== undefined ? { hook: { ...accum.hook } } : {}),
     ...(accum.lastCompaction !== undefined ? { lastCompaction: { ...accum.lastCompaction } } : {}),
   }
 }
@@ -504,6 +509,34 @@ export function fold(state: CoreState, event: SourceEvent): CoreState {
             : {}),
         },
       }
+
+    case 'hook-event': {
+      const existing = state.sessions[event.sessionId]
+      const accum = existing
+        ? cloneAccum(existing)
+        : newAccum(event.sessionId, event.storeId, event.transcriptPath ?? '')
+      if (event.cwd !== undefined && !accum.cwds.includes(event.cwd)) accum.cwds.push(event.cwd)
+      const at = event.fact.at
+      // Newest fact wins, whatever order the files were drained in.
+      if (accum.hook === undefined || at >= accum.hook.at) accum.hook = { ...event.fact }
+      // A prompt and a finished turn ARE main-line events — the same
+      // bookkeeping a transcript line would do, under the same clock
+      // guard, so a stale file can never roll the turn backwards. The
+      // other facts (a permission ask, a notification, the process
+      // starting or ending) leave the transcript's bookkeeping alone and
+      // speak through `hook` while they are current.
+      const fresh = accum.lastMainAt === undefined || at >= accum.lastMainAt
+      if (fresh && event.fact.name === 'UserPromptSubmit') {
+        accum.lastMainKind = 'human'
+        accum.lastMainAt = at
+        accum.openTools = {}
+      } else if (fresh && (event.fact.name === 'Stop' || event.fact.name === 'StopFailure')) {
+        accum.lastMainKind = 'assistant-text'
+        accum.lastMainAt = at
+        if (event.fact.text !== undefined) accum.lastMainText = event.fact.text
+      }
+      return { ...state, sessions: { ...state.sessions, [event.sessionId]: accum } }
+    }
 
     case 'agents-listed': {
       // Replaced whole: a session that dropped off the listing is no

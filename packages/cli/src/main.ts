@@ -42,6 +42,7 @@ import { resolveStores, storeFs } from './stores.js'
 import { formatSnapshot } from './format.js'
 import { loadUserFiles, type UserFiles } from './userdata.js'
 import { CHANNELS, isChannel, type Channel } from './channel.js'
+import { hooksStatusForStores, setHooksForStores } from './hooks.js'
 import { cliVersion } from './version.js'
 
 /**
@@ -113,6 +114,7 @@ Usage:
   hodor session <rename|archive|unarchive>  Per-session overrides (config.json)
   hodor bucket <cwd>                        Print the ~/.claude/projects bucket for a cwd
   hodor update [--channel <c>]              Update on this build's channel, or move to c (alias: upgrade)
+  hodor hooks [on|off|status]               Claude hooks that report whose turn it is, per store
   hodor --version                           Print the CLI version
 
 Stores default to <home>/.claude PLUS auto-discovered cross-boundary stores
@@ -462,6 +464,25 @@ function printSnapshot(deps: CliDeps, snapshot: Snapshot, json: boolean): void {
   )
 }
 
+async function hooks(deps: CliDeps, flags: Flags): Promise<number> {
+  const sub = flags.rest[0] ?? 'status'
+  if (sub !== 'on' && sub !== 'off' && sub !== 'status') {
+    deps.write('hooks: expected on, off or status\n')
+    return 1
+  }
+  const files = await loadUserFiles(deps)
+  const stores = await resolveStores(deps, { roots: flags.roots, noDiscover: flags.noDiscover }, files.config)
+  const fsFor = storeFs(deps, stores)
+  const rows =
+    sub === 'status'
+      ? await hooksStatusForStores(stores, fsFor)
+      : await setHooksForStores(stores, fsFor, sub === 'on')
+  for (const row of rows) {
+    deps.write(`${row.label.padEnd(16)} ${row.status}${row.error !== undefined ? `  (${row.error})` : ''}\n`)
+  }
+  return rows.every((row) => row.error === undefined) ? 0 : 1
+}
+
 async function scan(deps: CliDeps, flags: Flags): Promise<number> {
   const files = await loadUserFiles(deps)
   const config = files.config
@@ -751,6 +772,9 @@ export async function run(argv: string[], deps: CliDeps): Promise<number> {
       }
       return deps.selfUpdate(flags.channel)
     }
+
+    case 'hooks':
+      return hooks(deps, flags)
 
     case 'bucket': {
       const cwd = flags.rest[0]

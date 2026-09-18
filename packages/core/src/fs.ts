@@ -23,6 +23,8 @@ export interface FileSystem {
    * implementations write atomically (temp + rename).
    */
   writeFile(path: string, content: string): Promise<void>
+  /** Delete a file; a missing file is not an error. */
+  remove(path: string): Promise<void>
 }
 
 /**
@@ -40,6 +42,7 @@ export function translatePathFs(
     readFile: (path) => inner.readFile(translate(path)),
     readBytesFrom: (path, offset) => inner.readBytesFrom(translate(path), offset),
     writeFile: (path, content) => inner.writeFile(translate(path), content),
+    remove: (path) => inner.remove(translate(path)),
   }
 }
 
@@ -58,6 +61,12 @@ export class MemFs implements FileSystem {
   writeFile(path: string, text: string): Promise<void> {
     this.files.set(path, new TextEncoder().encode(text))
     this.mtimes.set(path, ++this.clock)
+    return Promise.resolve()
+  }
+
+  remove(path: string): Promise<void> {
+    this.files.delete(path)
+    this.mtimes.delete(path)
     return Promise.resolve()
   }
 
