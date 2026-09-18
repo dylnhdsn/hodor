@@ -174,6 +174,16 @@ right back into place. Unsigned builds on the same rolling release
 - [Linux AppImage](https://github.com/dylnhdsn/hodor/releases/download/latest/hodor-desktop-linux-x86_64.AppImage)
 - [macOS (Apple silicon) dmg](https://github.com/dylnhdsn/hodor/releases/download/latest/hodor-desktop-mac-arm64.dmg)
 
+### Appearance
+
+Every color derives from a terminal colorscheme. Settings ships a curated
+list plus a catalog of 600+ schemes packed from
+[iTerm2-Color-Schemes](https://github.com/mbadolato/iTerm2-Color-Schemes)
+(MIT, © Mark Badolato; each theme stays its author's) — search by name,
+filter dark/light, click to adopt. Regenerate the catalog with
+`node scripts/import-schemes.mjs`. Pasting any Windows Terminal, iTerm2,
+Alacritty, kitty or Ghostty scheme file works too.
+
 ## Development
 
 Requires Node >= 22 and pnpm.

@@ -297,6 +297,30 @@ export function parseColorscheme(text: string): Colorscheme | null {
   return parseLineBased(txt)
 }
 
+/**
+ * Catalog packing: one scheme as 18 hex colors run together (bg, fg,
+ * ANSI 0–15 — 108 chars). The bundled catalog (scripts/import-schemes.mjs)
+ * stores hundreds of schemes this way so it stays a few tens of KB.
+ */
+export function packScheme(scheme: Colorscheme): string {
+  return [scheme.bg, scheme.fg, ...scheme.ansi].join('').toLowerCase()
+}
+
+export function unpackScheme(id: string, name: string, colors: string): Colorscheme | null {
+  if (!/^[0-9a-f]{108}$/i.test(colors)) return null
+  const hex = (i: number): string => colors.slice(i * 6, i * 6 + 6).toLowerCase()
+  return {
+    id,
+    name,
+    bg: hex(0),
+    fg: hex(1),
+    ansi: Array.from({ length: 16 }, (_, i) => hex(i + 2)),
+  }
+}
+
+/** Dark when the background is closer to black than to white (WCAG luminance). */
+export const isDarkScheme = (scheme: Colorscheme): boolean => luminance('#' + scheme.bg) < 0.4
+
 /** The xterm.js theme for the same scheme — the TUIs share the palette. */
 export function terminalThemeOf(scheme: Colorscheme): Record<string, string> {
   const a = scheme.ansi

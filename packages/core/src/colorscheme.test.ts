@@ -5,6 +5,9 @@ import {
   deriveTheme,
   parseColorscheme,
   terminalThemeOf,
+  isDarkScheme,
+  packScheme,
+  unpackScheme,
 } from './colorscheme.js'
 
 const WT_SAMPLE = JSON.stringify({
@@ -142,5 +145,24 @@ describe('terminalThemeOf', () => {
     expect(t['magenta']).toBe('#b78af7')
     expect(t['brightMagenta']).toBe('#c9a8f9')
     expect(t['brightWhite']).toBe('#e8e4f2')
+  })
+})
+
+describe('catalog packing', () => {
+  it('round-trips a scheme through 108 hex chars', () => {
+    const scheme = COLORSCHEMES[1]!
+    const packed = packScheme(scheme)
+    expect(packed).toHaveLength(108)
+    expect(unpackScheme(scheme.id, scheme.name, packed)).toEqual({ ...scheme, ansi: scheme.ansi.map((c) => c.toLowerCase()), bg: scheme.bg.toLowerCase(), fg: scheme.fg.toLowerCase() })
+  })
+
+  it('rejects the wrong length or non-hex', () => {
+    expect(unpackScheme('x', 'x', 'abc')).toBeNull()
+    expect(unpackScheme('x', 'x', 'g'.repeat(108))).toBeNull()
+  })
+
+  it('tells dark from light by the background', () => {
+    expect(isDarkScheme(COLORSCHEMES[0]!)).toBe(true)
+    expect(isDarkScheme(COLORSCHEMES.find((s) => s.id === 'sollight')!)).toBe(false)
   })
 })

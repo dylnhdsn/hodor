@@ -259,12 +259,18 @@ export function setTermSize(size: number): void {
   apply()
 }
 
+/** Use a scheme outside the curated list (a catalog pick, a pasted
+ * file): it takes the one "yours" slot and becomes the active scheme. */
+export function adoptScheme(scheme: Colorscheme): void {
+  current = { ...current, custom: scheme, schemeId: scheme.id }
+  persist()
+  apply()
+}
+
 /** Import a pasted colorscheme file; returns its name, or null on failure. */
 export function importScheme(text: string): string | null {
   const scheme = parseColorscheme(text)
   if (scheme === null) return null
-  current = { ...current, custom: scheme, schemeId: scheme.id }
-  persist()
-  apply()
+  adoptScheme(scheme)
   return scheme.name
 }
