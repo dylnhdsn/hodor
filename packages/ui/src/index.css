@@ -123,6 +123,15 @@ body,
   height: 100%;
 }
 
+/* The shell is a fixed frame; every scrolling region is an inner
+   overflow-y-auto. A wheel over a non-scrolling area (the rail's empty
+   space) must never chain to the document and push the UI out of view. */
+html,
+body {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
 body {
   background: var(--h-bg);
   font-family: var(--h-font-ui);

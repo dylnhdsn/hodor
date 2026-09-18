@@ -155,11 +155,14 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
   )
 
   // Feed turn states + names to the desk's tabs (separate React roots).
+  // EVERY session, not just the visible ones: a tab is open on purpose,
+  // so a hide rule catching its session (a fresh one with two lines, an
+  // archived project's) must not blank the tab's name and grey its dot.
   useEffect(() => {
     if (desktop === undefined) return
     const states: Record<string, 'working' | 'waiting' | 'idle'> = {}
     const titles: Record<string, string> = {}
-    for (const s of view.visible) {
+    for (const s of view.byId.values()) {
       if (s.turn !== undefined) states[s.id] = s.turn.state
       titles[s.id] = titleOf(s)
     }
@@ -187,8 +190,25 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
     const seen = needsYouSeen.current
     needsYouSeen.current = new Set(current.keys())
     if (seen === undefined || document.hasFocus()) return
+    // Clicking the notification lands you ON the session: its desk tile
+    // when it has one (revealed and focused), else the project it lives
+    // in. `deskState` is read at click time, not capture time.
+    const openFor = (id: string, cloud: boolean) => (): void => {
+      const entry = deskState.entries.find((e) => (cloud ? e.cloudId === id : e.sessionId === id))
+      if (entry !== undefined) {
+        setFilter({ kind: 'desk' })
+        const ops = getDeskOps()
+        ops?.revealPanel(entry.panelId)
+        ops?.focusPanel(entry.panelId)
+        return
+      }
+      const projectId = cloud
+        ? view.cloudProjectOf.get(id)?.id
+        : view.claimsBySession.get(id)?.[0]
+      setFilter(projectId !== undefined ? { kind: 'project', id: projectId } : { kind: 'home' })
+    }
     for (const [id, n] of current) {
-      if (!seen.has(id)) notifyNeedsYou(n.title, n.body)
+      if (!seen.has(id)) notifyNeedsYou(n.title, n.body, openFor(id, view.byId.get(id) === undefined))
     }
   }, [view, nowMs])
 

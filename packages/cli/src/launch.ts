@@ -65,7 +65,7 @@ const psCommand = (claudeArgs: string[]): string =>
  * positional prompt, so Claude got prompted with "spike" instead of
  * being named. Only bare-word-safe args are left unquoted, for
  * readability of the copyable command. */
-const claudeCommand = (claudeArgs: string[]): string =>
+export const claudeCommand = (claudeArgs: string[]): string =>
   ['claude', ...claudeArgs]
     .map((a) => (/^[A-Za-z0-9._\/:=-]+$/.test(a) ? a : shellQuote(a)))
     .join(' ')
@@ -209,8 +209,7 @@ export function composeHostClaude(env: LaunchEnv, claudeArgs: string[]): PtySpec
   if (env.os === 'win32') {
     return { file: 'cmd.exe', args: ['/c', 'claude', ...claudeArgs] }
   }
-  const command = ['claude', ...claudeArgs].map(shellQuote).join(' ')
-  return { file: env.shell ?? 'bash', args: ['-lic', command] }
+  return { file: env.shell ?? 'bash', args: ['-lic', claudeCommand(claudeArgs)] }
 }
 
 export interface LaunchResult {

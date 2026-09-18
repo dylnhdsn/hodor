@@ -32,6 +32,7 @@ const api = {
   clipboardText: () => ipcRenderer.invoke('win:clipboardText'),
   clipboardWrite: (text: string) => ipcRenderer.send('win:clipboardWrite', { text }),
   setTermFocus: (focused: boolean) => ipcRenderer.send('win:termFocus', { focused }),
+  winRaise: () => ipcRenderer.send('win:raise'),
   onWinState: (handler: (payload: { maximized: boolean }) => void) => {
     const listener = (_event: unknown, payload: { maximized: boolean }): void => handler(payload)
     ipcRenderer.on('win:state', listener)

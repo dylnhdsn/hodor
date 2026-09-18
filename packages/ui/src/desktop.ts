@@ -64,6 +64,8 @@ export interface HodorDesktop {
   /** Tell the main process a terminal owns the keyboard, so app-level
    * key handling (zoom) steps aside and every key reaches the PTY. */
   setTermFocus?(focused: boolean): void
+  /** Restore/show/focus this window (a notification was clicked). */
+  winRaise?(): void
   updateState(): Promise<UpdateState | undefined>
   /** Kick an update check now (absent in older desktop builds). */
   updateCheck?(): Promise<UpdateState | undefined>

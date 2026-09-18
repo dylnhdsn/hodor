@@ -1,3 +1,4 @@
+import { desktop } from './desktop.js'
 import { fetchPrefs, savePref } from './prefs.js'
 
 /**
@@ -32,10 +33,16 @@ export function setNotifyEnabled(on: boolean): void {
   }
 }
 
-/** Fire one needs-you notification (no-op when off, unfocused-only). */
-export function notifyNeedsYou(title: string, body: string): void {
+/** Fire one needs-you notification (no-op when off, unfocused-only).
+ * `open` runs on click, after the window is raised — the renderer's own
+ * window.focus() can't restore a minimized window; the main process can. */
+export function notifyNeedsYou(title: string, body: string, open?: () => void): void {
   if (!enabled) return
   if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return
   const note = new Notification(title, { body })
-  note.onclick = () => window.focus()
+  note.onclick = () => {
+    if (desktop?.winRaise !== undefined) desktop.winRaise()
+    else window.focus()
+    open?.()
+  }
 }

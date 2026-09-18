@@ -157,7 +157,7 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
     // rest of the off-box work, so the window paints from local files.
     if (!firstPass && Date.now() >= nextAgentScanAt) {
       nextAgentScanAt = Date.now() + AGENT_SCAN_INTERVAL_MS
-      const agentEvent = await scanLiveAgents(deps).catch(() => undefined)
+      const agentEvent = await scanLiveAgents(deps, stores).catch(() => undefined)
       if (agentEvent !== undefined) baseState = foldAll(baseState, [agentEvent])
     }
     const branchEvent = firstPass

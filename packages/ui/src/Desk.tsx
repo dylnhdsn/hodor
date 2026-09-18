@@ -17,6 +17,7 @@ import { postMutation } from './data.js'
 import { desktop, type OpenTarget } from './desktop.js'
 import { promptText } from './dialog.js'
 import { ShellIcon } from './icons.js'
+import { Tip } from './tip.js'
 import { ContextMenu, useContextMenu } from './menu.js'
 import { focusTerminal, TerminalView } from './Terminal.js'
 
@@ -426,6 +427,18 @@ function GroupActions(props: IDockviewHeaderActionsProps) {
   )
 }
 
+/** What the shell icon means, for its tooltip. */
+const shellLabel = (env: string | undefined): string => {
+  if (env === undefined) return 'runs in your shell'
+  if (env.startsWith('wsl')) {
+    const distro = env.split('·')[1]?.trim()
+    return distro !== undefined && distro !== '' ? `runs in WSL (${distro})` : 'runs in WSL'
+  }
+  if (env === 'powershell') return 'runs in PowerShell'
+  if (env === 'cmd') return 'runs in cmd'
+  return `runs in ${env}`
+}
+
 /** Tab anatomy: a shell icon (wsl/powershell/cmd, name on hover), the
  * SESSION's name (live from the snapshot once the tile knows its
  * session), and a status dot that means ONLY whose turn it is. Visible
@@ -529,14 +542,9 @@ function SlotTab(props: IDockviewPanelHeaderProps<SlotParams>) {
       }`}
     >
       <span className={`text-[8px] ${dot}`}>●</span>
-      <span className="group/env relative flex items-center text-t5" title={env ?? 'shell'}>
+      <Tip text={shellLabel(env)} className="flex items-center text-t5">
         <ShellIcon env={env} />
-        {env !== undefined && (
-          <span className="ml-1 hidden max-w-0 overflow-hidden whitespace-nowrap text-[9.5px] text-t5 group-hover:inline group-hover:max-w-[90px]">
-            {env}
-          </span>
-        )}
-      </span>
+      </Tip>
       <span className="max-w-[160px] truncate font-ui text-[11.5px] font-semibold">{title}</span>
       <button
         onClick={(e) => {

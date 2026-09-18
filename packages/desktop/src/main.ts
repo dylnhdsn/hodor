@@ -362,6 +362,14 @@ function wireIpc(): void {
   ipcMain.on('win:clipboardWrite', (_event, { text }: { text: string }) => {
     if (typeof text === 'string' && text.length > 0) clipboard.writeText(text)
   })
+  // A clicked notification: bring the window back, minimized or buried.
+  ipcMain.on('win:raise', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (win === null) return
+    if (win.isMinimized()) win.restore()
+    win.show()
+    win.focus()
+  })
   ipcMain.on('win:termFocus', (event, { focused }: { focused: boolean }) => {
     if (focused === true) termFocused.add(event.sender.id)
     else termFocused.delete(event.sender.id)
