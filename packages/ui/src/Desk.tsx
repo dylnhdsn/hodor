@@ -69,6 +69,9 @@ export interface DeferState {
   sig?: string
   /** No wake condition at all — quiet until the user unskips. */
   hold?: boolean
+  /** "Until the PR moves": quiet while the PR's fingerprint (state, head,
+   * review, last update) still reads the same as when skipped. */
+  pr?: { number: number; fingerprint: string }
   /** Why you skipped it — shown on the row so future-you reorients. */
   note?: string
   phone?: boolean
@@ -134,10 +137,16 @@ export function isDeferred(
   currentSig: string | undefined,
   lastMoveIso: string | undefined,
   nowMs: number,
+  defers: Record<string, DeferState> = deskState.defer,
+  /** The session's PR fingerprint right now; unknown keeps a PR skip quiet. */
+  prFingerprint?: string,
 ): boolean {
-  const defer = deskState.defer[sessionId]
+  const defer = defers[sessionId]
   if (defer === undefined) return false
   if (defer.until !== undefined) return Date.parse(defer.until) > nowMs
+  if (defer.pr !== undefined) {
+    return prFingerprint === undefined || prFingerprint === defer.pr.fingerprint
+  }
   if (defer.hold === true) return true
   if (defer.sig !== undefined) return defer.sig === (currentSig ?? '')
   if (defer.untilMoves !== undefined || defer.phone === true) {

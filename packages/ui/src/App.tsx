@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { CloudSession, CustomProject, Matcher, Session, Snapshot } from '@hodor/core'
+import { prLabel } from '@hodor/core/pr'
 import {
   byRecency,
   cwdsOf,
@@ -56,7 +57,7 @@ const rowAt = (r: Row): string =>
 
 /** Skip predicates, signature-aware (see sigOfSession/sigOfCloud). */
 const localSkipped = (s: Session, nowMs: number): boolean =>
-  isDeferred(s.id, sigOfSession(s), s.lastActivityAt, nowMs)
+  isDeferred(s.id, sigOfSession(s), s.lastActivityAt, nowMs, undefined, s.pr?.fingerprint)
 const cloudSkipped = (c: CloudSession, nowMs: number): boolean =>
   isDeferred(c.id, sigOfCloud(c), c.updatedAt, nowMs)
 
@@ -1238,6 +1239,17 @@ function SessionRow(props: {
         : [
             { label: 'skip', onClick: () => skipLocal(s) },
             { label: 'skip with a note…', onClick: skipWithNote },
+            ...(s.pr !== undefined
+              ? [
+                  {
+                    label: `skip until PR #${s.pr.number} moves`,
+                    onClick: () =>
+                      getDeskOps()?.setDefer(s.id, {
+                        pr: { number: s.pr!.number, fingerprint: s.pr!.fingerprint },
+                      }),
+                  },
+                ]
+              : []),
           ]
       : []),
     { label: 'copy session id', onClick: () => void navigator.clipboard.writeText(s.id).catch(() => {}) },
@@ -1319,6 +1331,26 @@ function SessionRow(props: {
             {status === 'skipped' ? '◐' : '●'}
           </span>
           <span className="truncate font-ui text-[12.5px] font-bold text-fg">{titleOf(s)}</span>
+          {s.pr !== undefined && (
+            <a
+              href={s.pr.url}
+              target="_blank"
+              rel="noreferrer"
+              onClick={stop}
+              className={`shrink-0 whitespace-nowrap rounded border border-b4 px-1.5 py-px font-mono text-[10px] hover:border-b6 ${
+                s.pr.state === 'merged'
+                  ? 'text-rev'
+                  : s.pr.review === 'changes requested'
+                    ? 'text-ask'
+                    : s.pr.state === 'closed'
+                      ? 'text-t6'
+                      : 'text-t3'
+              }`}
+              title={s.pr.url}
+            >
+              {prLabel(s.pr)}
+            </a>
+          )}
           {s.forkedFrom !== undefined && (
             <span className="shrink-0 rounded border border-b4 px-1.5 text-[10px] text-t4">
               fork
@@ -1463,7 +1495,16 @@ function SessionRow(props: {
 
       <span className="ml-2 shrink-0 whitespace-nowrap text-right text-[10.5px] text-t5">
         {skipped ? (
-          <span title={skipNote ?? 'wakes when its ask changes'}>skipped</span>
+          <span
+            title={
+              skipNote ??
+              (deskState.defer[s.id]?.pr !== undefined
+                ? `wakes when PR #${deskState.defer[s.id]!.pr!.number} moves`
+                : 'wakes when its ask changes')
+            }
+          >
+            skipped
+          </span>
         ) : turn === 'waiting' ? (
           <span className="font-semibold text-ask">
             {s.live?.waitingFor ?? 'waiting'} {formatAge(nowMs, s.turn?.since)}

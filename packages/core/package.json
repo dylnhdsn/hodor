@@ -17,6 +17,10 @@
     "./colorscheme": {
       "types": "./dist/colorscheme.d.ts",
       "default": "./dist/colorscheme.js"
+    },
+    "./pr": {
+      "types": "./dist/pr.d.ts",
+      "default": "./dist/pr.js"
     }
   },
   "scripts": {

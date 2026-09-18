@@ -1,6 +1,7 @@
 import type { MessageLine } from './claude/transcript.js'
 import type { LiveAgent } from './agents.js'
-import type { HookFact } from './hooks.js'
+import { hookIsCurrent, type HookFact } from './hooks.js'
+import type { PrInfo } from './pr.js'
 import type { CloudSession } from './cloud.js'
 import type { HodorConfig } from './config.js'
 import type { SourceEvent } from './events.js'
@@ -143,6 +144,8 @@ export interface CoreState {
    * by session id — the authoritative cross-check for inferred turns.
    * Replaced whole each scan; empty when the listing is unavailable. */
   liveAgents: Record<SessionId, LiveAgent>
+  /** Pull requests by session id, from gh, merged in as they are checked. */
+  prs: Record<SessionId, PrInfo>
   /** Cloud sessions from the last listing (full replacement each scan). */
   cloud: {
     sessions: CloudSession[]
@@ -170,6 +173,7 @@ export const emptyState: CoreState = {
   memoryFiles: {},
   checkpointBackups: {},
   liveAgents: {},
+  prs: {},
   cloud: { sessions: [] },
   organize: { labels: {}, errors: [] },
   metas: {},
@@ -525,7 +529,7 @@ export function fold(state: CoreState, event: SourceEvent): CoreState {
       // other facts (a permission ask, a notification, the process
       // starting or ending) leave the transcript's bookkeeping alone and
       // speak through `hook` while they are current.
-      const fresh = accum.lastMainAt === undefined || at >= accum.lastMainAt
+      const fresh = hookIsCurrent(at, accum.lastMainAt)
       if (fresh && event.fact.name === 'UserPromptSubmit') {
         accum.lastMainKind = 'human'
         accum.lastMainAt = at
@@ -544,6 +548,15 @@ export function fold(state: CoreState, event: SourceEvent): CoreState {
       const liveAgents: CoreState['liveAgents'] = {}
       for (const agent of event.agents) liveAgents[agent.sessionId] = agent
       return { ...state, liveAgents }
+    }
+
+    case 'prs-checked': {
+      const prs = { ...state.prs }
+      for (const [id, pr] of Object.entries(event.prs)) {
+        if (pr === null) delete prs[id]
+        else prs[id] = pr
+      }
+      return { ...state, prs }
     }
 
     case 'cloud-branches-checked':

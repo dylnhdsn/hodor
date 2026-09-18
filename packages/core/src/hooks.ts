@@ -173,3 +173,26 @@ export function turnFromHook(fact: HookFact): SessionTurn | undefined {
       return undefined
   }
 }
+
+/**
+ * Is a fact still current against the transcript's last main-line
+ * event? Newer wins — with ONE SECOND of tolerance, because the two
+ * stamps come from different clocks. A transcript line's timestamp is
+ * the CLI's wall clock; a hook file's stamp is the kernel's file
+ * timestamp, which is coarse-grained and can trail the wall clock by
+ * milliseconds (seen: a file written AFTER a line stamped earlier than
+ * it), and the posix hook's fallback stamp is whole seconds. Without
+ * the tolerance a Stop landing right after its line would read as older
+ * and be ignored.
+ */
+export const HOOK_CLOCK_SLACK_MS = 1000
+
+export function hookIsCurrent(at: string, lastMainAt: string | undefined): boolean {
+  if (lastMainAt === undefined) return true
+  const a = Date.parse(at)
+  const b = Date.parse(lastMainAt)
+  // stamps that cannot be compared cannot be current
+  if (Number.isNaN(a) || Number.isNaN(b)) return false
+  return a + HOOK_CLOCK_SLACK_MS >= b
+}
+

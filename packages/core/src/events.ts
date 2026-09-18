@@ -4,6 +4,7 @@ import type { CloudSession } from './cloud.js'
 import type { HodorConfig } from './config.js'
 import type { GitContext } from './git.js'
 import type { HookFact } from './hooks.js'
+import type { PrInfo } from './pr.js'
 import type { MemoryFileInfo } from './memory.js'
 import type { UserPlane } from './userplane.js'
 import type { Runtime, SessionId, SessionMeta, SessionStore, StoreId } from './types.js'
@@ -99,6 +100,13 @@ export type SourceEvent =
       labels: Record<string, string[]>
       errors: string[]
       evaluatedAt: string
+    }
+  | {
+      /** PRs looked up for some sessions' branches (gh). A delta: only
+       * the sessions checked this pass; null = its branch has no PR. */
+      type: 'prs-checked'
+      prs: Record<SessionId, PrInfo | null>
+      checkedAt: string
     }
   | { type: 'runtime-changed'; sessionId: SessionId; runtime: Runtime }
   | { type: 'meta-changed'; meta: SessionMeta }

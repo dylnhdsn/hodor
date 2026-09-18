@@ -1,5 +1,5 @@
 import { turnFromAgent, type LiveAgent } from './agents.js'
-import { turnFromHook } from './hooks.js'
+import { hookIsCurrent, turnFromHook } from './hooks.js'
 import type { CloudSession } from './cloud.js'
 import { gitKey, type CoreState, type SessionAccum, type ThreadAccum } from './fold.js'
 import {
@@ -143,7 +143,7 @@ export function classifyTurn(
   // a permission ask, a prompt after a Stop — any newer main-line event
   // retires the fact and inference resumes.
   const hook = accum.hook
-  if (hook !== undefined && (accum.lastMainAt === undefined || hook.at >= accum.lastMainAt)) {
+  if (hook !== undefined && hookIsCurrent(hook.at, accum.lastMainAt)) {
     const said = turnFromHook(hook)
     if (said !== undefined) {
       return {
@@ -564,6 +564,8 @@ export function buildSnapshot(state: CoreState, options: SnapshotOptions): Snaps
       )
       const meta = state.metas[accum.id]
       if (meta?.rename !== undefined) session.rename = meta.rename
+      const pr = state.prs[accum.id]
+      if (pr !== undefined) session.pr = pr
       if (options.hide !== undefined) {
         // Archived is an explicit user classification; rules come after.
         // With hiding off (--all), archived sessions surface like the rest.

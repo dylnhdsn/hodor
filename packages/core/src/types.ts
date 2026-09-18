@@ -7,6 +7,7 @@
  */
 
 import type { UsageTotals } from './pricing.js'
+import type { PrInfo } from './pr.js'
 
 export type StoreId = string
 export type SessionId = string
@@ -95,6 +96,8 @@ export interface Session {
   entrypoints: string[]
   /** Ancestor session id when this session was forked/resumed-as-new. */
   forkedFrom?: SessionId
+  /** The pull request its branch is on, when gh knows one. */
+  pr?: PrInfo
   /** Set when a visibility rule classified this session as noise (provenance). */
   hiddenBy?: string
   createdAt?: Timestamp
