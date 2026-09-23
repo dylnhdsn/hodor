@@ -118,7 +118,8 @@ export function createPrChecker(deps: CliDeps): PrChecker {
   }
 
   async function check(state: CoreState, stores: SessionStore[]): Promise<SourceEvent | undefined> {
-    const now = Date.now()
+    // the injected clock, so a fixture's recency window holds under test
+    const now = deps.now().getTime()
     if (now < nextPassAt) return undefined
     nextPassAt = now + PASS_INTERVAL_MS
     const storeById = new Map(stores.map((s) => [s.id, s]))
