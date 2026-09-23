@@ -80,8 +80,10 @@ export function stackQueue(view: View, nowMs: number, scope: StackScope = 'works
       : [{ id: active ?? 'main', name: 'main', active: true }]
   ).sort((a, b) => Number(b.active) - Number(a.active))
   for (const ws of wsList) {
-    const entries = ws.active ? deskState.entries : deskState.entriesOf(ws.id)
-    const defers = ws.active ? deskState.defer : deskState.deferOf(ws.id)
+    // entriesOf answers for the active workspace from its live tiles —
+    // or from the document when it is popped out to its own window
+    const entries = deskState.entriesOf(ws.id)
+    const defers = deskState.deferOf(ws.id)
     for (const entry of entries) {
       if (entry.sessionId === undefined || seen.has(entry.sessionId)) continue
       const session = view.byId.get(entry.sessionId)
@@ -136,6 +138,8 @@ export function Stack(props: {
   onExit: () => void
   onInspect: (sessionId: string) => void
   onJumpDesk: () => void
+  /** A popped-out workspace's window: only this workspace's turns. */
+  locked?: boolean | undefined
 }) {
   const { view, nowMs, scope, onScope, onExit, onInspect, onJumpDesk } = props
   const [, setTick] = useState(0)
@@ -429,14 +433,16 @@ export function Stack(props: {
         <span className="text-t4">
           {waitingN} waiting {scope === 'all' ? 'everywhere' : `in ${activeWs?.name ?? 'this workspace'}`}
         </span>
-        <span className="ml-1 flex gap-0.5">
-          <button onClick={() => onScope('workspace')} className={chip(scope === 'workspace')}>
-            ⧉ {activeWs?.name ?? 'workspace'}
-          </button>
-          <button onClick={() => onScope('all')} className={chip(scope === 'all')}>
-            everywhere
-          </button>
-        </span>
+        {props.locked !== true && (
+          <span className="ml-1 flex gap-0.5">
+            <button onClick={() => onScope('workspace')} className={chip(scope === 'workspace')}>
+              ⧉ {activeWs?.name ?? 'workspace'}
+            </button>
+            <button onClick={() => onScope('all')} className={chip(scope === 'all')}>
+              everywhere
+            </button>
+          </span>
+        )}
         <button
           onClick={onExit}
           className="ml-auto rounded border border-b3 px-2 py-px text-[10.5px] text-t3 hover:text-fg"

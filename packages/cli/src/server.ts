@@ -43,7 +43,9 @@ import { cliVersion } from './version.js'
 import {
   WORKSPACE_DOC_LIMIT,
   loadWorkspaces,
+  mergeWorkspaceDoc,
   parseWorkspaceDoc,
+  parseWorkspacePatch,
   saveWorkspaces,
 } from './workspace.js'
 import { loadPrefs, PREFS_LIMIT, savePrefs } from './prefs.js'
@@ -772,12 +774,26 @@ export async function startServer(deps: CliDeps, options: ServerOptions): Promis
           sendJson(res, 400, { error: 'body must be JSON' })
           return
         }
-        const doc = parseWorkspaceDoc(parsed)
+        // A whole document, or a patch naming one workspace (two windows
+        // each write their own — 030 phase 4).
+        const whole = Array.isArray((parsed as { workspaces?: unknown } | null)?.workspaces)
+        const doc = whole
+          ? parseWorkspaceDoc(parsed)
+          : (() => {
+              const patch = parseWorkspacePatch(parsed)
+              return patch === undefined ? undefined : { patch }
+            })()
         if (doc === undefined) {
           sendJson(res, 400, { error: 'not a workspace document' })
           return
         }
-        await saveWorkspaces(deps, files.home, doc)
+        const merged =
+          'patch' in doc ? mergeWorkspaceDoc(await loadWorkspaces(deps, files.home), doc.patch) : doc
+        await saveWorkspaces(deps, files.home, merged)
+        // every window learns the new document, so badges and "where is
+        // it" stay honest across windows
+        const frame = `event: workspace\ndata: ${JSON.stringify({ ...merged, v: 2 })}\n\n`
+        for (const client of sseClients) client.write(frame)
         sendJson(res, 200, { ok: true })
         return
       }

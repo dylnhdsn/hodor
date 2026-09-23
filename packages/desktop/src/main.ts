@@ -293,10 +293,127 @@ function popOut(id: string): void {
   })
 }
 
+/**
+ * Pop-outs (docs/brainstorm/030 phase 4): a zone or a whole workspace in
+ * its own window. Each is just another renderer on the same server — PTYs
+ * live here, so the new window attaches to the same terminals; the main
+ * window shows a placeholder for what moved out. Closing the window is
+ * the "bring it back": the main renderer hears it and re-mounts.
+ */
+const zoneWindows = new Map<string, BrowserWindow>()
+const workspaceWindows = new Map<string, BrowserWindow>()
+
+function popOutZone(wsId: string, groupId: string, title: string): void {
+  if (server === undefined) return
+  const key = `${wsId}/${groupId}`
+  const existing = zoneWindows.get(key)
+  if (existing !== undefined && !existing.isDestroyed()) {
+    existing.focus()
+    return
+  }
+  const win = new BrowserWindow({
+    width: 960,
+    height: 640,
+    title,
+    backgroundColor: '#0a0a0b',
+    ...(process.platform !== 'darwin' ? { icon: join(__dirname, 'icon.png') } : {}),
+    webPreferences: {
+      preload: join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  })
+  zoneWindows.set(key, win)
+  win.setMenuBarVisibility(false)
+  wireZoom(win, false)
+  void win.loadURL(`${server.url}/#zone=${encodeURIComponent(wsId)}/${encodeURIComponent(groupId)}`)
+  win.on('page-title-updated', (event) => event.preventDefault())
+  win.on('closed', () => {
+    zoneWindows.delete(key)
+    broadcast('zone:event', { type: 'closed', wsId, groupId })
+  })
+}
+
+function popOutWorkspace(wsId: string, name: string): void {
+  if (server === undefined) return
+  const existing = workspaceWindows.get(wsId)
+  if (existing !== undefined && !existing.isDestroyed()) {
+    existing.focus()
+    return
+  }
+  const win = new BrowserWindow({
+    width: 1200,
+    height: 800,
+    title: `${name} — hodor`,
+    backgroundColor: '#0a0a0b',
+    // the same chrome as the main window: its top bar is the titlebar
+    ...(process.platform === 'darwin'
+      ? { titleBarStyle: 'hidden' as const, trafficLightPosition: { x: 12, y: 13 } }
+      : { frame: false, icon: join(__dirname, 'icon.png') }),
+    webPreferences: {
+      preload: join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  })
+  workspaceWindows.set(wsId, win)
+  win.setMenuBarVisibility(false)
+  wireZoom(win, false)
+  const sendState = (): void => {
+    if (!win.isDestroyed()) win.webContents.send('win:state', { maximized: win.isMaximized() })
+  }
+  win.on('maximize', sendState)
+  win.on('unmaximize', sendState)
+  void win.loadURL(`${server.url}/#workspace=${encodeURIComponent(wsId)}`)
+  win.on('page-title-updated', (event) => event.preventDefault())
+  win.on('closed', () => {
+    workspaceWindows.delete(wsId)
+    broadcast('ws:event', { type: 'closed', wsId })
+  })
+}
+
+function closeWindow(map: Map<string, BrowserWindow>, key: string): void {
+  const win = map.get(key)
+  if (win !== undefined && !win.isDestroyed()) win.close()
+}
+
+function closePopouts(): void {
+  for (const win of [...zoneWindows.values(), ...workspaceWindows.values()]) {
+    if (!win.isDestroyed()) win.close()
+  }
+}
+
 function wireIpc(): void {
   ipcMain.handle('pty:open', (_event, target: Parameters<typeof openTerminal>[0]) =>
     openTerminal(target),
   )
+
+  ipcMain.handle(
+    'zone:popout',
+    (_event, { wsId, groupId, title }: { wsId: string; groupId: string; title: string }) =>
+      popOutZone(wsId, groupId, title),
+  )
+  ipcMain.on('zone:popin', (_event, { wsId, groupId }: { wsId: string; groupId: string }) =>
+    closeWindow(zoneWindows, `${wsId}/${groupId}`),
+  )
+  // A zone window cannot resume a dead slot itself (the slot lives in a
+  // desk's dockview); it asks — the window holding that workspace answers.
+  ipcMain.on(
+    'zone:resume',
+    (_event, payload: { wsId: string; groupId: string; panelId: string }) => {
+      broadcast('zone:event', { type: 'resume', ...payload })
+    },
+  )
+  ipcMain.handle('ws:popout', (_event, { wsId, name }: { wsId: string; name: string }) =>
+    popOutWorkspace(wsId, name),
+  )
+  ipcMain.on('ws:popin', (_event, { wsId }: { wsId: string }) =>
+    closeWindow(workspaceWindows, wsId),
+  )
+  ipcMain.handle('popped:list', () => ({
+    zones: [...zoneWindows.keys()],
+    workspaces: [...workspaceWindows.keys()],
+  }))
 
   ipcMain.handle('pty:attach', (event, { id }: { id: string }) => {
     const term = terms.get(id)
@@ -545,6 +662,8 @@ function createMainWindow(): void {
   }
   mainWindow.on('maximize', sendWinState)
   mainWindow.on('unmaximize', sendWinState)
+  // the pop-outs are views of the main window's desk: they go with it
+  mainWindow.on('closed', closePopouts)
   // Coming back to the app is the moment an update matters: a machine
   // that slept through the 30-minute ticks catches up on focus.
   mainWindow.on('focus', () => {

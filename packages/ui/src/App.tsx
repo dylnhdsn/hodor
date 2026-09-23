@@ -35,16 +35,16 @@ type OverlayState =
   | { kind: 'project'; id: string; page: ProjectPage }
   | { kind: 'settings'; page: SettingsPage }
 
-export function App() {
+export function App({ workspaceId }: { workspaceId?: string | undefined }) {
   const { snapshot, connected } = useSnapshot()
   if (snapshot === undefined) {
     return <BootSplash desk={desktop !== undefined} />
   }
-  return <Main snapshot={snapshot} connected={connected} />
+  return <Main snapshot={snapshot} connected={connected} locked={workspaceId} />
 }
 
-function Main(props: { snapshot: Snapshot; connected: boolean }) {
-  const { snapshot, connected } = props
+function Main(props: { snapshot: Snapshot; connected: boolean; locked?: string | undefined }) {
+  const { snapshot, connected, locked } = props
   const web = desktop === undefined
   const [panel, setPanel] = useState<'closed' | 'open' | 'pinned'>(web ? 'pinned' : 'closed')
   const [viewMode, setViewMode] = useState<'desk' | 'stack'>('desk')
@@ -144,6 +144,9 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
   })()
   const scopedProject =
     activeWs?.scope !== undefined ? view.rail.find((p) => p.id === activeWs.scope!.projectId) : undefined
+  // The main window shows a placeholder for a workspace that lives in
+  // its own window; that window itself is never "popped".
+  const activePopped = locked === undefined && activeWs?.popped === true
 
   // Feed turn states, names and asks to the desk's tabs (separate React
   // roots) — EVERY session, not just the visible ones: a tab is open on
@@ -310,6 +313,7 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
         counts={counts}
         projects={projectsForMenus}
         onSwitch={() => setViewMode('desk')}
+        locked={locked !== undefined}
         intent={activeWs?.intent}
         stackN={stackN}
         stackOpen={viewMode === 'stack'}
@@ -356,12 +360,25 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
           {/* The desk stays mounted whatever is up: its PTYs, dockview
               state, and the desk store the turn stack reads live here. */}
           {!web && (
-            <div className={viewMode === 'desk' ? 'flex min-h-0 flex-1' : 'hidden'}>
+            <div className={viewMode === 'desk' && !activePopped ? 'flex min-h-0 flex-1' : 'hidden'}>
               <Desk
                 inspect={openSession}
                 scopeName={scopedProject?.name}
                 newSessionIn={newSessionIn}
+                lockedWorkspace={locked}
               />
+            </div>
+          )}
+          {!web && viewMode === 'desk' && activePopped && activeWs !== undefined && (
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center gap-2.5 text-[11.5px] text-t5">
+              <span className="text-[26px] text-rev">⧉</span>
+              <span className="font-ui text-[13px] text-t2">{activeWs.name} is open in its own window</span>
+              <button
+                onClick={() => getDeskOps()?.popInWorkspace(activeWs.id)}
+                className="rounded border border-b4 px-3 py-1 font-ui text-[11.5px] text-t2 hover:border-b6 hover:text-fg"
+              >
+                bring it back
+              </button>
             </div>
           )}
           {!web && viewMode === 'stack' && (
@@ -370,11 +387,12 @@ function Main(props: { snapshot: Snapshot; connected: boolean }) {
                 snapshot={snapshot}
                 view={view}
                 nowMs={nowMs}
-                scope={stackScope}
+                scope={locked !== undefined ? 'workspace' : stackScope}
                 onScope={setStackScope}
                 onExit={() => setViewMode('desk')}
                 onInspect={openSession}
                 onJumpDesk={() => setViewMode('desk')}
+                locked={locked !== undefined}
               />
             </div>
           )}

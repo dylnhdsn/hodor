@@ -23,6 +23,8 @@ export function TopBar(props: {
   onStack: () => void
   settingsOpen: boolean
   onSettings: () => void
+  /** This window is one popped-out workspace. */
+  locked?: boolean | undefined
 }) {
   return (
     <div
@@ -45,7 +47,12 @@ export function TopBar(props: {
         <Wordmark height={10} />
       </span>
       <span className="ml-2.5 flex min-w-0 items-center">
-        <WorkspaceTabs counts={props.counts} projects={props.projects} onSwitch={props.onSwitch} />
+        <WorkspaceTabs
+          counts={props.counts}
+          projects={props.projects}
+          onSwitch={props.onSwitch}
+          locked={props.locked}
+        />
       </span>
       {props.intent !== undefined && props.intent !== '' && (
         <span className="ml-1.5 min-w-0 truncate text-[10.5px] text-t5">— {props.intent}</span>

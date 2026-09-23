@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { MemFs } from '@hodor/core'
 import type { CliDeps } from './main.js'
-import { loadWorkspaces, parseWorkspaceDoc, saveWorkspaces } from './workspace.js'
+import { loadWorkspaces, mergeWorkspaceDoc, parseWorkspaceDoc, parseWorkspacePatch, saveWorkspaces } from './workspace.js'
 
 const deps = (fs: MemFs): CliDeps => ({ fs }) as unknown as CliDeps
 const HOME = '/home/u/.hodor'
@@ -94,5 +94,33 @@ describe('loadWorkspaces / saveWorkspaces', () => {
     await fs.writeFile(`${HOME}/workspaces.json`, JSON.stringify({ v: 1, workspaces: [{ id: 'default', name: 'x', windows: [] }] }))
     // a corrupt v2 falls back to the v1 seed rather than an empty desk
     expect((await loadWorkspaces(deps(fs), HOME)).workspaces[0]?.id).toBe('main')
+  })
+})
+
+describe('workspace patches', () => {
+  const doc = { v: 2 as const, active: 'a', workspaces: [{ id: 'a', name: 'A', windows: [] }, { id: 'b', name: 'B', windows: [] }] }
+
+  it('replaces or inserts one workspace, keeps the rest, moves active only to a workspace that exists', () => {
+    const replaced = mergeWorkspaceDoc(doc, { workspace: { id: 'b', name: 'B2', popped: true, windows: [{ layout: { x: 1 } }] } })
+    expect(replaced.workspaces.map((w) => w.name)).toEqual(['A', 'B2'])
+    expect(replaced.workspaces[1]).toMatchObject({ popped: true, windows: [{ layout: { x: 1 } }] })
+    expect(replaced.active).toBe('a')
+    const inserted = mergeWorkspaceDoc(doc, { workspace: { id: 'c', name: 'C', windows: [] }, active: 'c' })
+    expect(inserted.workspaces.map((w) => w.id)).toEqual(['a', 'b', 'c'])
+    expect(inserted.active).toBe('c')
+    expect(mergeWorkspaceDoc(doc, { active: 'zzz' }).active).toBe('a')
+    const removed = mergeWorkspaceDoc(doc, { remove: 'a' })
+    expect(removed.workspaces.map((w) => w.id)).toEqual(['b'])
+    expect(removed.active).toBeUndefined()
+  })
+
+  it('parses a patch and rejects an empty or malformed one', () => {
+    expect(parseWorkspacePatch({ v: 2, workspace: { id: 'x', name: 'X', windows: [], popped: true } })).toEqual({
+      workspace: { id: 'x', name: 'X', windows: [], popped: true },
+    })
+    expect(parseWorkspacePatch({ v: 2, active: 'x', remove: 'y' })).toEqual({ active: 'x', remove: 'y' })
+    expect(parseWorkspacePatch({ v: 2 })).toBeUndefined()
+    expect(parseWorkspacePatch({ workspace: { name: 'no id' } })).toBeUndefined()
+    expect(parseWorkspacePatch('nope')).toBeUndefined()
   })
 })

@@ -175,7 +175,8 @@ and skips; the status bar says where you are (workspace · zone, the
 focused tile's directory, branch, model and context left) and what the
 desk is doing (waiting, running, spent today, hooks, server). The
 projects drawer (☰, or pinned) lists every project with its counts; a
-project's overlay is its library. The arrangement persists across
+project's overlay is its library. A zone or a whole workspace can pop
+out to its own window (right-click it) and come back. The arrangement persists across
 restarts: reopening the app rebuilds your layout, and each dead tile
 offers to `claude --resume` its session right back into place. The
 experimental channel carries the v3 shell (docs/brainstorm/030). Unsigned builds on the same rolling release

@@ -21,6 +21,7 @@ import { ShellIcon } from './icons.js'
 import { Tip } from './tip.js'
 import { ContextMenu, useContextMenu, type MenuItem } from './menu.js'
 import { focusTerminal, TerminalView } from './Terminal.js'
+import { onWorkspaceDoc } from './useSnapshot.js'
 
 /**
  * The desk (docs/brainstorm/022 v2, 023): hodor's main surface on desktop.
@@ -44,6 +45,9 @@ export interface SlotParams {
 interface ZoneMeta {
   name?: string | undefined
   def?: boolean | undefined
+  /** Open in its own window (030 phase 4): the tile shows a placeholder
+   * here and the zone window owns the terminals. */
+  popped?: boolean | undefined
 }
 
 interface WorkspaceEntry {
@@ -51,6 +55,8 @@ interface WorkspaceEntry {
   name: string
   /** What you are doing here, in your words (the title bar shows it). */
   intent?: string
+  /** Open in its own window: the main window shows a placeholder. */
+  popped?: boolean
   scope?: { projectId: string }
   windows: Array<{ layout?: unknown; zones?: Record<string, ZoneMeta> }>
   defer?: Record<string, DeferState>
@@ -169,13 +175,19 @@ export const deskState: {
   entries: DeskEntry[]
   defer: Record<string, DeferState>
   /** Every workspace, for the title bar; `active` is the one showing. */
-  workspaces: Array<{ id: string; name: string; intent?: string; scope?: { projectId: string } }>
+  workspaces: Array<{
+    id: string
+    name: string
+    intent?: string
+    popped?: boolean
+    scope?: { projectId: string }
+  }>
   active: string | undefined
   /** The tile that owns the keyboard (dockview's active panel) — the
    * status bar describes it. */
   focusPanelId: string | undefined
   /** Zone names in layout order, for menus that offer "open in…". */
-  zoneList: Array<{ id: string; name: string | undefined; def: boolean }>
+  zoneList: Array<{ id: string; name: string | undefined; def: boolean; popped: boolean }>
   /** Terminals a workspace holds — live ones for the active, saved ones
    * for the rest — so "close workspace" can say what it costs. */
   terminalCountOf: (id: string) => number
@@ -221,6 +233,11 @@ interface DeskOps {
   renameZone: (groupId: string) => void
   setDefaultZone: (groupId: string) => void
   closeZoneTabs: (groupId: string) => void
+  /** Pop-outs (030 phase 4): a zone of the active workspace, or a whole
+   * workspace, in its own window; the same verb brings it back. */
+  togglePoppedZone: (groupId: string) => void
+  popOutWorkspace: (id: string) => void
+  popInWorkspace: (id: string) => void
 }
 
 let deskOps: DeskOps | undefined
@@ -395,6 +412,7 @@ function refreshEntries(api: DockviewApi): void {
     id: g.id,
     name: zoneMetas[g.id]?.name,
     def: zoneMetas[g.id]?.def === true,
+    popped: zoneMetas[g.id]?.popped === true,
   }))
   deskState.entries = api.panels.map((p) => {
     const params = paramsOf(p)
@@ -481,6 +499,7 @@ interface DeskContextValue {
   renameZone: (groupId: string) => void
   toggleDefault: (groupId: string) => void
   closeZoneTabs: (groupId: string) => void
+  togglePoppedZone: (groupId: string) => void
   resumePanel: (panelId: string) => void
   busy: ReadonlySet<string>
   inspect?: ((sessionId: string) => void) | undefined
@@ -495,13 +514,14 @@ const DeskContext = createContext<DeskContextValue>({
   renameZone: () => {},
   toggleDefault: () => {},
   closeZoneTabs: () => {},
+  togglePoppedZone: () => {},
   resumePanel: () => {},
   busy: new Set(),
 })
 
 /** One tile: a live terminal, or the slot's resume affordance. */
 function TerminalPanel(props: IDockviewPanelProps<SlotParams>) {
-  const { resumePanel, busy } = useContext(DeskContext)
+  const { resumePanel, busy, zones, togglePoppedZone } = useContext(DeskContext)
   const ptyId = props.params.ptyId
   const target = props.params.target
   const [status, setStatus] = useState<'checking' | 'live' | 'dead'>('checking')
@@ -547,6 +567,22 @@ function TerminalPanel(props: IDockviewPanelProps<SlotParams>) {
   }, [ptyId])
 
   if (desktop === undefined) return null
+  // The zone lives in its own window: its terminals render there, and a
+  // second attachment here would fight it over the PTY's size.
+  if (zones[props.api.group.id]?.popped === true) {
+    return (
+      <div className="flex h-full w-full flex-col items-center justify-center gap-2 bg-app text-[11px] text-t5">
+        <span className="text-[20px] text-rev">⧉</span>
+        <span>open in its own window</span>
+        <button
+          onClick={() => togglePoppedZone(props.api.group.id)}
+          className="rounded border border-b4 px-2.5 py-[3px] text-[10.5px] text-t3 hover:text-fg"
+        >
+          bring it back
+        </button>
+      </div>
+    )
+  }
   if (status === 'checking') return <div className="h-full w-full bg-app" />
   if (status === 'live' && ptyId !== undefined) {
     return (
@@ -593,7 +629,8 @@ function TerminalPanel(props: IDockviewPanelProps<SlotParams>) {
 /** Zone chrome on the group header (the v3 mock): the zone's NAME as a
  * label, its verbs behind a right-click. */
 function ZoneHeader(props: IDockviewHeaderActionsProps) {
-  const { zones, renameZone, toggleDefault, closeZoneTabs, newSessionIn } = useContext(DeskContext)
+  const { zones, renameZone, toggleDefault, closeZoneTabs, newSessionIn, togglePoppedZone } =
+    useContext(DeskContext)
   const { menu, openMenu, closeMenu } = useContextMenu()
   const meta = zones[props.group.id]
   const name = meta?.name
@@ -607,6 +644,17 @@ function ZoneHeader(props: IDockviewHeaderActionsProps) {
       label: meta?.def === true ? 'new terminals land here — unset' : 'new terminals land here',
       onClick: () => toggleDefault(props.group.id),
     },
+    ...(desktop?.popOutZone !== undefined
+      ? [
+          {
+            label:
+              meta?.popped === true
+                ? `bring ${name ?? 'the zone'} back`
+                : `pop ${name ?? 'the zone'} out to its own window`,
+            onClick: () => togglePoppedZone(props.group.id),
+          },
+        ]
+      : []),
     ...(props.panels.length > 0
       ? [{ label: 'close every tab', onClick: () => closeZoneTabs(props.group.id), danger: true }]
       : []),
@@ -834,12 +882,17 @@ export function Desk({
   inspect,
   scopeName,
   newSessionIn,
+  lockedWorkspace,
 }: {
   inspect?: (sessionId: string) => void
   scopeName?: string | undefined
   /** Start a session landing in a zone ('' = the default zone). */
   newSessionIn?: ((groupId: string) => void) | undefined
+  /** A popped-out workspace's window: this desk shows that workspace
+   * and nothing else, never switches, and never reopens pop-outs. */
+  lockedWorkspace?: string | undefined
 }) {
+  const locked = lockedWorkspace
   const [zones, setZones] = useState<Record<string, ZoneMeta>>({})
   const [busy, setBusy] = useState<ReadonlySet<string>>(new Set())
   const [restore, setRestore] = useState<{ dead: number; zones: number } | undefined>(undefined)
@@ -896,24 +949,37 @@ export function Desk({
   const docRef = useRef<WorkspaceDoc>({ v: 2, workspaces: [] })
   const activeRef = useRef<string | undefined>(undefined)
 
+  /** Is the active workspace's layout mounted in THIS dockview? Not when
+   * it is popped out to its own window (the main window shows a
+   * placeholder and reads the layout from the document instead). */
+  const mountedActive = useCallback((): boolean => {
+    const id = activeRef.current
+    if (id === undefined) return false
+    if (locked !== undefined) return true
+    return docRef.current.workspaces.find((w) => w.id === id)?.popped !== true
+  }, [locked])
+
   const publishWorkspaces = useCallback(() => {
-    deskState.workspaces = docRef.current.workspaces.map((w) => ({
-      id: w.id,
-      name: w.name,
-      ...(w.intent !== undefined ? { intent: w.intent } : {}),
-      ...(w.scope !== undefined ? { scope: w.scope } : {}),
-    }))
+    deskState.workspaces = docRef.current.workspaces
+      .filter((w) => locked === undefined || w.id === locked)
+      .map((w) => ({
+        id: w.id,
+        name: w.name,
+        ...(w.intent !== undefined ? { intent: w.intent } : {}),
+        ...(w.popped === true ? { popped: true } : {}),
+        ...(w.scope !== undefined ? { scope: w.scope } : {}),
+      }))
     deskState.active = activeRef.current
     deskState.terminalCountOf = (id) => {
       const api = apiRef.current
-      if (id === activeRef.current && api !== null) {
+      if (id === activeRef.current && api !== null && mountedActive()) {
         return api.panels.filter((p) => paramsOf(p).ptyId !== undefined).length
       }
       const w = docRef.current.workspaces.find((x) => x.id === id)
       return ptyIdsOfLayout(w?.windows[0]?.layout).length
     }
     deskState.entriesOf = (id) => {
-      if (id === activeRef.current) return deskState.entries
+      if (id === activeRef.current && mountedActive()) return deskState.entries
       const w = docRef.current.workspaces.find((x) => x.id === id)
       return entriesOfLayout(w?.windows[0]?.layout)
     }
@@ -922,34 +988,58 @@ export function Desk({
       return docRef.current.workspaces.find((x) => x.id === id)?.defer ?? {}
     }
     notifyDesk()
-  }, [])
+  }, [locked, mountedActive])
 
-  const writeDoc = useCallback((): void => {
+  /** One workspace (or the active marker, or a removal) to the server —
+   * never the whole document, so two windows editing two workspaces
+   * cannot overwrite each other (030 phase 4). */
+  const postDoc = useCallback(
+    (patch: { workspace?: WorkspaceEntry; active?: string; remove?: string }): void => {
+      void fetch('/api/workspace', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ v: 2, ...patch }),
+      }).catch(() => {})
+    },
+    [],
+  )
+
+  /** The active workspace as it stands in this dockview: its layout,
+   * the zone metas of groups that still exist, its skips. */
+  const captureActive = useCallback((): WorkspaceEntry | undefined => {
     const api = apiRef.current
-    if (api === null || unloading || switching) return
-    // prune zone meta for groups that no longer exist
+    const activeId = activeRef.current
+    const current = docRef.current.workspaces.find((w) => w.id === activeId)
+    if (api === null || current === undefined) return undefined
     const live = new Set(api.groups.map((g) => g.id))
     const zoneOut: Record<string, ZoneMeta> = {}
     for (const [id, meta] of Object.entries(zonesRef.current)) {
       if (live.has(id)) zoneOut[id] = meta
     }
-    const activeId = activeRef.current
-    const doc: WorkspaceDoc = {
-      v: 2,
-      ...(activeId !== undefined ? { active: activeId } : {}),
-      workspaces: docRef.current.workspaces.map((w) =>
-        w.id === activeId
-          ? { ...w, windows: [{ layout: api.toJSON(), zones: zoneOut }], defer: deferRef.current }
-          : w,
-      ),
-    }
-    docRef.current = doc
-    void fetch('/api/workspace', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(doc),
-    }).catch(() => {})
+    return { ...current, windows: [{ layout: api.toJSON(), zones: zoneOut }], defer: deferRef.current }
   }, [])
+
+  const writeDoc = useCallback((): void => {
+    const api = apiRef.current
+    if (api === null || unloading || switching) return
+    const activeId = activeRef.current
+    if (activeId === undefined) return
+    // A popped-out active workspace is empty HERE — its window owns the
+    // layout; only the active marker is ours to write.
+    if (!mountedActive()) {
+      docRef.current = { ...docRef.current, active: activeId }
+      if (locked === undefined) postDoc({ active: activeId })
+      return
+    }
+    const updated = captureActive()
+    if (updated === undefined) return
+    docRef.current = {
+      ...docRef.current,
+      ...(locked === undefined ? { active: activeId } : {}),
+      workspaces: docRef.current.workspaces.map((w) => (w.id === activeId ? updated : w)),
+    }
+    postDoc({ workspace: updated, ...(locked === undefined ? { active: activeId } : {}) })
+  }, [locked, mountedActive, postDoc, captureActive])
 
   const save = useCallback(() => {
     if (unloading || switching) return
@@ -965,6 +1055,21 @@ export function Desk({
     }
     writeDoc()
   }, [writeDoc])
+
+  /** Persist one workspace's non-layout edit (name, intent, scope, a
+   * skip elsewhere): the active one rides the next save, any other goes
+   * straight to the server. */
+  const commit = useCallback(
+    (id: string): void => {
+      if (id === activeRef.current) {
+        save()
+        return
+      }
+      const ws = docRef.current.workspaces.find((w) => w.id === id)
+      if (ws !== undefined) postDoc({ workspace: ws })
+    },
+    [save, postDoc],
+  )
 
   const renameZone = useCallback(
     (groupId: string) => {
@@ -1076,7 +1181,9 @@ export function Desk({
       if (ws === undefined) return
       activeRef.current = id
       const window0 = ws.windows[0]
-      if (window0?.layout !== undefined && api.panels.length === 0) {
+      // a workspace popped out to its own window stays empty here
+      const mount = locked !== undefined || ws.popped !== true
+      if (mount && window0?.layout !== undefined && api.panels.length === 0) {
         try {
           api.fromJSON(window0.layout as SerializedDockview)
         } catch {
@@ -1107,13 +1214,13 @@ export function Desk({
       publishWorkspaces()
       refreshEntries(api)
     },
-    [publishWorkspaces],
+    [publishWorkspaces, locked],
   )
 
   const switchWorkspace = useCallback(
     async (id: string): Promise<void> => {
       const api = apiRef.current
-      if (api === null || id === activeRef.current) return
+      if (api === null || id === activeRef.current || locked !== undefined) return
       if (!docRef.current.workspaces.some((w) => w.id === id)) return
       flushSave()
       switching = true
@@ -1128,7 +1235,7 @@ export function Desk({
       }
       save()
     },
-    [flushSave, showWorkspace, save],
+    [flushSave, showWorkspace, save, locked],
   )
 
   const newWorkspace = useCallback(
@@ -1152,9 +1259,9 @@ export function Desk({
         workspaces: docRef.current.workspaces.map((w) => (w.id === id ? { ...w, name } : w)),
       }
       publishWorkspaces()
-      save()
+      commit(id)
     },
-    [publishWorkspaces, save],
+    [publishWorkspaces, commit],
   )
 
   const closeWorkspace = useCallback(
@@ -1185,9 +1292,9 @@ export function Desk({
         workspaces: docRef.current.workspaces.filter((w) => w.id !== id),
       }
       publishWorkspaces()
-      save()
+      postDoc({ remove: id, ...(activeRef.current !== undefined ? { active: activeRef.current } : {}) })
     },
-    [publishWorkspaces, save, switchWorkspace],
+    [publishWorkspaces, postDoc, switchWorkspace],
   )
 
   const setDeferIn = useCallback(
@@ -1210,9 +1317,9 @@ export function Desk({
         }),
       }
       publishWorkspaces()
-      save()
+      commit(workspaceId)
     },
-    [publishWorkspaces, save],
+    [publishWorkspaces, commit],
   )
 
   const setIntent = useCallback(
@@ -1227,9 +1334,9 @@ export function Desk({
         }),
       }
       publishWorkspaces()
-      save()
+      commit(id)
     },
-    [publishWorkspaces, save],
+    [publishWorkspaces, commit],
   )
 
   const closeZoneTabs = useCallback((groupId: string): void => {
@@ -1258,10 +1365,73 @@ export function Desk({
         }),
       }
       publishWorkspaces()
-      save()
+      commit(id)
     },
-    [publishWorkspaces, save],
+    [publishWorkspaces, commit],
   )
+
+  /** A zone of the active workspace, out to its own window or back. */
+  const togglePoppedZone = useCallback(
+    (groupId: string): void => {
+      const bridge = desktop
+      const wsId = activeRef.current
+      if (bridge?.popOutZone === undefined || wsId === undefined) return
+      const on = zonesRef.current[groupId]?.popped === true
+      setZones((z) => ({ ...z, [groupId]: { ...z[groupId], popped: on ? undefined : true } }))
+      save()
+      if (on) bridge.popInZone?.(wsId, groupId)
+      else {
+        const name = zonesRef.current[groupId]?.name ?? 'zone'
+        const wsName = docRef.current.workspaces.find((w) => w.id === wsId)?.name ?? ''
+        void bridge.popOutZone(wsId, groupId, `${name} · ${wsName} — hodor`)
+      }
+    },
+    [save],
+  )
+
+  /** A whole workspace out to its own window: its layout is saved here
+   * first, its tiles unmount (the PTYs live on), and the new window
+   * mounts it from the document. */
+  const popOutWorkspace = useCallback(
+    (id: string): void => {
+      const api = apiRef.current
+      const bridge = desktop
+      if (api === null || bridge?.popOutWorkspace === undefined || locked !== undefined) return
+      const isActive = id === activeRef.current
+      // one write: the layout as it stands plus the flag — a separate
+      // flush would echo back over SSE without the flag and race it
+      const base = (isActive ? captureActive() : undefined) ?? docRef.current.workspaces.find((w) => w.id === id)
+      if (base === undefined) return
+      const ws: WorkspaceEntry = { ...base, popped: true }
+      if (saveTimer.current !== undefined) {
+        window.clearTimeout(saveTimer.current)
+        saveTimer.current = undefined
+      }
+      docRef.current = {
+        ...docRef.current,
+        workspaces: docRef.current.workspaces.map((w) => (w.id === id ? ws : w)),
+      }
+      postDoc({ workspace: ws, ...(activeRef.current !== undefined ? { active: activeRef.current } : {}) })
+      if (isActive) {
+        switching = true
+        try {
+          api.clear()
+        } finally {
+          switching = false
+        }
+        void (bridge.list() as Promise<Array<{ id: string }>>).then((live) => showWorkspace(api, id, live))
+      } else publishWorkspaces()
+      void bridge.popOutWorkspace(id, ws.name)
+    },
+    [captureActive, postDoc, publishWorkspaces, showWorkspace, locked],
+  )
+
+  /** Back into the main window: closing its window is the whole verb —
+   * the 'closed' event below re-mounts it. In that window itself this
+   * closes the window you are in. */
+  const popInWorkspace = useCallback((id: string): void => {
+    desktop?.popInWorkspace?.(id)
+  }, [])
 
   // Publish the desk's operations for the Turn Stack and the library.
   useEffect(() => {
@@ -1300,6 +1470,9 @@ export function Desk({
       renameZone,
       setDefaultZone: toggleDefault,
       closeZoneTabs,
+      togglePoppedZone,
+      popOutWorkspace,
+      popInWorkspace,
     }
     ;(window as unknown as { __deskOps: DeskOps | undefined }).__deskOps = deskOps
     return () => {
@@ -1319,6 +1492,9 @@ export function Desk({
     renameZone,
     toggleDefault,
     closeZoneTabs,
+    togglePoppedZone,
+    popOutWorkspace,
+    popInWorkspace,
   ])
 
   const onReady = useCallback(
@@ -1371,16 +1547,118 @@ export function Desk({
               : { v: 2, workspaces: [{ id: 'main', name: 'main', windows: [] }] }
           docRef.current = base
           const activeId =
-            base.active !== undefined && base.workspaces.some((w) => w.id === base.active)
-              ? base.active
-              : base.workspaces[0]!.id
+            locked !== undefined && base.workspaces.some((w) => w.id === locked)
+              ? locked
+              : base.active !== undefined && base.workspaces.some((w) => w.id === base.active)
+                ? base.active
+                : base.workspaces[0]!.id
           showWorkspace(api, activeId, live)
+          // The main window brings every pop-out back up: the windows the
+          // document says are open (they died with the last run).
+          if (locked === undefined && desktop !== undefined) {
+            for (const w of base.workspaces) {
+              if (w.popped === true) void desktop.popOutWorkspace?.(w.id, w.name)
+              for (const [gid, meta] of Object.entries(w.windows[0]?.zones ?? {})) {
+                if (meta.popped === true) {
+                  void desktop.popOutZone?.(w.id, gid, `${meta.name ?? 'zone'} · ${w.name} — hodor`)
+                }
+              }
+            }
+          }
         },
       )
         .catch(() => {})
         .finally(() => restoreLatch.current?.done())
     },
-    [save, showWorkspace],
+    [save, showWorkspace, locked],
+  )
+
+  // Pop-out windows report back: a closed zone window brings its zone
+  // back; a closed workspace window brings the workspace back (its last
+  // layout read fresh from the document); a zone window's resume request
+  // is answered by the desk that holds the workspace.
+  useEffect(() => {
+    const bridge = desktop
+    if (bridge === undefined) return
+    const offZone = bridge.onZoneEvent?.((e) => {
+      if (e.type === 'closed') {
+        if (e.wsId === activeRef.current) {
+          if (zonesRef.current[e.groupId]?.popped !== true) return
+          setZones((z) => ({ ...z, [e.groupId]: { ...z[e.groupId], popped: undefined } }))
+          save()
+        } else if (locked === undefined) {
+          const ws = docRef.current.workspaces.find((w) => w.id === e.wsId)
+          const zones = ws?.windows[0]?.zones
+          if (ws === undefined || zones?.[e.groupId]?.popped !== true) return
+          const next: WorkspaceEntry = {
+            ...ws,
+            windows: [{ ...ws.windows[0], zones: { ...zones, [e.groupId]: { ...zones[e.groupId], popped: undefined } } }],
+          }
+          docRef.current = {
+            ...docRef.current,
+            workspaces: docRef.current.workspaces.map((w) => (w.id === e.wsId ? next : w)),
+          }
+          postDoc({ workspace: next })
+        }
+      } else if (e.type === 'resume' && e.panelId !== undefined) {
+        if (e.wsId === activeRef.current && mountedActive()) void resumePanel(e.panelId)
+      }
+    })
+    const offWs = bridge.onWorkspaceEvent?.((e) => {
+      if (e.type !== 'closed' || locked !== undefined) return
+      void Promise.all([fetchWorkspace(), bridge.list()]).then(([doc, live]) => {
+        const fresh = doc?.workspaces.find((w) => w.id === e.wsId)
+        const ws = fresh ?? docRef.current.workspaces.find((w) => w.id === e.wsId)
+        if (ws === undefined || ws.popped !== true) return
+        const { popped: _was, ...next } = ws
+        docRef.current = {
+          ...docRef.current,
+          workspaces: docRef.current.workspaces.map((w) => (w.id === e.wsId ? next : w)),
+        }
+        postDoc({ workspace: next })
+        const api = apiRef.current
+        if (api !== null && e.wsId === activeRef.current) showWorkspace(api, e.wsId, live)
+        else publishWorkspaces()
+      })
+    })
+    return () => {
+      offZone?.()
+      offWs?.()
+    }
+  }, [locked, save, postDoc, resumePanel, showWorkspace, publishWorkspaces, mountedActive])
+
+  // Another window saved the document: take its word for every workspace
+  // but the one mounted here, so badges and "where is it" stay honest.
+  useEffect(
+    () =>
+      onWorkspaceDoc((raw) => {
+        const doc = raw as WorkspaceDoc
+        if (!Array.isArray(doc?.workspaces)) return
+        // The workspace mounted here is ours to describe. A popped-out
+        // active one is its window's — the server's copy wins for it —
+        // except the popped flag itself, which only the 'closed' event
+        // below may clear (a stale echo of our own save must not).
+        const active = activeRef.current
+        const mounted = mountedActive()
+        const theirs = new Map(doc.workspaces.map((w) => [w.id, w]))
+        docRef.current = {
+          ...docRef.current,
+          workspaces: [
+            ...docRef.current.workspaces
+              .filter((w) => w.id === active || theirs.has(w.id))
+              .map((w) => {
+                const server = theirs.get(w.id)
+                if (w.id === active) {
+                  return mounted ? w : { ...(server ?? w), popped: true }
+                }
+                return server ?? w
+              }),
+            ...doc.workspaces.filter((w) => !docRef.current.workspaces.some((x) => x.id === w.id)),
+          ],
+        }
+        publishWorkspaces()
+      }),
+    [publishWorkspaces, mountedActive],
   )
 
   useEffect(() => {
@@ -1522,6 +1800,7 @@ export function Desk({
         renameZone,
         toggleDefault,
         closeZoneTabs,
+        togglePoppedZone,
         resumePanel,
         busy,
         inspect,

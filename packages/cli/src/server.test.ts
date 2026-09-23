@@ -623,6 +623,35 @@ describe('ui prefs', () => {
   })
 })
 
+describe('workspace patches', () => {
+  it('merges one workspace at a time and announces the document over SSE', async () => {
+    const { deps, fs } = serverDeps()
+    const server = await start(fs, deps)
+    {
+      const post = (body: unknown) =>
+        fetch(`${server.url}/api/workspace`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        })
+      expect((await post({ v: 2, workspace: { id: 'a', name: 'A', windows: [] }, active: 'a' })).status).toBe(200)
+      expect((await post({ v: 2, workspace: { id: 'b', name: 'B', popped: true, windows: [{ layout: { g: 1 } }] } })).status).toBe(200)
+      const read = (await (await fetch(`${server.url}/api/workspace`)).json()) as {
+        active?: string
+        workspaces: Array<{ id: string; popped?: boolean }>
+      }
+      expect(read.active).toBe('a')
+      expect(read.workspaces.map((w) => w.id)).toEqual(['a', 'b'])
+      expect(read.workspaces[1]?.popped).toBe(true)
+      expect((await post({ v: 2, remove: 'a' })).status).toBe(200)
+      const after = (await (await fetch(`${server.url}/api/workspace`)).json()) as { active?: string; workspaces: Array<{ id: string }> }
+      expect(after.workspaces.map((w) => w.id)).toEqual(['b'])
+      expect(after.active).toBeUndefined()
+      expect((await post({ v: 2 })).status).toBe(400)
+    }
+  })
+})
+
 describe('workspace document', () => {
   it('round-trips through /api/workspace and starts empty', async () => {
     const { deps, fs } = serverDeps()

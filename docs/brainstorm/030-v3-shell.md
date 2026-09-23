@@ -108,7 +108,38 @@ Gone from the old stack: *later* (pick any row instead), the snooze
 dropdown and the done/kill buttons (the row menu), the "next up" strip
 (the list).
 
+## Phase 4 — shipped: pop-outs
+
+A zone or a whole workspace in its own window. Each pop-out is another
+renderer on the same local server — the main process holds the PTYs, so
+the new window attaches to the same terminals and the desk shows a
+placeholder for what moved out (*⧉ open in its own window · bring it
+back*). Closing the window IS bringing it back.
+
+- **Zone** (zone header menu, or the workspace menu's *pop <zone> out*):
+  `#zone=<workspace>/<group>` renders `ZoneWindow.tsx` — the zone's tabs
+  read from the workspace document, the active tab's terminal below. A
+  dead slot's *resume into place* asks the desk that holds the workspace
+  (an IPC relay); the document update that follows lights the tab up.
+  The flag lives in the zone's meta (`zones[group].popped`).
+- **Workspace** (workspace menu): `#workspace=<id>` renders the whole app
+  locked to that workspace — same chrome, its tab alone, no switching,
+  its own turn stack. The main window shows the placeholder and keeps
+  the tab (with ⧉ and its badge, counted from the document). The flag is
+  `Workspace.popped`.
+- **Two windows, one document.** Saves are per workspace now: a window
+  posts `{ workspace }` (its own), the main window also `{ active }`, a
+  close posts `{ remove }`; the server merges (`mergeWorkspaceDoc`) and
+  announces the document to every window over the snapshot's SSE stream
+  (`event: workspace`). Each window takes the server's word for every
+  workspace but the one mounted in it; a popped-out active workspace
+  takes the server's copy too, except its own popped flag, which only
+  the window's close may clear. Popping out is one write (layout plus
+  flag), so no stale echo can race it.
+- On boot the main window reopens every pop-out the document says is
+  open. Closing the main window closes them.
+
 ## Next
 
-Phase 4 (windows). Open: should the drawer's search also list projects
-and actions (the mock's unused omnibox data had both)?
+Open: should the drawer's search also list projects and actions (the
+mock's unused omnibox data had both)?

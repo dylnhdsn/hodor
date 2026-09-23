@@ -49,6 +49,8 @@ export function workspaceMenuItems(
   id: string,
   projects: Array<{ id: string; name: string }>,
   onSwitch?: () => void,
+  /** This window IS the popped-out workspace: no switching, no closing. */
+  locked = false,
 ): MenuItem[] {
   const w = deskState.workspaces.find((x) => x.id === id)
   const ops = getDeskOps()
@@ -95,21 +97,42 @@ export function workspaceMenuItems(
     ...(w.scope !== undefined
       ? [{ label: 'clear the project scope', onClick: () => ops.scopeWorkspace(w.id, undefined) }]
       : []),
-    { label: 'new workspace…', onClick: create },
-    {
-      label: 'close workspace',
-      danger: true,
-      onClick: () => {
-        const n = deskState.terminalCountOf(w.id)
-        void confirmAction(`Close workspace "${w.name}"?`, {
-          detail: n > 0 ? `${n} terminal${n === 1 ? '' : 's'} will end` : 'it has no terminals',
-          okLabel: 'close',
-          danger: true,
-        }).then((ok) => {
-          if (ok) void ops.closeWorkspace(w.id)
-        })
-      },
-    },
+    ...(locked
+      ? [{ label: 'bring the workspace back into the main window', onClick: () => ops.popInWorkspace(w.id) }]
+      : desktop?.popOutWorkspace !== undefined
+        ? [
+            w.popped === true
+              ? { label: 'bring the workspace back into this window', onClick: () => ops.popInWorkspace(w.id) }
+              : { label: 'pop the workspace out to its own window', onClick: () => ops.popOutWorkspace(w.id) },
+            ...(w.popped !== true && w.id === deskState.active
+              ? deskState.zoneList.map((z) => ({
+                  label: z.popped
+                    ? `bring ${z.name ?? 'the zone'} back`
+                    : `pop ${z.name ?? 'the zone'} out to its own window`,
+                  onClick: () => ops.togglePoppedZone(z.id),
+                }))
+              : []),
+          ]
+        : []),
+    ...(locked ? [] : [{ label: 'new workspace…', onClick: create }]),
+    ...(locked
+      ? []
+      : [
+          {
+            label: 'close workspace',
+            danger: true,
+            onClick: () => {
+              const n = deskState.terminalCountOf(w.id)
+              void confirmAction(`Close workspace "${w.name}"?`, {
+                detail: n > 0 ? `${n} terminal${n === 1 ? '' : 's'} will end` : 'it has no terminals',
+                okLabel: 'close',
+                danger: true,
+              }).then((ok) => {
+                if (ok) void ops.closeWorkspace(w.id)
+              })
+            },
+          },
+        ]),
   ]
 }
 
@@ -117,6 +140,7 @@ export function WorkspaceTabs(props: {
   counts: Map<string, WorkspaceCounts>
   projects: Array<{ id: string; name: string }>
   onSwitch?: (() => void) | undefined
+  locked?: boolean | undefined
 }) {
   const [, force] = useState(0)
   const { menu, openMenu, closeMenu } = useContextMenu()
@@ -144,7 +168,9 @@ export function WorkspaceTabs(props: {
               if (!active) void ops?.switchWorkspace(w.id)
               props.onSwitch?.()
             }}
-            onContextMenu={(e) => openMenu(e, workspaceMenuItems(w.id, props.projects, props.onSwitch))}
+            onContextMenu={(e) =>
+              openMenu(e, workspaceMenuItems(w.id, props.projects, props.onSwitch, props.locked === true))
+            }
             className={`flex h-[22px] shrink-0 items-center gap-1.5 rounded px-2.5 font-ui text-[11.5px] font-semibold whitespace-nowrap hover:text-fg ${
               active ? 'bg-s5 text-fg' : 'text-t3'
             }`}
@@ -156,6 +182,11 @@ export function WorkspaceTabs(props: {
             }
           >
             {w.name}
+            {w.popped === true && props.locked !== true && (
+              <span title="open in its own window" className="text-[10px] font-normal text-rev">
+                ⧉
+              </span>
+            )}
             {c.ask > 0 ? (
               <span className="text-[9.5px] font-bold text-ask">▲{c.ask}</span>
             ) : c.run > 0 ? (
@@ -169,13 +200,15 @@ export function WorkspaceTabs(props: {
           </button>
         )
       })}
-      <button
-        onClick={create}
-        className="h-[22px] shrink-0 px-2 text-[12px] text-t5 hover:text-fg"
-        title="new workspace"
-      >
-        +
-      </button>
+      {props.locked !== true && (
+        <button
+          onClick={create}
+          className="h-[22px] shrink-0 px-2 text-[12px] text-t5 hover:text-fg"
+          title="new workspace"
+        >
+          +
+        </button>
+      )}
       {menu !== undefined && <ContextMenu menu={menu} close={closeMenu} />}
     </span>
   )

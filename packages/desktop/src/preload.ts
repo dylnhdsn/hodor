@@ -24,6 +24,25 @@ const api = {
   close: (id: string) => ipcRenderer.invoke('pty:close', { id }),
   list: () => ipcRenderer.invoke('pty:list'),
   popOut: (id: string) => ipcRenderer.invoke('pty:popout', { id }),
+  popOutZone: (wsId: string, groupId: string, title: string) =>
+    ipcRenderer.invoke('zone:popout', { wsId, groupId, title }),
+  popInZone: (wsId: string, groupId: string) => ipcRenderer.send('zone:popin', { wsId, groupId }),
+  zoneResume: (wsId: string, groupId: string, panelId: string) =>
+    ipcRenderer.send('zone:resume', { wsId, groupId, panelId }),
+  onZoneEvent: (handler: (payload: unknown) => void) => {
+    const listener = (_event: unknown, payload: unknown): void => handler(payload)
+    ipcRenderer.on('zone:event', listener)
+    return () => ipcRenderer.removeListener('zone:event', listener)
+  },
+  popOutWorkspace: (wsId: string, name: string) =>
+    ipcRenderer.invoke('ws:popout', { wsId, name }),
+  popInWorkspace: (wsId: string) => ipcRenderer.send('ws:popin', { wsId }),
+  onWorkspaceEvent: (handler: (payload: unknown) => void) => {
+    const listener = (_event: unknown, payload: unknown): void => handler(payload)
+    ipcRenderer.on('ws:event', listener)
+    return () => ipcRenderer.removeListener('ws:event', listener)
+  },
+  listPopped: () => ipcRenderer.invoke('popped:list'),
   info: () => ipcRenderer.invoke('desktop:info'),
   winMinimize: () => ipcRenderer.send('win:minimize'),
   winMaximize: () => ipcRenderer.send('win:maximize'),

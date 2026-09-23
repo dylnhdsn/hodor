@@ -52,6 +52,18 @@ export interface HodorDesktop {
   close(id: string): Promise<void>
   list(): Promise<TermInfo[]>
   popOut(id: string): Promise<void>
+  /** Pop-outs of zones and workspaces (030 phase 4); absent in older builds. */
+  popOutZone?(wsId: string, groupId: string, title: string): Promise<void>
+  popInZone?(wsId: string, groupId: string): void
+  /** From a zone window: ask the main window to resume a dead slot. */
+  zoneResume?(wsId: string, groupId: string, panelId: string): void
+  onZoneEvent?(
+    handler: (payload: { type: 'closed' | 'resume'; wsId: string; groupId: string; panelId?: string }) => void,
+  ): () => void
+  popOutWorkspace?(wsId: string, name: string): Promise<void>
+  popInWorkspace?(wsId: string): void
+  onWorkspaceEvent?(handler: (payload: { type: 'closed'; wsId: string }) => void): () => void
+  listPopped?(): Promise<{ zones: string[]; workspaces: string[] }>
   info(): Promise<{ version: string; platform: string }>
   /** Frameless-window controls (absent in older desktop builds). */
   winMinimize?(): void

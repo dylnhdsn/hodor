@@ -27,6 +27,9 @@ export interface Workspace {
   name: string
   /** What you are doing here, in your words — the title bar shows it. */
   intent?: string | undefined
+  /** Open in its own window (docs/brainstorm/030 phase 4): the main
+   * window shows a placeholder and that window owns the layout. */
+  popped?: boolean | undefined
   /** Project-scoped: "new session" here defaults to this project. */
   scope?: { projectId: string } | undefined
   windows: WorkspaceWindow[]
@@ -69,6 +72,7 @@ export function parseWorkspaceDoc(raw: unknown): WorkspaceDoc | undefined {
       id: w['id'],
       name: w['name'],
       ...(typeof w['intent'] === 'string' && w['intent'] !== '' ? { intent: w['intent'] } : {}),
+      ...(w['popped'] === true ? { popped: true } : {}),
       ...(isRecord(scope) && typeof scope['projectId'] === 'string'
         ? { scope: { projectId: scope['projectId'] } }
         : {}),
@@ -122,4 +126,46 @@ export async function loadWorkspaces(deps: CliDeps, home: string): Promise<Works
 
 export async function saveWorkspaces(deps: CliDeps, home: string, doc: WorkspaceDoc): Promise<void> {
   await deps.fs.writeFile(v2Path(home), JSON.stringify({ ...doc, v: 2 }, null, 2) + '\n')
+}
+
+/**
+ * A partial write (030 phase 4): two windows editing two workspaces must
+ * not overwrite each other's, so each posts only its own — `workspace`
+ * replaces (or inserts) one by id, `active` names the one showing in the
+ * main window, `remove` drops one. Any combination; at least one.
+ */
+export interface WorkspacePatch {
+  workspace?: Workspace
+  active?: string
+  remove?: string
+}
+
+export function parseWorkspacePatch(raw: unknown): WorkspacePatch | undefined {
+  if (!isRecord(raw)) return undefined
+  const patch: WorkspacePatch = {}
+  if (raw['workspace'] !== undefined) {
+    const one = parseWorkspaceDoc({ workspaces: [raw['workspace']] })?.workspaces[0]
+    if (one === undefined) return undefined
+    patch.workspace = one
+  }
+  if (typeof raw['active'] === 'string') patch.active = raw['active']
+  if (typeof raw['remove'] === 'string') patch.remove = raw['remove']
+  return Object.keys(patch).length > 0 ? patch : undefined
+}
+
+export function mergeWorkspaceDoc(doc: WorkspaceDoc, patch: WorkspacePatch): WorkspaceDoc {
+  let workspaces = [...doc.workspaces]
+  if (patch.workspace !== undefined) {
+    const ws = patch.workspace
+    workspaces = workspaces.some((w) => w.id === ws.id)
+      ? workspaces.map((w) => (w.id === ws.id ? ws : w))
+      : [...workspaces, ws]
+  }
+  if (patch.remove !== undefined) workspaces = workspaces.filter((w) => w.id !== patch.remove)
+  // an active that names no workspace is ignored (the old one holds)
+  const exists = (id: string | undefined): id is string =>
+    id !== undefined && workspaces.some((w) => w.id === id)
+  const active = exists(patch.active) ? patch.active : exists(doc.active) ? doc.active : undefined
+  const { active: _stale, ...rest } = doc
+  return { ...rest, v: 2, workspaces, ...(active !== undefined ? { active } : {}) }
 }
