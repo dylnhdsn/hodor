@@ -224,25 +224,25 @@ body {
   background: color-mix(in srgb, var(--h-ac) 32%, transparent);
 }
 
-/* Terminal tiles sit on their own surface, visibly set off from the app
-   chrome; the focused one carries the accent border, so it's obvious
-   which terminal owns the keyboard. */
+/* A terminal fills its tile edge to edge (the tile's border is the
+   frame); the surface is a shade off the app bg so the screen-within-a-
+   screen still reads as its own thing. */
 .term-shell {
   height: 100%;
   width: 100%;
   background: var(--h-term-bg);
-  border: 1px solid var(--h-b3);
-  border-radius: 6px;
-  padding: 6px;
+  padding: 6px 8px;
   overflow: hidden;
-}
-.term-shell:focus-within {
-  border-color: var(--h-ac);
 }
 .term-shell .xterm,
 .term-shell .xterm .xterm-viewport,
 .term-shell .xterm .xterm-screen {
   height: 100%;
+}
+/* xterm paints its viewport from the theme; keep the sliver below the
+   last row on the tile's own surface rather than a different black. */
+.term-shell .xterm .xterm-viewport {
+  background-color: var(--h-term-bg) !important;
 }
 
 /* Frameless desktop window: the top bar doubles as the titlebar. */
@@ -253,9 +253,32 @@ body {
   -webkit-app-region: no-drag;
 }
 
-/* Dockview chrome follows the scheme. */
-/* The tab strip scrolls (wheel, arrows, right-drag); its own scrollbar
-   would eat a row of pixels from every zone header. */
+/* Dockview chrome follows the scheme and the v3 hairline look: 26px zone
+   headers, 1px tile borders with 4px radii, 6px gutters (each leaf view
+   pads 3px; the sash rides the gap), the focused zone a shade brighter. */
+.desk-grid {
+  padding: 3px;
+}
+.desk-grid .dv-split-view-container .dv-view-container .dv-view:has(> .dv-groupview) {
+  padding: 3px;
+}
+.desk-grid .dv-split-view-container.dv-separator-border .dv-view:not(:first-child)::before {
+  display: none;
+}
+.desk-grid .dv-groupview {
+  border: 1px solid var(--h-b1);
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--h-bg);
+}
+.desk-grid .dv-groupview.dv-active-group {
+  border-color: var(--h-b5);
+}
+.desk-grid .dv-groupview > .dv-tabs-and-actions-container {
+  border-bottom: 1px solid var(--h-b1);
+}
+/* The tab strip scrolls (wheel, right-drag); its own scrollbar would eat
+   a row of pixels from every zone header. */
 .dv-tabs-container {
   scrollbar-width: none;
 }
@@ -266,19 +289,23 @@ body {
 .dockview-theme-dark {
   --dv-group-view-background-color: var(--h-bg);
   --dv-tabs-and-actions-container-background-color: var(--h-s1);
-  --dv-activegroup-visiblepanel-tab-background-color: var(--h-s3);
+  --dv-tabs-and-actions-container-height: 26px;
+  --dv-tabs-and-actions-container-font-size: 11px;
+  --dv-activegroup-visiblepanel-tab-background-color: var(--h-bg);
   --dv-activegroup-visiblepanel-tab-color: var(--h-fg);
-  --dv-activegroup-hiddenpanel-tab-background-color: var(--h-s1);
-  --dv-inactivegroup-visiblepanel-tab-background-color: var(--h-s2);
-  --dv-inactivegroup-hiddenpanel-tab-background-color: var(--h-s1);
-  --dv-tab-divider-color: var(--h-b1);
-  --dv-separator-border: var(--h-b1);
+  --dv-activegroup-hiddenpanel-tab-background-color: transparent;
+  --dv-inactivegroup-visiblepanel-tab-background-color: var(--h-bg);
+  --dv-inactivegroup-hiddenpanel-tab-background-color: transparent;
+  --dv-tab-divider-color: transparent;
+  --dv-separator-border: transparent;
+  --dv-sash-color: transparent;
+  --dv-active-sash-color: var(--h-b4);
   --dv-drag-over-background-color: color-mix(in srgb, var(--h-ac) 14%, transparent);
   --dv-drag-over-border-color: var(--h-ac);
   --dv-paneview-active-outline-color: var(--h-ac);
 }
 
-/* Mock tab anatomy (dot + ❯ + title) owns the tab's full box. */
+/* The v3 tab anatomy (glyph + title) owns the tab's full box. */
 .dockview-theme-dark .dv-tab {
   padding: 0;
   min-width: 0;
@@ -287,6 +314,6 @@ body {
   padding: 0;
 }
 .dockview-theme-dark .dv-tabs-and-actions-container {
-  height: 30px;
+  height: 26px;
   font-size: 11px;
 }

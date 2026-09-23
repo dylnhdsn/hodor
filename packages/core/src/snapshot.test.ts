@@ -632,6 +632,44 @@ describe('buildSnapshot', () => {
     expect(pricedSession.costUnpriced).toBeUndefined()
   })
 
+  it('reports the spend that happened today, by the local calendar day', () => {
+    const usage = { input: 0, output: 1_000_000, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0, thinking: 0 }
+    const line = (uuid: string, messageId: string, timestamp: string): MessageLine => ({
+      kind: 'message',
+      type: 'assistant',
+      uuid,
+      parentUuid: null,
+      isSidechain: false,
+      isMeta: false,
+      timestamp,
+      model: 'claude-opus-5',
+      messageId,
+      usage,
+    })
+    const dayBefore = new Date(NOW.getTime() - 36 * 3600_000).toISOString()
+    const events: SourceEvent[] = [
+      {
+        type: 'transcript-lines',
+        storeId: 's1',
+        transcriptPath: '/store/projects/-x/aaa.jsonl',
+        sessionId: 'aaa',
+        lines: [line('a1', 'm1', dayBefore), line('a2', 'm2', NOW.toISOString())],
+      },
+      {
+        type: 'transcript-lines',
+        storeId: 's1',
+        transcriptPath: '/store/projects/-x/bbb.jsonl',
+        sessionId: 'bbb',
+        lines: [line('b1', 'm3', dayBefore)],
+      },
+    ]
+    const snapshot = buildSnapshot(foldAll(emptyState, events), { now: NOW })
+    const aaa = snapshot.sessions.find((s) => s.id === 'aaa')!
+    expect(aaa.costUsd).toBeCloseTo(50, 4)
+    expect(aaa.costTodayUsd).toBeCloseTo(25, 4)
+    expect(snapshot.sessions.find((s) => s.id === 'bbb')!.costTodayUsd).toBeUndefined()
+  })
+
   it('detects modern forks by shared API message ids and un-double-counts cost', () => {
     const usageOf = (output: number) => ({
       input: 10, output, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0, thinking: 0,

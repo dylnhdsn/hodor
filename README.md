@@ -10,9 +10,10 @@ event-folding state model with incremental live tailing, git enrichment
 (repos, worktrees, remotes, local-remote chasing — no git binary needed),
 visibility rules with provenance, a user plane (custom projects with
 evidence matchers), curation commands, and a live web UI served from the
-single-file build: unified project rail, per-project settings with
-matcher preview, and a session detail pane with subagent runs, fork
-lineage, placement provenance, and the conversation tail. See
+single-file build: a projects drawer with search, a per-project overlay
+(every session as one table, bulk verbs, settings with matcher preview)
+and a session detail page with subagent runs, fork lineage, placement
+provenance, and the conversation tail. See
 [docs/brainstorm](docs/brainstorm/) for design notes.
 
 ## Layout
@@ -166,12 +167,18 @@ hodor update --channel stable    # move to another channel
 ### Desktop app
 
 The same UI as a desktop app with EMBEDDED terminals: resume, fork, and
-new-session open real `claude` PTYs in a workspace region — tab groups,
+new-session open real `claude` PTYs on the desk — named zones of tabs,
 drag-to-split layouts, pop-out windows — routed into the right place (a
 WSL store's session opens inside its distro even from the Windows app).
-The arrangement persists across restarts: reopening the app rebuilds
-your layout, and each dead tile offers to `claude --resume` its session
-right back into place. Unsigned builds on the same rolling release
+Workspaces are tabs in the title bar, each with its own desk, turn stack
+and skips; the status bar says where you are (workspace · zone, the
+focused tile's directory, branch, model and context left) and what the
+desk is doing (waiting, running, spent today, hooks, server). The
+projects drawer (☰, or pinned) lists every project with its counts; a
+project's overlay is its library. The arrangement persists across
+restarts: reopening the app rebuilds your layout, and each dead tile
+offers to `claude --resume` its session right back into place. The
+experimental channel carries the v3 shell (docs/brainstorm/030). Unsigned builds on the same rolling release
 (expect a SmartScreen/Gatekeeper warning):
 
 - [Windows installer](https://github.com/dylnhdsn/hodor/releases/download/latest/hodor-desktop-win-x64.exe)
@@ -180,7 +187,7 @@ right back into place. Unsigned builds on the same rolling release
 
 ### Sessions that outlive hodor
 
-Settings → *keep sessions running when hodor closes*: on quit each
+Settings › behavior → *keep sessions running when hodor closes*: on quit each
 claude tile is sent to the CLI's supervisor with `/background` instead
 of being killed, and restoring the tile later runs `claude attach`.
 A tab's menu has *detach (keep running)* for one session at a time.

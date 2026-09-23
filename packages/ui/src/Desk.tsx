@@ -15,10 +15,11 @@ import {
 import 'dockview/dist/styles/dockview.css'
 import { postMutation } from './data.js'
 import { desktop, type OpenTarget } from './desktop.js'
-import { promptText } from './dialog.js'
+import { confirmAction, promptText } from './dialog.js'
+import { Glyph, type GlyphKind } from './glyphs.js'
 import { ShellIcon } from './icons.js'
 import { Tip } from './tip.js'
-import { ContextMenu, useContextMenu } from './menu.js'
+import { ContextMenu, useContextMenu, type MenuItem } from './menu.js'
 import { focusTerminal, TerminalView } from './Terminal.js'
 
 /**
@@ -48,6 +49,8 @@ interface ZoneMeta {
 interface WorkspaceEntry {
   id: string
   name: string
+  /** What you are doing here, in your words (the title bar shows it). */
+  intent?: string
   scope?: { projectId: string }
   windows: Array<{ layout?: unknown; zones?: Record<string, ZoneMeta> }>
   defer?: Record<string, DeferState>
@@ -166,8 +169,13 @@ export const deskState: {
   entries: DeskEntry[]
   defer: Record<string, DeferState>
   /** Every workspace, for the title bar; `active` is the one showing. */
-  workspaces: Array<{ id: string; name: string; scope?: { projectId: string } }>
+  workspaces: Array<{ id: string; name: string; intent?: string; scope?: { projectId: string } }>
   active: string | undefined
+  /** The tile that owns the keyboard (dockview's active panel) — the
+   * status bar describes it. */
+  focusPanelId: string | undefined
+  /** Zone names in layout order, for menus that offer "open in…". */
+  zoneList: Array<{ id: string; name: string | undefined; def: boolean }>
   /** Terminals a workspace holds — live ones for the active, saved ones
    * for the rest — so "close workspace" can say what it costs. */
   terminalCountOf: (id: string) => number
@@ -180,6 +188,8 @@ export const deskState: {
   defer: {},
   workspaces: [],
   active: undefined,
+  focusPanelId: undefined,
+  zoneList: [],
   terminalCountOf: () => 0,
   entriesOf: () => [],
   deferOf: () => ({}),
@@ -205,10 +215,34 @@ interface DeskOps {
   /** A skip/snooze in a workspace that may not be showing. */
   setDeferIn: (workspaceId: string, sessionId: string, state: DeferState | undefined) => void
   scopeWorkspace: (id: string, projectId: string | undefined) => void
+  setIntent: (id: string, intent: string | undefined) => void
+  /** The next terminal to open lands in this zone (a zone's "+"). */
+  openInZone: (groupId: string | undefined) => void
+  renameZone: (groupId: string) => void
+  setDefaultZone: (groupId: string) => void
+  closeZoneTabs: (groupId: string) => void
 }
 
 let deskOps: DeskOps | undefined
 export const getDeskOps = (): DeskOps | undefined => deskOps
+
+/** The tile holding a session (local id or cloud id), in whichever
+ * workspace: the active one's live entries first, then the saved ones. */
+export function tileOf(
+  id: string,
+): { workspace: { id: string; name: string }; entry: DeskEntry; active: boolean } | undefined {
+  const order = [...deskState.workspaces].sort(
+    (a, b) => Number(b.id === deskState.active) - Number(a.id === deskState.active),
+  )
+  for (const w of order) {
+    const active = w.id === deskState.active
+    const entry = (active ? deskState.entries : deskState.entriesOf(w.id)).find(
+      (e) => e.sessionId === id || e.cloudId === id,
+    )
+    if (entry !== undefined) return { workspace: { id: w.id, name: w.name }, entry, active }
+  }
+  return undefined
+}
 
 // Debug handles: the desk's store and verbs, reachable from the devtools
 // console (and the e2e harness) without going through the UI.
@@ -263,9 +297,6 @@ export const deferNoteOf = (sessionId: string): string | undefined =>
  * overflow menu. */
 const tabStripOf = (el: HTMLElement | undefined): HTMLElement | null =>
   el?.querySelector<HTMLElement>('.dv-tabs-container') ?? null
-const scrollStrip = (el: HTMLElement | undefined, dx: number): void => {
-  tabStripOf(el)?.scrollBy({ left: dx, behavior: 'smooth' })
-}
 if (typeof document !== 'undefined') {
   // vertical wheel over a strip scrolls it sideways (it has no vertical axis)
   document.addEventListener(
@@ -334,24 +365,37 @@ if (typeof window !== 'undefined') {
  * status dots and carry the session's actual name. */
 export const deskTurnStates: Record<string, 'working' | 'waiting' | 'idle'> = {}
 export const deskSessionTitles: Record<string, string> = {}
+/** Waiting signatures (what each session is asking) — a skip from a tab
+ * snapshots this, exactly like a skip from a row does. */
+export const deskTurnSigs: Record<string, string> = {}
 export function setDeskSessions(
   states: Record<string, 'working' | 'waiting' | 'idle'>,
   titles: Record<string, string>,
+  sigs: Record<string, string> = {},
 ): void {
   const changed =
     Object.keys(states).length !== Object.keys(deskTurnStates).length ||
     Object.entries(states).some(([id, state]) => deskTurnStates[id] !== state) ||
     Object.keys(titles).length !== Object.keys(deskSessionTitles).length ||
-    Object.entries(titles).some(([id, title]) => deskSessionTitles[id] !== title)
+    Object.entries(titles).some(([id, title]) => deskSessionTitles[id] !== title) ||
+    Object.entries(sigs).some(([id, sig]) => deskTurnSigs[id] !== sig)
   if (!changed) return
   for (const id of Object.keys(deskTurnStates)) delete deskTurnStates[id]
   Object.assign(deskTurnStates, states)
   for (const id of Object.keys(deskSessionTitles)) delete deskSessionTitles[id]
   Object.assign(deskSessionTitles, titles)
+  for (const id of Object.keys(deskTurnSigs)) delete deskTurnSigs[id]
+  Object.assign(deskTurnSigs, sigs)
   notifyDesk()
 }
 
 function refreshEntries(api: DockviewApi): void {
+  deskState.focusPanelId = api.activePanel?.id
+  deskState.zoneList = api.groups.map((g) => ({
+    id: g.id,
+    name: zoneMetas[g.id]?.name,
+    def: zoneMetas[g.id]?.def === true,
+  }))
   deskState.entries = api.panels.map((p) => {
     const params = paramsOf(p)
     const zone = p.group !== undefined ? zoneMetas[p.group.id]?.name : undefined
@@ -436,19 +480,21 @@ interface DeskContextValue {
   zones: Record<string, ZoneMeta>
   renameZone: (groupId: string) => void
   toggleDefault: (groupId: string) => void
+  closeZoneTabs: (groupId: string) => void
   resumePanel: (panelId: string) => void
   busy: ReadonlySet<string>
   inspect?: ((sessionId: string) => void) | undefined
   /** The active workspace's project scope, when it has one (027). */
   scopeName?: string | undefined
-  /** Start a session in the scoped project. */
-  newSession?: (() => void) | undefined
+  /** Start a session that lands in this zone (the header's "+"). */
+  newSessionIn?: ((groupId: string) => void) | undefined
 }
 
 const DeskContext = createContext<DeskContextValue>({
   zones: {},
   renameZone: () => {},
   toggleDefault: () => {},
+  closeZoneTabs: () => {},
   resumePanel: () => {},
   busy: new Set(),
 })
@@ -504,7 +550,7 @@ function TerminalPanel(props: IDockviewPanelProps<SlotParams>) {
   if (status === 'checking') return <div className="h-full w-full bg-app" />
   if (status === 'live' && ptyId !== undefined) {
     return (
-      <div className="h-full w-full bg-app p-1">
+      <div className="h-full w-full bg-app">
         <TerminalView ptyId={ptyId} visible autoFocus={active} />
       </div>
     )
@@ -544,83 +590,56 @@ function TerminalPanel(props: IDockviewPanelProps<SlotParams>) {
   )
 }
 
-/** Zone chrome on the group header: NAME + tab count (mock: "ACTIVE 3 tabs"). */
+/** Zone chrome on the group header (the v3 mock): the zone's NAME as a
+ * label, its verbs behind a right-click. */
 function ZoneHeader(props: IDockviewHeaderActionsProps) {
-  const { zones, renameZone } = useContext(DeskContext)
+  const { zones, renameZone, toggleDefault, closeZoneTabs, newSessionIn } = useContext(DeskContext)
+  const { menu, openMenu, closeMenu } = useContextMenu()
   const meta = zones[props.group.id]
-  const n = props.panels.length
+  const name = meta?.name
+  const items: MenuItem[] = [
+    { label: name ?? 'zone', heading: true },
+    ...(newSessionIn !== undefined
+      ? [{ label: 'new session here…', onClick: () => newSessionIn(props.group.id) }]
+      : []),
+    { label: name === undefined ? 'name this zone…' : 'rename zone…', onClick: () => renameZone(props.group.id) },
+    {
+      label: meta?.def === true ? 'new terminals land here — unset' : 'new terminals land here',
+      onClick: () => toggleDefault(props.group.id),
+    },
+    ...(props.panels.length > 0
+      ? [{ label: 'close every tab', onClick: () => closeZoneTabs(props.group.id), danger: true }]
+      : []),
+  ]
   return (
-    <div className="flex h-full items-center gap-2 pl-2.5 pr-1">
-      <button
-        onClick={() => scrollStrip(props.group.element, -240)}
-        title="scroll tabs left"
-        className="px-1 font-mono text-[11px] text-t6 hover:text-fg"
-      >
-        ‹
-      </button>
-      <button
-        onClick={() => renameZone(props.group.id)}
-        title="rename this zone"
-        className={`font-mono text-[10px] font-bold tracking-[.14em] ${
-          meta?.name !== undefined ? 'text-t1 hover:text-fg' : 'text-t6 hover:text-t3'
-        }`}
-      >
-        {meta?.name ?? 'NAME ZONE…'}
-      </button>
-      <span className="font-mono text-[9.5px] text-t6">
-        {n} tab{n === 1 ? '' : 's'}
-      </span>
+    <div
+      onContextMenu={(e) => openMenu(e, items)}
+      onDoubleClick={() => renameZone(props.group.id)}
+      title={meta?.def === true ? 'new terminals open here' : undefined}
+      className={`flex h-full select-none items-center whitespace-nowrap border-r border-b1 px-2.5 font-ui text-[9.5px] font-bold tracking-[.1em] uppercase ${
+        name !== undefined ? 'text-t4' : 'text-t6'
+      }`}
+    >
+      {name ?? 'zone'}
+      {meta?.def === true && <span className="ml-1.5 font-mono text-[8px] text-t6">◎</span>}
+      {menu !== undefined && <ContextMenu menu={menu} close={closeMenu} />}
     </div>
   )
 }
 
-/** Right chrome: default-target chip, detail, pop-out. */
+/** Right chrome: the "+" that starts a session in this zone. */
 function GroupActions(props: IDockviewHeaderActionsProps) {
-  const { zones, toggleDefault, inspect } = useContext(DeskContext)
-  const meta = zones[props.group.id]
-  const active = props.activePanel
-  const ptyId = active !== undefined ? paramsOf(active).ptyId : undefined
-  const sessionId = active !== undefined ? paramsOf(active).target?.sessionId : undefined
-  if (desktop === undefined) return null
-  const bridge = desktop
+  const { newSessionIn } = useContext(DeskContext)
+  if (desktop === undefined || newSessionIn === undefined) return null
   return (
-    <div className="flex h-full items-center gap-0.5 px-1.5">
+    <div className="flex h-full items-center">
       <button
-        onClick={() => scrollStrip(props.group.element, 240)}
-        title="scroll tabs right"
-        className="px-1 font-mono text-[11px] text-t6 hover:text-fg"
+        onClick={() => newSessionIn(props.group.id)}
+        title="new session here"
+        className="px-2.5 font-mono text-[12px] text-t5 hover:text-fg"
       >
-        ›
+        +
       </button>
-      <button
-        onClick={() => toggleDefault(props.group.id)}
-        title="new terminals open here"
-        className={`font-mono text-[9.5px] ${
-          meta?.def === true
-            ? 'rounded border border-dashed border-b5 px-1.5 py-px text-t4'
-            : 'px-1 text-t6 opacity-40 hover:opacity-100'
-        }`}
-      >
-        {meta?.def === true ? 'default target' : '◎'}
-      </button>
-      {sessionId !== undefined && inspect !== undefined && (
-        <button
-          onClick={() => inspect(sessionId)}
-          className="px-1 font-mono text-[10px] text-t4 hover:text-fg"
-          title="session detail"
-        >
-          ⓘ
-        </button>
-      )}
-      {ptyId !== undefined && (
-        <button
-          onClick={() => void bridge.popOut(ptyId)}
-          className="px-1 text-t4 hover:text-t1"
-          title="open in its own window"
-        >
-          ⧉
-        </button>
-      )}
     </div>
   )
 }
@@ -676,19 +695,28 @@ function SlotTab(props: IDockviewPanelHeaderProps<SlotParams>) {
   const title = (sessionId !== undefined ? deskSessionTitles[sessionId] : undefined) ?? panelTitle
   const turn = sessionId !== undefined ? deskTurnStates[sessionId] : undefined
   const dead = props.params.ptyId === undefined
-  // The dot means ONE thing: whose turn it is. Your turn (amber) and
-  // working (green) are mutually exclusive; a dead slot is grey. Which
-  // tab is visible/focused is said by the underline instead, so the two
+  const kind = props.params.target?.kind
+  // The glyph means ONE thing: whose turn it is (▲ yours, ● its, ○ idle);
+  // shells are ❯ and teleported cloud sessions the cloud. Which tab is
+  // visible/focused is said by the tab's background instead, so the two
   // signals never fight over the same pixel.
-  const dot =
-    turn === 'waiting'
-      ? 'text-ask'
-      : turn === 'working'
-        ? 'text-run'
-        : dead
-          ? 'text-b6'
-          : 'text-t6'
+  const glyph: GlyphKind =
+    kind === 'shell'
+      ? 'shell'
+      : kind === 'teleport'
+        ? 'cloud'
+        : turn === 'waiting'
+          ? 'ask'
+          : turn === 'working'
+            ? 'run'
+            : dead
+              ? 'dead'
+              : 'idle'
   const env = props.params.env
+  // Windows shells differ in kind (WSL, PowerShell, cmd); the mark shows
+  // only when that distinction exists — never on a plain shell.
+  const shellMark = env !== undefined && (env.startsWith('wsl') || env === 'powershell' || env === 'cmd')
+  const { inspect } = useContext(DeskContext)
 
   const rename = (): void => {
     void promptText('Rename session', {
@@ -726,7 +754,7 @@ function SlotTab(props: IDockviewPanelHeaderProps<SlotParams>) {
                   label: 'open in its own window',
                   onClick: () => void desktop!.popOut(props.params.ptyId!),
                 },
-                ...(props.params.target?.kind !== 'shell' && props.params.target?.kind !== 'teleport'
+                ...(kind !== 'shell' && kind !== 'teleport'
                   ? [
                       {
                         label: 'detach (keep running)',
@@ -736,48 +764,64 @@ function SlotTab(props: IDockviewPanelHeaderProps<SlotParams>) {
                   : []),
               ]
             : []),
+          ...(sessionId !== undefined && turn === 'waiting' && deskOps !== undefined
+            ? deskState.defer[sessionId] !== undefined
+              ? [{ label: 'unskip', onClick: () => deskOps?.setDefer(sessionId, undefined) }]
+              : [
+                  {
+                    label: 'skip',
+                    onClick: () => deskOps?.setDefer(sessionId, { sig: deskTurnSigs[sessionId] ?? '' }),
+                  },
+                  {
+                    label: 'skip with a note…',
+                    onClick: () =>
+                      void promptText('skip with a note', { okLabel: 'skip' }).then((note) => {
+                        if (note === undefined) return
+                        deskOps?.setDefer(sessionId, {
+                          sig: deskTurnSigs[sessionId] ?? '',
+                          ...(note.trim() !== '' ? { note: note.trim() } : {}),
+                        })
+                      }),
+                  },
+                ]
+            : []),
+          ...(sessionId !== undefined && inspect !== undefined
+            ? [{ label: 'session detail', onClick: () => inspect(sessionId) }]
+            : []),
           { label: 'close tab', onClick: () => props.api.close(), danger: true },
         ])
       }
-      className={`group flex h-full items-center gap-1.5 px-2.5 font-mono text-[11px] ${
-        active
-          ? focused
-            ? 'text-fg shadow-[inset_0_-2px_0_0_var(--h-ac)]'
-            : 'text-fg shadow-[inset_0_-2px_0_0_var(--h-b6)]'
-          : 'text-t4 hover:text-t2'
-      }`}
+      // middle-click closes, the one mouse convention every tab strip has
+      onAuxClick={(e) => {
+        if (e.button === 1) props.api.close()
+      }}
+      className={`group flex h-full items-center gap-1.5 border-r border-b1 px-2.5 ${
+        active ? 'bg-app text-fg' : 'text-t3 hover:text-fg'
+      } ${active && focused ? 'shadow-[inset_0_2px_0_0_var(--h-ac)]' : ''}`}
     >
-      <span className={`text-[8px] ${dot}`}>●</span>
-      <Tip text={shellLabel(env)} className="flex items-center text-t5">
-        <ShellIcon env={env} />
-      </Tip>
-      <span className="max-w-[160px] truncate font-ui text-[11.5px] font-semibold">{title}</span>
-      <button
-        onClick={(e) => {
-          e.stopPropagation()
-          props.api.close()
-        }}
-        className="pl-0.5 text-t6 opacity-0 hover:text-err group-hover:opacity-100"
-        title="close"
-      >
-        ×
-      </button>
+      <Glyph kind={glyph} size={9} />
+      {shellMark && (
+        <Tip text={shellLabel(env)} className="flex items-center text-t6">
+          <ShellIcon env={env} size={10} />
+        </Tip>
+      )}
+      <span className="max-w-[180px] truncate font-ui text-[11px]">{title}</span>
       {menu !== undefined && <ContextMenu menu={menu} close={closeMenu} />}
     </div>
   )
 }
 
 function Watermark(_props: IWatermarkPanelProps) {
-  const { scopeName, newSession } = useContext(DeskContext)
+  const { scopeName, newSessionIn } = useContext(DeskContext)
   return (
     <div className="flex h-full w-full flex-col items-center justify-center gap-3 bg-app font-mono text-[11px] text-t6">
-      <span>no tabs — open a session from the library, or drag one here</span>
-      {scopeName !== undefined && newSession !== undefined && (
+      <span>no tabs — drag a session here, or</span>
+      {newSessionIn !== undefined && (
         <button
-          onClick={newSession}
+          onClick={() => newSessionIn('')}
           className="rounded border border-ac/55 px-3.5 py-1.5 font-ui text-[11.5px] font-semibold text-ach hover:bg-ac/10"
         >
-          new session in {scopeName}
+          {scopeName !== undefined ? `new session in ${scopeName}` : 'new session…'}
         </button>
       )}
     </div>
@@ -789,11 +833,12 @@ const panelComponents = { terminal: TerminalPanel }
 export function Desk({
   inspect,
   scopeName,
-  newSession,
+  newSessionIn,
 }: {
   inspect?: (sessionId: string) => void
   scopeName?: string | undefined
-  newSession?: (() => void) | undefined
+  /** Start a session landing in a zone ('' = the default zone). */
+  newSessionIn?: ((groupId: string) => void) | undefined
 }) {
   const [zones, setZones] = useState<Record<string, ZoneMeta>>({})
   const [busy, setBusy] = useState<ReadonlySet<string>>(new Set())
@@ -855,6 +900,7 @@ export function Desk({
     deskState.workspaces = docRef.current.workspaces.map((w) => ({
       id: w.id,
       name: w.name,
+      ...(w.intent !== undefined ? { intent: w.intent } : {}),
       ...(w.scope !== undefined ? { scope: w.scope } : {}),
     }))
     deskState.active = activeRef.current
@@ -923,14 +969,15 @@ export function Desk({
   const renameZone = useCallback(
     (groupId: string) => {
       const current = zonesRef.current[groupId]?.name ?? ''
-      void promptText('Zone name', {
+      void promptText('zone name', {
         initial: current,
-        placeholder: 'ACTIVE, PR REVIEWS, MISC…',
+        placeholder: 'Active, PR reviews, Misc…',
+        okLabel: 'rename',
       }).then((name) => {
         if (name === undefined) return
         setZones((z) => ({
           ...z,
-          [groupId]: { ...z[groupId], name: name.trim().toUpperCase() || undefined },
+          [groupId]: { ...z[groupId], name: name.trim() || undefined },
         }))
         save()
       })
@@ -1168,6 +1215,38 @@ export function Desk({
     [publishWorkspaces, save],
   )
 
+  const setIntent = useCallback(
+    (id: string, intent: string | undefined): void => {
+      docRef.current = {
+        ...docRef.current,
+        workspaces: docRef.current.workspaces.map((w) => {
+          if (w.id !== id) return w
+          const { intent: _drop, ...rest } = w
+          const text = intent?.trim() ?? ''
+          return text !== '' ? { ...rest, intent: text } : rest
+        }),
+      }
+      publishWorkspaces()
+      save()
+    },
+    [publishWorkspaces, save],
+  )
+
+  const closeZoneTabs = useCallback((groupId: string): void => {
+    const api = apiRef.current
+    const group = api?.groups.find((g) => g.id === groupId)
+    if (api === null || api === undefined || group === undefined) return
+    const n = group.panels.length
+    void confirmAction(`Close every tab in ${zonesRef.current[groupId]?.name ?? 'this zone'}?`, {
+      detail: `${n} terminal${n === 1 ? '' : 's'} will end`,
+      okLabel: 'close',
+      danger: true,
+    }).then((ok) => {
+      if (!ok) return
+      for (const panel of [...group.panels]) api.removePanel(panel)
+    })
+  }, [])
+
   const scopeWorkspace = useCallback(
     (id: string, projectId: string | undefined): void => {
       docRef.current = {
@@ -1214,6 +1293,13 @@ export function Desk({
       closeWorkspace,
       setDeferIn,
       scopeWorkspace,
+      setIntent,
+      openInZone: (groupId) => {
+        pendingOpen.groupId = groupId
+      },
+      renameZone,
+      setDefaultZone: toggleDefault,
+      closeZoneTabs,
     }
     ;(window as unknown as { __deskOps: DeskOps | undefined }).__deskOps = deskOps
     return () => {
@@ -1229,6 +1315,10 @@ export function Desk({
     closeWorkspace,
     setDeferIn,
     scopeWorkspace,
+    setIntent,
+    renameZone,
+    toggleDefault,
+    closeZoneTabs,
   ])
 
   const onReady = useCallback(
@@ -1252,6 +1342,15 @@ export function Desk({
       api.onDidLayoutChange(() => {
         save()
         refreshEntries(api)
+      })
+      // The focused tile drives the status bar's "where am I" segments.
+      api.onDidActivePanelChange(() => {
+        deskState.focusPanelId = api.activePanel?.id
+        notifyDesk()
+      })
+      api.onDidActiveGroupChange(() => {
+        deskState.focusPanelId = api.activePanel?.id
+        notifyDesk()
       })
       // Accept session-row drags from the library as drop targets.
       api.onUnhandledDragOver((e) => {
@@ -1418,11 +1517,21 @@ export function Desk({
 
   return (
     <DeskContext.Provider
-      value={{ zones, renameZone, toggleDefault, resumePanel, busy, inspect, scopeName, newSession }}
+      value={{
+        zones,
+        renameZone,
+        toggleDefault,
+        closeZoneTabs,
+        resumePanel,
+        busy,
+        inspect,
+        scopeName,
+        newSessionIn,
+      }}
     >
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {restore !== undefined && (
-          <div className="mx-3 mt-2.5 flex flex-none items-center gap-2.5 rounded border border-ac/50 bg-ac/8 px-3.5 py-2 text-[12.5px]">
+          <div className="mx-1.5 mt-1.5 flex flex-none items-center gap-2.5 rounded border border-ac/50 bg-ac/8 px-3.5 py-2 text-[12.5px]">
             <span className="font-bold">Restore your desk?</span>
             <span className="text-xs text-t3">
               {restore.dead} session{restore.dead === 1 ? '' : 's'} across {restore.zones} zone
@@ -1442,7 +1551,7 @@ export function Desk({
             </button>
           </div>
         )}
-        <div className="min-h-0 flex-1 p-1.5">
+        <div className="desk-grid min-h-0 flex-1">
           <DockviewReact
             onReady={onReady}
             components={panelComponents}

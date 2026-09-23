@@ -149,6 +149,8 @@ export interface Session {
   costUsd?: number
   /** Models with tokens but no pricing entry — costUsd is a floor, not a total. */
   costUnpriced?: string[]
+  /** The part of costUsd spent today (this machine's calendar day). */
+  costTodayUsd?: number
   turn?: SessionTurn
   threads: Thread[]
   runtime: Runtime

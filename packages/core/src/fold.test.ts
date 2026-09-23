@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { MessageLine, TranscriptLine } from './claude/transcript.js'
 import type { SourceEvent } from './events.js'
-import { emptyState, foldAll, gitKey } from './fold.js'
+import { emptyState, foldAll, gitKey, localDayOf } from './fold.js'
 
 const msg = (over: Partial<MessageLine> & { uuid: string }): MessageLine => ({
   kind: 'message',
@@ -38,6 +38,28 @@ describe('fold', () => {
     expect(accum.gitBranch).toBe('main')
     expect(accum.cliVersion).toBe('2.1.0')
     expect(accum.main.messageCount).toBe(3)
+  })
+
+  it('buckets billed usage by local calendar day, skipping undated lines', () => {
+    const u = { input: 10, output: 100, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0, thinking: 0 }
+    const noon = (day: string): string => `${day}T12:00:00.000Z`
+    const state = foldAll(emptyState, [
+      lines('a', [
+        msg({ uuid: 'a1', type: 'assistant', model: 'm', messageId: 'm1', usage: u, timestamp: noon('2026-03-01') }),
+        msg({ uuid: 'a2', type: 'assistant', model: 'm', messageId: 'm2', usage: u, timestamp: noon('2026-03-01') }),
+        msg({ uuid: 'a3', type: 'assistant', model: 'm', messageId: 'm3', usage: u, timestamp: noon('2026-03-02') }),
+        msg({ uuid: 'a4', type: 'assistant', model: 'm', messageId: 'm4', usage: u }),
+      ]),
+    ])
+    const byDay = state.sessions['a']!.main.usageByDay!
+    const d1 = localDayOf(noon('2026-03-01'))
+    const d2 = localDayOf(noon('2026-03-02'))
+    expect(Object.keys(byDay).sort()).toEqual([d1, d2].sort())
+    expect(byDay[d1]!['m']!.output).toBe(200)
+    expect(byDay[d2]!['m']!.output).toBe(100)
+    // the total still counts every billed line, dated or not
+    expect(state.sessions['a']!.main.usageByModel!['m']!.output).toBe(400)
+    expect(localDayOf('garbage')).toBe('')
   })
 
   it('bills usage once per API message id, into the thread that produced it', () => {

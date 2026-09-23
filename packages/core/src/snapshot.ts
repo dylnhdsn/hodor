@@ -1,7 +1,7 @@
 import { turnFromAgent, type LiveAgent } from './agents.js'
 import { hookIsCurrent, turnFromHook } from './hooks.js'
 import type { CloudSession } from './cloud.js'
-import { gitKey, type CoreState, type SessionAccum, type ThreadAccum } from './fold.js'
+import { gitKey, type CoreState, type SessionAccum, type ThreadAccum, localDayOf } from './fold.js'
 import {
   addUsage,
   costOfUsage,
@@ -242,6 +242,17 @@ function toSession(
     const cost = costOfUsage(byModel, pricing)
     session.costUsd = cost.usd
     if (cost.unpriced.length > 0) session.costUnpriced = cost.unpriced
+  }
+  // Today's share of that spend (local calendar day), summed over threads.
+  const today = localDayOf(now.toISOString())
+  const todayByModel: Record<string, UsageTotals> = {}
+  for (const thread of [accum.main, ...accum.sidechains]) {
+    for (const [model, totals] of Object.entries(thread.usageByDay?.[today] ?? {})) {
+      addUsage((todayByModel[model] ??= emptyUsage()), totals)
+    }
+  }
+  if (Object.keys(todayByModel).length > 0) {
+    session.costTodayUsd = costOfUsage(todayByModel, pricing).usd
   }
   const cwd = accum.cwds[accum.cwds.length - 1]
   if (cwd !== undefined) session.cwd = cwd

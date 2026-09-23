@@ -1,0 +1,90 @@
+# 030 — The v3 shell
+
+Dylan's Claude Design mock ("hodor v3", seven screens: the desk, the
+projects drawer, the turn stack, the project overlay and its settings
+page, the text dialog, popped-out zones and workspaces). Built as drawn
+wherever the app already had the underlying operation; the decisions
+below cover what had to differ. Ships on the experimental channel from
+`exp/workspaces`, because the mock assumes workspaces everywhere.
+
+## Decisions
+
+1. **Branch.** v3 lands on `exp/workspaces`; nightly keeps the previous
+   UI until promoted.
+2. **Desk engine.** dockview stays, restyled to the mock's hairline look:
+   a 26px zone header reading *name · tabs · +*, 1px tile borders with
+   4px radii, 6px gutters (each leaf view pads 3px, the sash rides the
+   gap), the focused zone one shade brighter. Tabs still drag between
+   zones and splits still resize — the mock's fixed grid would have lost
+   both.
+3. **What the drawer absorbs.** The mock has no Home, no All sessions,
+   no archived or hidden lists, no update pill. The drawer's search box
+   is real and searches every session across projects; a project's
+   overlay is the per-project library (archived behind its chip); the
+   gear's *archive* page lists archived sessions, hidden sessions (with
+   the rule that hid each) and archived projects, each with its restore
+   verb; channel, version and update state sit in the status bar.
+4. **Session detail and settings.** *session detail* opens the project
+   overlay's third page (‹ sessions / detail), reusing the detail pane.
+   The gear opens app settings in the same 940×540 frame, with pages:
+   appearance, behavior, archive.
+5. **Pop-outs.** Per-tab pop-out exists. Zone and workspace pop-out are
+   phase 4 — a workspace window needs the server to merge the workspace
+   document per workspace.
+6. **Turn stack.** Phase 2: the mock's list + follow pane, composer with
+   presets, skill and reply box; snooze variants stay in the row menu.
+
+## Substitutions
+
+- The cloud and gear glyphs are the existing SVG icons (emoji risk on
+  Windows). Every other glyph is the mock's: ▲ ● ○ ❯ ◐ ▪ ⧉ ☰ ⌕.
+- *$ today* needs per-day spend: the fold now buckets billed usage by
+  local calendar day (`ThreadAccum.usageByDay`) and the snapshot sums
+  today's into `Session.costTodayUsd`. Forks are not de-duplicated for
+  the day figure (they are for totals) — a glance number.
+- *ctx N% left* derives from `contextTokens` against the model's window
+  (1M for the [1m] variants, 200k otherwise).
+- A matcher's *N sessions* comes from the preview endpoint when the
+  settings page opens.
+- Workspace *intent* is a new field in the v2 document.
+- The tab keeps a small WSL / PowerShell / cmd mark after the glyph when
+  that distinction exists (never on a plain shell); the mock had none.
+- The idle stack keeps the dashboard (the mock calls that screen a
+  stand-in).
+
+## Phase 1 — shipped
+
+- `TopBar.tsx`: 30px; projects menu, wordmark, workspace tabs with one
+  badge each (▲ your turn first, else ● working, else cloud), the
+  workspace's intent, the your-turn button (this workspace's count),
+  settings, window controls.
+- `StatusBar.tsx`: 24px; *⧉ workspace · zone* (right-click for the
+  workspace's verbs), the focused tile's directory · branch · model,
+  context left; then waiting and running across every workspace, spent
+  today, hooks, server, build and update state.
+- `ProjectsPanel.tsx`: the 264px drawer (overlay, or pinned via the
+  `panel` pref). Search over every session; projects with ▲ and ●
+  counts and the total (click: all sessions); expanded, the sessions
+  worth a glance (your turn, working, touched in two days). Click a
+  session to land on its tile, else its detail; right-click for the
+  rest. Project menu: all sessions, settings, new session, shell,
+  expand, pin, rename, archive.
+- `ProjectOverlay.tsx`: sessions table (checkbox, glyph, session with
+  branch/PR/fork/skip line, on the desk, model, last, spent), chips
+  all / needs you / running / idle / archived (+ hidden when nonzero),
+  bulk bar (skip, archive/unarchive, add to…, exclude, clear), the
+  two-column settings page (`ProjectSettings.tsx`), the detail page
+  (`SessionDetail.tsx`). Double-click a row for detail.
+- `SettingsOverlay.tsx`: appearance / behavior / archive.
+- Desk: zone header with the zone's verbs (new session here, rename,
+  default zone, close every tab), glyph tabs (middle-click closes), the
+  tab menu gains skip and session detail, `deskState.focusPanelId`,
+  `tileOf(id)` for "where is it" and "jump to its tile".
+- The browser build (`hodor ui`) pins the panel and renders the project
+  overlay inline as the page.
+
+## Next
+
+Phase 2 (turn stack), phase 4 (windows). Open: should the drawer's
+search also list projects and actions (the mock's unused omnibox data
+had both)?

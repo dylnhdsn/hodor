@@ -71,14 +71,11 @@ export function ContextMenu(props: { menu: MenuState; close: () => void }) {
       <div
         ref={ref}
         style={{ left: pos.x, top: pos.y }}
-        className="fixed z-50 flex min-w-44 flex-col rounded border border-b5 bg-s5 py-1 shadow-xl"
+        className="fixed z-50 flex min-w-[196px] flex-col rounded-md border border-b5 bg-s5 p-1 shadow-[0_24px_50px_-12px_rgba(0,0,0,.6)]"
       >
         {menu.items.map((item, i) =>
           item.heading === true ? (
-            <div
-              key={i}
-              className="truncate px-3 pt-1 pb-0.5 font-mono text-[9.5px] font-semibold tracking-[.12em] text-t5 uppercase"
-            >
+            <div key={i} className="truncate px-2.5 pt-1 pb-[5px] font-mono text-[10px] text-t5">
               {item.label}
             </div>
           ) : (
@@ -88,8 +85,8 @@ export function ContextMenu(props: { menu: MenuState; close: () => void }) {
                 close()
                 item.onClick?.()
               }}
-              className={`px-3 py-1.5 text-left font-ui text-[12px] hover:bg-ac/12 ${
-                item.danger === true ? 'text-err' : 'text-t2 hover:text-fg'
+              className={`whitespace-nowrap rounded px-2.5 py-[5px] text-left font-ui text-[11.5px] hover:bg-ac/12 hover:text-fg ${
+                item.danger === true ? 'text-err' : 'text-t1'
               }`}
             >
               {item.label}

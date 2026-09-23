@@ -137,19 +137,21 @@ export function DialogHost() {
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[60] flex items-start justify-center bg-app/70 pt-[18vh]"
+      className="fixed inset-0 z-[60] flex items-start justify-center bg-app/55 pt-[18vh]"
       onClick={() => close(req.kind === 'confirm' ? false : undefined)}
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-[min(480px,calc(100vw-48px))] rounded-lg border border-b5 bg-s5 p-4 shadow-2xl"
+        className={`flex flex-col gap-2.5 rounded-md border border-b5 bg-s5 p-3.5 shadow-[0_30px_60px_-12px_rgba(0,0,0,.7)] ${
+          req.kind === 'pick' ? 'w-[min(480px,calc(100vw-48px))]' : 'w-[min(380px,calc(100vw-48px))]'
+        }`}
       >
-        <h2 className="font-ui text-[13.5px] font-bold text-fg">{req.title}</h2>
+        <h2 className="font-ui text-[12.5px] font-bold text-fg">{req.title}</h2>
         {req.detail !== undefined && (
-          <p className="mt-1 text-[11.5px] leading-relaxed text-t3">{req.detail}</p>
+          <p className="-mt-1 text-[11px] leading-relaxed text-t3">{req.detail}</p>
         )}
         {req.kind === 'pick' && (
-          <div className="mt-3 flex max-h-[50vh] flex-col gap-0.5 overflow-y-auto">
+          <div className="flex max-h-[50vh] flex-col gap-0.5 overflow-y-auto">
             {(req.options ?? []).map((o) => (
               <button
                 key={o.id}
@@ -184,14 +186,14 @@ export function DialogHost() {
                 close(undefined)
               }
             }}
-            className="mt-3 w-full rounded border border-b4 bg-app px-2.5 py-1.5 text-[12px] outline-none placeholder:text-t6 focus:border-ac"
+            className="w-full rounded border border-b4 bg-app px-2 py-1.5 font-ui text-[12px] text-t1 outline-none placeholder:text-t6 focus:border-ac"
           />
         )}
-        <div className="mt-3.5 flex justify-end gap-2">
+        <div className="flex justify-end gap-1.5">
           {req.kind !== 'notice' && (
             <button
               onClick={() => close(req.kind === 'confirm' ? false : undefined)}
-              className="rounded border border-b4 px-3 py-1 text-[11.5px] text-t3 hover:border-b6 hover:text-fg"
+              className="rounded border border-b4 px-3 py-1 font-ui text-[11.5px] text-t3 hover:border-b6 hover:text-fg"
             >
               cancel
             </button>
@@ -200,7 +202,7 @@ export function DialogHost() {
           <button
             onClick={() => close(req.kind === 'prompt' ? value : true)}
             disabled={req.kind === 'prompt' && value.trim().length === 0}
-            className={`rounded px-3.5 py-1 text-[11.5px] font-semibold disabled:opacity-40 ${
+            className={`rounded px-3.5 py-1 font-ui text-[11.5px] font-bold disabled:opacity-40 ${
               req.danger === true
                 ? 'bg-err text-ink hover:brightness-110'
                 : 'bg-ac text-ink hover:brightness-110'

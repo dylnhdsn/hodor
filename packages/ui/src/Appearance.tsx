@@ -7,6 +7,7 @@ import { DEFAULT_PRESETS, getPresets, onPresetsChange, setPresets } from './pres
 import { HooksToggle } from './HooksToggle.js'
 import { notifyEnabled, setNotifyEnabled } from './notify.js'
 import { fetchPrefs, savePref } from './prefs.js'
+import { UpdateCheckRow, UpdatePill } from './UpdatePill.js'
 import {
   FONT_PACKS,
   TERM_FONTS,
@@ -258,31 +259,17 @@ function PresetControls() {
   )
 }
 
-export function Appearance() {
+/** Settings › appearance: schemes, the catalog, presets, fonts, import. */
+export function AppearancePage() {
   const [, force] = useState(0)
-  const [winShell, setWinShell] = useState<'powershell' | 'cmd'>('powershell')
-  const [detachOnQuit, setDetachOnQuit] = useState(false)
-  useEffect(() => {
-    void fetchPrefs().then((p) => {
-      if (p['windowsShell'] === 'cmd') setWinShell('cmd')
-      if (p['detachOnQuit'] === true) setDetachOnQuit(true)
-    })
-  }, [])
   const [impText, setImpText] = useState('')
   const [impErr, setImpErr] = useState<string | undefined>(undefined)
   const state = themeState()
   const rerender = () => force((x) => x + 1)
 
   return (
-    <div className="flex-1 overflow-y-auto px-5 py-4">
-      <div className="flex max-w-4xl flex-col gap-4">
-        <div>
-          <h2 className="font-ui text-[15px] font-semibold text-fg">Settings</h2>
-          <p className="mt-1 max-w-2xl text-xs leading-relaxed text-t3">
-            every color derives from a terminal colorscheme; the embedded terminals share it.
-          </p>
-        </div>
-
+    <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+      <div className="flex flex-col gap-4">
         <div className="font-mono text-[9.5px] font-semibold tracking-[.14em] text-t5">
           COLORSCHEMES{state.custom !== undefined ? ' + YOURS' : ''}
         </div>
@@ -449,6 +436,78 @@ export function Appearance() {
         </div>
 
         <div className="mt-1 font-mono text-[9.5px] font-semibold tracking-[.14em] text-t5">
+          IMPORT — FROM THE FILES YOUR TERMINAL ALREADY USES
+        </div>
+        <div className="flex flex-col gap-2.5 rounded-lg border border-b3 bg-s1 p-3">
+          <p className="text-[11px] leading-relaxed text-t3">
+            paste an iTerm2 <span className="font-mono">.itermcolors</span>, a Windows Terminal
+            scheme JSON, Alacritty toml, <span className="font-mono">kitty.conf</span>, Ghostty
+            config, or Xresources — hodor sniffs the format, maps the 16 ANSI colors, and
+            re-derives the whole UI
+          </p>
+          <textarea
+            rows={6}
+            placeholder="paste a colorscheme file…"
+            value={impText}
+            onChange={(e) => {
+              setImpText(e.target.value)
+              setImpErr(undefined)
+            }}
+            className="min-h-[86px] resize-y rounded border border-b4 bg-app px-2.5 py-2 font-mono text-[11px] leading-normal text-fg outline-none"
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => {
+                const name = importScheme(impText)
+                if (name === null) {
+                  setImpErr('could not sniff it — need background + most of the 16 ANSI colors')
+                } else {
+                  setImpErr(undefined)
+                  rerender()
+                }
+              }}
+              className="rounded bg-ac px-3.5 py-1.5 text-[11.5px] font-semibold text-ink hover:brightness-110"
+            >
+              import & apply
+            </button>
+            <button
+              onClick={() => setImpText(SAMPLE_WT)}
+              className="rounded border border-b4 px-3 py-1 text-[11px] text-t2 hover:border-ac hover:text-fg"
+            >
+              sample: Windows Terminal JSON
+            </button>
+            <button
+              onClick={() => setImpText(SAMPLE_ALACRITTY)}
+              className="rounded border border-b4 px-3 py-1 text-[11px] text-t2 hover:border-ac hover:text-fg"
+            >
+              sample: Alacritty TOML
+            </button>
+            {impErr !== undefined && (
+              <span className="font-mono text-[11px] text-err">{impErr}</span>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/** Settings › behavior: shells, notifications, quitting, hooks, updates. */
+export function BehaviorPage() {
+  const [, force] = useState(0)
+  const [winShell, setWinShell] = useState<'powershell' | 'cmd'>('powershell')
+  const [detachOnQuit, setDetachOnQuit] = useState(false)
+  useEffect(() => {
+    void fetchPrefs().then((p) => {
+      if (p['windowsShell'] === 'cmd') setWinShell('cmd')
+      if (p['detachOnQuit'] === true) setDetachOnQuit(true)
+    })
+  }, [])
+  const rerender = () => force((x) => x + 1)
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+      <div className="flex flex-col gap-4">
+        <div className="mt-1 font-mono text-[9.5px] font-semibold tracking-[.14em] text-t5">
           WINDOWS SHELL
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -525,58 +584,17 @@ export function Appearance() {
         </div>
         <HooksToggle />
 
-        <div className="mt-1 font-mono text-[9.5px] font-semibold tracking-[.14em] text-t5">
-          IMPORT — FROM THE FILES YOUR TERMINAL ALREADY USES
-        </div>
-        <div className="flex flex-col gap-2.5 rounded-lg border border-b3 bg-s1 p-3">
-          <p className="text-[11px] leading-relaxed text-t3">
-            paste an iTerm2 <span className="font-mono">.itermcolors</span>, a Windows Terminal
-            scheme JSON, Alacritty toml, <span className="font-mono">kitty.conf</span>, Ghostty
-            config, or Xresources — hodor sniffs the format, maps the 16 ANSI colors, and
-            re-derives the whole UI
-          </p>
-          <textarea
-            rows={6}
-            placeholder="paste a colorscheme file…"
-            value={impText}
-            onChange={(e) => {
-              setImpText(e.target.value)
-              setImpErr(undefined)
-            }}
-            className="min-h-[86px] resize-y rounded border border-b4 bg-app px-2.5 py-2 font-mono text-[11px] leading-normal text-fg outline-none"
-          />
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              onClick={() => {
-                const name = importScheme(impText)
-                if (name === null) {
-                  setImpErr('could not sniff it — need background + most of the 16 ANSI colors')
-                } else {
-                  setImpErr(undefined)
-                  rerender()
-                }
-              }}
-              className="rounded bg-ac px-3.5 py-1.5 text-[11.5px] font-semibold text-ink hover:brightness-110"
-            >
-              import & apply
-            </button>
-            <button
-              onClick={() => setImpText(SAMPLE_WT)}
-              className="rounded border border-b4 px-3 py-1 text-[11px] text-t2 hover:border-ac hover:text-fg"
-            >
-              sample: Windows Terminal JSON
-            </button>
-            <button
-              onClick={() => setImpText(SAMPLE_ALACRITTY)}
-              className="rounded border border-b4 px-3 py-1 text-[11px] text-t2 hover:border-ac hover:text-fg"
-            >
-              sample: Alacritty TOML
-            </button>
-            {impErr !== undefined && (
-              <span className="font-mono text-[11px] text-err">{impErr}</span>
-            )}
-          </div>
-        </div>
+        {desktop !== undefined && (
+          <>
+            <div className="mt-1 font-mono text-[9.5px] font-semibold tracking-[.14em] text-t5">
+              UPDATES
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <UpdatePill />
+              <UpdateCheckRow />
+            </div>
+          </>
+        )}
       </div>
     </div>
   )

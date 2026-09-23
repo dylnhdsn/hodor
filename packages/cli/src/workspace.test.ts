@@ -28,6 +28,20 @@ describe('parseWorkspaceDoc', () => {
     expect(parseWorkspaceDoc({ workspaces: [{ id: 'a', name: 'A', scope: 'nope' }] })?.workspaces[0]?.scope).toBeUndefined()
   })
 
+  it('keeps a workspace intent and drops an empty one', () => {
+    const doc = parseWorkspaceDoc({
+      v: 2,
+      workspaces: [
+        { id: 'a', name: 'A', intent: 'ship the electron bump', windows: [] },
+        { id: 'b', name: 'B', intent: '', windows: [] },
+        { id: 'c', name: 'C', intent: 42, windows: [] },
+      ],
+    })!
+    expect(doc.workspaces[0]!.intent).toBe('ship the electron bump')
+    expect(doc.workspaces[1]!.intent).toBeUndefined()
+    expect(doc.workspaces[2]!.intent).toBeUndefined()
+  })
+
   it('still reads a v1 document as v1', () => {
     expect(parseWorkspaceDoc({ v: 1, workspaces: [{ id: 'default', name: 'the desk', windows: [] }] })?.v).toBe(1)
     expect(parseWorkspaceDoc({ nope: true })).toBeUndefined()

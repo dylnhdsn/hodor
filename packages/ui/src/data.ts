@@ -66,6 +66,21 @@ export const projectNameOf = (snapshot: Snapshot, view: View, s: Session): strin
   return view.derivedOf.get(s.id)?.name ?? 'no project'
 }
 
+/** The model a session mostly ran on, short ("opus-5", "sonnet-5"). */
+export function modelShortOf(s: Session): string | undefined {
+  if (s.usage === undefined) return undefined
+  let best: string | undefined
+  let bestTokens = -1
+  for (const [model, u] of Object.entries(s.usage)) {
+    const t = u.input + u.output
+    if (t > bestTokens) {
+      bestTokens = t
+      best = model
+    }
+  }
+  return best?.replace(/^claude-/, '').replace(/-\d{8}$/, '')
+}
+
 export const formatTokens = (n: number): string =>
   n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
 

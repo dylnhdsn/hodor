@@ -25,6 +25,8 @@ export interface WorkspaceWindow {
 export interface Workspace {
   id: string
   name: string
+  /** What you are doing here, in your words — the title bar shows it. */
+  intent?: string | undefined
   /** Project-scoped: "new session" here defaults to this project. */
   scope?: { projectId: string } | undefined
   windows: WorkspaceWindow[]
@@ -66,6 +68,7 @@ export function parseWorkspaceDoc(raw: unknown): WorkspaceDoc | undefined {
     workspaces.push({
       id: w['id'],
       name: w['name'],
+      ...(typeof w['intent'] === 'string' && w['intent'] !== '' ? { intent: w['intent'] } : {}),
       ...(isRecord(scope) && typeof scope['projectId'] === 'string'
         ? { scope: { projectId: scope['projectId'] } }
         : {}),

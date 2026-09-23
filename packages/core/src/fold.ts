@@ -29,6 +29,19 @@ export interface ThreadAccum {
   agentId?: string
   /** Token usage by model, billed once per API message id. */
   usageByModel?: Record<string, UsageTotals>
+  /** The same usage bucketed by local calendar day (YYYY-MM-DD) — what
+   * "spent today" reads. Local because the fold runs on the machine whose
+   * day it is. */
+  usageByDay?: Record<string, Record<string, UsageTotals>>
+}
+
+/** A timestamp's calendar day in this machine's local time zone. */
+export function localDayOf(iso: string): string {
+  const t = new Date(iso)
+  if (Number.isNaN(t.getTime())) return ''
+  const mm = String(t.getMonth() + 1).padStart(2, '0')
+  const dd = String(t.getDate()).padStart(2, '0')
+  return `${t.getFullYear()}-${mm}-${dd}`
 }
 
 export interface SessionAccum {
@@ -248,6 +261,14 @@ function billUsage(accum: SessionAccum, thread: ThreadAccum, line: MessageLine):
   thread.usageByModel ??= {}
   const totals = (thread.usageByModel[line.model] ??= emptyUsage())
   addUsage(totals, line.usage)
+  if (line.timestamp !== undefined) {
+    const day = localDayOf(line.timestamp)
+    if (day !== '') {
+      thread.usageByDay ??= {}
+      const byModel = (thread.usageByDay[day] ??= {})
+      addUsage((byModel[line.model] ??= emptyUsage()), line.usage)
+    }
+  }
 
   // Context fill: the newest main-thread response's input-side tokens ARE
   // the context size at that moment. Max-by-timestamp, so order is moot.
@@ -391,6 +412,14 @@ function cloneThread(thread: ThreadAccum): ThreadAccum {
   if (thread.usageByModel !== undefined) {
     clone.usageByModel = Object.fromEntries(
       Object.entries(thread.usageByModel).map(([model, totals]) => [model, { ...totals }]),
+    )
+  }
+  if (thread.usageByDay !== undefined) {
+    clone.usageByDay = Object.fromEntries(
+      Object.entries(thread.usageByDay).map(([day, byModel]) => [
+        day,
+        Object.fromEntries(Object.entries(byModel).map(([model, totals]) => [model, { ...totals }])),
+      ]),
     )
   }
   return clone

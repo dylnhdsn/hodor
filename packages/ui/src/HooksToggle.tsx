@@ -1,35 +1,14 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
+import { setHooks, useHooks } from './hooksStatus.js'
 
 /**
  * The Claude hooks toggle (docs/brainstorm/026). One checkbox; under it,
  * each store hodor watches and whether its ~/.claude/settings.json
  * carries hodor's hooks. A store hodor could not write says why.
  */
-
-interface HooksRow {
-  storeId: string
-  label: string
-  status: 'on' | 'off' | 'partial' | 'unreadable'
-  error?: string
-}
-
 export function HooksToggle() {
-  const [rows, setRows] = useState<HooksRow[] | undefined>(undefined)
+  const rows = useHooks()
   const [busy, setBusy] = useState(false)
-
-  const load = async (): Promise<void> => {
-    try {
-      const res = await fetch('/api/hooks')
-      const body = (await res.json()) as { stores?: HooksRow[] }
-      setRows(body.stores ?? [])
-    } catch {
-      setRows([])
-    }
-  }
-  useEffect(() => {
-    void load()
-  }, [])
-
   const on = rows !== undefined && rows.length > 0 && rows.every((r) => r.status === 'on')
 
   return (
@@ -41,18 +20,7 @@ export function HooksToggle() {
           disabled={rows === undefined || busy}
           onChange={async (e) => {
             setBusy(true)
-            try {
-              const res = await fetch('/api/hooks', {
-                method: 'POST',
-                headers: { 'content-type': 'application/json' },
-                body: JSON.stringify({ enabled: e.target.checked }),
-              })
-              const body = (await res.json()) as { stores?: HooksRow[] }
-              if (body.stores !== undefined) setRows(body.stores)
-              else await load()
-            } catch {
-              await load()
-            }
+            await setHooks(e.target.checked)
             setBusy(false)
           }}
           className="h-3.5 w-3.5 accent-ac"
