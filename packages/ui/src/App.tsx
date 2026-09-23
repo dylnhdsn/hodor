@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Snapshot } from '@hodor/core'
 import { cloudNeedsYou, cloudRunning } from './CloudSessions.js'
 import { deriveView, postMutation, sigOfSession, titleOf, type RailProject } from './data.js'
-import { Desk, deskState, getDeskOps, setDeskSessions, subscribeDesk, tileOf } from './Desk.js'
+import { Desk, deskState, getDeskOps, onTileOpened, setDeskSessions, subscribeDesk, tileOf } from './Desk.js'
 import { desktop } from './desktop.js'
 import { DialogHost, notice, pickOne } from './dialog.js'
 import { refreshHooks } from './hooksStatus.js'
@@ -206,6 +206,25 @@ function Main(props: { snapshot: Snapshot; connected: boolean; locked?: string |
     if (t.active) land()
     else void ops.switchWorkspace(t.workspace.id).then(land)
   }, [])
+
+  // A terminal you just launched: land on its tile — whatever overlay or
+  // drawer it was launched from closes, the desk shows, the tile takes
+  // the keyboard. When the tile lives in a popped-out workspace window,
+  // that window comes to the front.
+  useEffect(
+    () =>
+      onTileOpened((panelId) => {
+        setOverlay(undefined)
+        setPanel((p) => (p === 'open' ? 'closed' : p))
+        if (panelId === undefined) return
+        setViewMode('desk')
+        const ops = getDeskOps()
+        ops?.revealPanel(panelId)
+        ops?.focusPanel(panelId)
+        if (locked !== undefined) desktop?.winRaise?.()
+      }),
+    [locked],
+  )
 
   // A session flipping to "needs you" while the window is elsewhere pings
   // the OS. First snapshot stays silent — booting isn't news.

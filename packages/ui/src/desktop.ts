@@ -14,6 +14,10 @@ export interface OpenTarget {
   name?: string
   model?: string
   permissionMode?: string
+  /** The workspace the launch is meant for: the one showing in the
+   * window it came from. The desk holding that workspace adopts the
+   * terminal; every other window leaves it alone (030 phase 4). */
+  workspaceId?: string
 }
 
 export interface TermInfo {
@@ -103,6 +107,12 @@ export interface HodorDesktop {
 
 const raw: HodorDesktop | undefined = (window as { hodorDesktop?: HodorDesktop }).hodorDesktop
 
+/** The workspace this window is showing — stamped onto every launch. */
+let launchWorkspace: string | undefined
+export const setLaunchWorkspace = (id: string | undefined): void => {
+  launchWorkspace = id
+}
+
 // Two views in one window can share a PTY (a desk tile and the turn-stack
 // card). The main process tracks subscribers per WebContents, so the first
 // detach from this window would silently freeze every other view of the
@@ -114,6 +124,12 @@ export const desktop: HodorDesktop | undefined =
     ? undefined
     : {
         ...raw,
+        openTerminal: (target) =>
+          raw.openTerminal(
+            target.workspaceId === undefined && launchWorkspace !== undefined
+              ? { ...target, workspaceId: launchWorkspace }
+              : target,
+          ),
         attach: (id) => {
           attachCounts.set(id, (attachCounts.get(id) ?? 0) + 1)
           return raw.attach(id)

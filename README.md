@@ -200,7 +200,7 @@ Every color derives from a terminal colorscheme. Settings ships a curated
 list plus a catalog of 600+ schemes packed from
 [iTerm2-Color-Schemes](https://github.com/mbadolato/iTerm2-Color-Schemes)
 (MIT, © Mark Badolato; each theme stays its author's) — search by name,
-filter dark/light, click to adopt. Regenerate the catalog with
+filter dark/light, a page at a time, click to adopt. Regenerate the catalog with
 `node scripts/import-schemes.mjs`. Pasting any Windows Terminal, iTerm2,
 Alacritty, kitty or Ghostty scheme file works too.
 

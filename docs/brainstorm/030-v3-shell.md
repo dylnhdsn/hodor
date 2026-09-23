@@ -139,6 +139,20 @@ back*). Closing the window IS bringing it back.
 - On boot the main window reopens every pop-out the document says is
   open. Closing the main window closes them.
 
+## From build 94 (Dylan's notes)
+
+- **The catalog pages.** 48 schemes a page with prev / next and
+  "49–96 of 617"; a new search or tone filter starts at page one.
+- **A resume lands on its tile.** Every launch is tagged with the
+  workspace it was made for (`OpenTarget.workspaceId`, the one showing in
+  the window it came from). The desk holding that workspace adopts the
+  terminal — and only that desk, so a popped-out workspace's window and
+  the main window never both take it — and the app lands on the tile:
+  the drawer or overlay it was launched from closes, the desk shows, the
+  tile takes the keyboard; a popped-out window raises itself. A launch
+  made from the main window for a workspace living in its own window
+  still closes what it came from there.
+
 ## Next
 
 Open: should the drawer's search also list projects and actions (the

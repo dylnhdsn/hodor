@@ -14,7 +14,7 @@ import {
 } from 'dockview-react'
 import 'dockview/dist/styles/dockview.css'
 import { postMutation } from './data.js'
-import { desktop, type OpenTarget } from './desktop.js'
+import { desktop, setLaunchWorkspace, type OpenTarget } from './desktop.js'
 import { confirmAction, promptText } from './dialog.js'
 import { Glyph, type GlyphKind } from './glyphs.js'
 import { ShellIcon } from './icons.js'
@@ -271,6 +271,17 @@ const deskListeners = new Set<() => void>()
 export function subscribeDesk(fn: () => void): () => void {
   deskListeners.add(fn)
   return () => deskListeners.delete(fn)
+}
+
+/** A terminal the user just launched got its tile: the app lands on it
+ * (closing whatever it was launched from). `panelId` is undefined when
+ * the tile went to this workspace's own window instead of here — the
+ * launch still closes what it came from. Not fired for tiles adopted at
+ * boot or restored in place. */
+const tileListeners = new Set<(panelId: string | undefined) => void>()
+export function onTileOpened(fn: (panelId: string | undefined) => void): () => void {
+  tileListeners.add(fn)
+  return () => tileListeners.delete(fn)
 }
 function notifyDesk(): void {
   for (const fn of deskListeners) fn()
@@ -1180,6 +1191,7 @@ export function Desk({
       const ws = docRef.current.workspaces.find((w) => w.id === id)
       if (ws === undefined) return
       activeRef.current = id
+      setLaunchWorkspace(id)
       const window0 = ws.windows[0]
       // a workspace popped out to its own window stays empty here
       const mount = locked !== undefined || ws.popped !== true
@@ -1675,11 +1687,24 @@ export function Desk({
         if (api === null) return
         const elsewhere = ptyIdsElsewhere(docRef.current, activeRef.current)
         for (const t of list) {
-          if (findPanelByPty(api, t.id) === undefined && !elsewhere.has(t.id)) {
+          if (
+            findPanelByPty(api, t.id) === undefined &&
+            !elsewhere.has(t.id) &&
+            forThisDesk(t.target)
+          ) {
             addPtyPanel(api, t.id, t.title, t.target, t.env)
           }
         }
       })
+
+    /** Does a terminal belong on THIS desk? One tagged for a workspace
+     * goes to the window holding that workspace; an untagged one to
+     * whichever desk is mounted (the main window, unless its workspace
+     * is popped out). */
+    function forThisDesk(target: OpenTarget | undefined): boolean {
+      if (!mountedActive()) return false
+      return target?.workspaceId === undefined || target.workspaceId === activeRef.current
+    }
 
     function defaultGroup(api: DockviewApi): string | undefined {
       const id = Object.entries(zonesRef.current).find(([, meta]) => meta.def === true)?.[0]
@@ -1739,9 +1764,20 @@ export function Desk({
         }
         if (
           findPanelByPty(api, event.id) === undefined &&
-          !ptyIdsElsewhere(docRef.current, activeRef.current).has(event.id)
+          !ptyIdsElsewhere(docRef.current, activeRef.current).has(event.id) &&
+          forThisDesk(event.target)
         ) {
           addPtyPanel(api, event.id, event.title, event.target, event.env)
+          // a fresh launch: take the user to it
+          if (event.type === 'opened') for (const fn of tileListeners) fn(`pty-${event.id}`)
+        } else if (
+          event.type === 'opened' &&
+          event.target?.workspaceId === activeRef.current &&
+          !mountedActive()
+        ) {
+          // launched from here for a workspace living in its own window:
+          // that window shows it; this one just closes what it came from
+          for (const fn of tileListeners) fn(undefined)
         }
       } else if (event.type === 'popped' || event.type === 'closed') {
         const panel = findPanelByPty(api, event.id)
@@ -1751,7 +1787,7 @@ export function Desk({
         }
       }
     })
-  }, [save])
+  }, [save, mountedActive])
 
   // Clicking a tab makes dockview focus the TAB ELEMENT itself, which
   // leaves the keyboard nowhere useful. Catch that focus and hand it down

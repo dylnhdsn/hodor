@@ -129,11 +129,14 @@ function SchemeCard({ scheme, active, onPick }: { scheme: Colorscheme; active: b
   )
 }
 
-/** The bundled catalog: search by name, dark/light, pick to adopt. */
+const PAGE = 48
+
+/** The bundled catalog: search by name, dark/light, a page at a time. */
 function SchemeCatalog({ activeId, onPick }: { activeId: string; onPick: (s: Colorscheme) => void }) {
   const [entries, setEntries] = useState<CatalogEntry[] | undefined>(undefined)
   const [query, setQuery] = useState('')
   const [tone, setTone] = useState<'all' | 'dark' | 'light'>('all')
+  const [page, setPage] = useState(0)
   useEffect(() => {
     let live = true
     void loadCatalog().then((e) => {
@@ -149,7 +152,9 @@ function SchemeCatalog({ activeId, onPick }: { activeId: string; onPick: (s: Col
       (tone === 'all' || (tone === 'dark') === e.dark) &&
       (q === '' || e.scheme.name.toLowerCase().includes(q)),
   )
-  const shown = hits.slice(0, 48)
+  const pages = Math.max(1, Math.ceil(hits.length / PAGE))
+  const at = Math.min(page, pages - 1)
+  const shown = hits.slice(at * PAGE, (at + 1) * PAGE)
   const chip = (on: boolean): string =>
     `rounded border px-2 py-0.5 font-mono text-[10px] ${on ? 'border-ac text-fg' : 'border-b3 text-t4 hover:border-b6 hover:text-fg'}`
   return (
@@ -158,12 +163,22 @@ function SchemeCatalog({ activeId, onPick }: { activeId: string; onPick: (s: Col
         <span className="font-mono text-[9.5px] font-semibold tracking-[.14em] text-t5">CATALOG</span>
         <input
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => {
+            setQuery(e.target.value)
+            setPage(0)
+          }}
           placeholder="find a scheme…"
           className="w-52 rounded border border-b1 bg-s1 px-2.5 py-1 text-[11px] outline-none placeholder:text-t6 focus:border-b6"
         />
         {(['all', 'dark', 'light'] as const).map((t) => (
-          <button key={t} onClick={() => setTone(t)} className={chip(tone === t)}>
+          <button
+            key={t}
+            onClick={() => {
+              setTone(t)
+              setPage(0)
+            }}
+            className={chip(tone === t)}
+          >
             {t}
           </button>
         ))}
@@ -191,9 +206,25 @@ function SchemeCatalog({ activeId, onPick }: { activeId: string; onPick: (s: Col
           ))}
         </div>
       )}
-      {hits.length > shown.length && (
-        <div className="font-mono text-[10px] text-t5">
-          {hits.length - shown.length} more — narrow the search
+      {pages > 1 && (
+        <div className="flex items-center gap-2 font-mono text-[10px] text-t5">
+          <button
+            onClick={() => setPage(Math.max(0, at - 1))}
+            disabled={at === 0}
+            className="rounded border border-b3 px-2 py-0.5 hover:border-b6 hover:text-fg disabled:opacity-40"
+          >
+            ‹ prev
+          </button>
+          <span>
+            {at * PAGE + 1}–{Math.min(hits.length, (at + 1) * PAGE)} of {hits.length}
+          </span>
+          <button
+            onClick={() => setPage(Math.min(pages - 1, at + 1))}
+            disabled={at >= pages - 1}
+            className="rounded border border-b3 px-2 py-0.5 hover:border-b6 hover:text-fg disabled:opacity-40"
+          >
+            next ›
+          </button>
         </div>
       )}
       {entries !== undefined && hits.length === 0 && (
