@@ -83,8 +83,32 @@ below cover what had to differ. Ships on the experimental channel from
 - The browser build (`hodor ui`) pins the panel and renders the project
   overlay inline as the page.
 
+## Phase 2 — shipped: the turn stack
+
+`Stack.tsx` is the mock's list plus follow pane. The list (320px) holds
+every session whose turn is yours, waiting-longest first, then the ones
+you answered from the pane as "working · you said …"; the longest wait
+carries the amber edge (up next) and the followed row the *◂ pane* tag.
+The pane is the followed session's terminal (a dead slot offers resume)
+under a header with its project, branch and state; below it the
+composer — preset chips, `/ skill…`, a reply box — or, once answered,
+the pulsing *working* line. Answering keeps you on that session; it
+counts as working on its own for eight seconds while the transcript
+catches up, then the real turn state takes over (a session that asks
+again moves back up the list; one that stopped reads *stopped — back to
+you*). Typing in the terminal itself counts as answering too. A cloud
+row shows its ask with the same composer; a reply queues into the cloud
+session and skips it until its ask changes. Row menu: jump to its tile,
+session detail, skip, skip with a note, skip until the PR moves, snooze
+30 minutes or 2 hours, hold until I unskip it, send to phone, close its
+tile. Scope chips: *⧉ workspace* / *everywhere*; *desk* goes back. With
+nothing waiting and nothing followed, the pane shows the dashboard.
+
+Gone from the old stack: *later* (pick any row instead), the snooze
+dropdown and the done/kill buttons (the row menu), the "next up" strip
+(the list).
+
 ## Next
 
-Phase 2 (turn stack), phase 4 (windows). Open: should the drawer's
-search also list projects and actions (the mock's unused omnibox data
-had both)?
+Phase 4 (windows). Open: should the drawer's search also list projects
+and actions (the mock's unused omnibox data had both)?
